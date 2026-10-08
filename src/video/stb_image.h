@@ -461,7 +461,7 @@ STBIDEF stbi_uc *stbi_load_from_callbacks_with_palette(stbi_io_callbacks const *
 // 16-bits-per-channel interface
 //
 
-#if 0 /* not used in SDL */
+#if defined(STBI_OHOS_TERRAIN) /* Retain upstream decoder APIs for the terrain importer. */
 STBIDEF stbi_us *stbi_load_16_from_memory   (stbi_uc const *buffer, int len, int *x, int *y, int *channels_in_file, int desired_channels);
 STBIDEF stbi_us *stbi_load_16_from_callbacks(stbi_io_callbacks const *clbk, void *user, int *x, int *y, int *channels_in_file, int desired_channels);
 #endif
@@ -515,7 +515,7 @@ STBIDEF const char *stbi_failure_reason  (void);
 // free the loaded image -- this is just free()
 STBIDEF void     stbi_image_free      (void *retval_from_stbi_load);
 
-#if 0 /* not used in SDL */
+#if defined(STBI_OHOS_TERRAIN) /* Retain upstream decoder APIs for the terrain importer. */
 // get image dimensions & components without fully decoding
 STBIDEF int      stbi_info_from_memory(stbi_uc const *buffer, int len, int *x, int *y, int *comp);
 STBIDEF int      stbi_info_from_callbacks(stbi_io_callbacks const *clbk, void *user, int *x, int *y, int *comp);
@@ -986,7 +986,7 @@ typedef struct
 #ifndef STBI_NO_JPEG
 static int      stbi__jpeg_test(stbi__context *s);
 static void    *stbi__jpeg_load(stbi__context *s, int *x, int *y, int *comp, int req_comp, stbi__nv12 *nv12, stbi__result_info *ri);
-#if 0 /* not used in SDL */
+#if defined(STBI_OHOS_TERRAIN) /* Retain upstream decoder APIs for the terrain importer. */
 static int      stbi__jpeg_info(stbi__context *s, int *x, int *y, int *comp);
 #endif
 #endif
@@ -994,7 +994,7 @@ static int      stbi__jpeg_info(stbi__context *s, int *x, int *y, int *comp);
 #ifndef STBI_NO_PNG
 static int      stbi__png_test(stbi__context *s);
 static void    *stbi__png_load(stbi__context *s, int *x, int *y, int *comp, int req_comp, unsigned int *palette_buffer, int palette_buffer_len, stbi__result_info *ri);
-#if 0 /* not used in SDL */
+#if defined(STBI_OHOS_TERRAIN) /* Retain upstream decoder APIs for the terrain importer. */
 static int      stbi__png_info(stbi__context *s, int *x, int *y, int *comp);
 static int      stbi__png_is16(stbi__context *s);
 #endif
@@ -1299,7 +1299,7 @@ static stbi_uc *stbi__convert_16_to_8(stbi__uint16 *orig, int w, int h, int chan
    return reduced;
 }
 
-#if 0 /* not used in SDL */
+#if defined(STBI_OHOS_TERRAIN) /* Retain upstream decoder APIs for the terrain importer. */
 static stbi__uint16 *stbi__convert_8_to_16(stbi_uc *orig, int w, int h, int channels)
 {
    int i;
@@ -1414,7 +1414,7 @@ static unsigned char *stbi__load_and_postprocess_8bit(stbi__context *s, int *x, 
    return (unsigned char *) result;
 }
 
-#if 0 /* not used in SDL */
+#if defined(STBI_OHOS_TERRAIN) /* Retain upstream decoder APIs for the terrain importer. */
 static stbi__uint16 *stbi__load_and_postprocess_16bit(stbi__context *s, int *x, int *y, int *comp, int req_comp)
 {
    stbi__result_info ri;
@@ -1545,7 +1545,7 @@ STBIDEF stbi_us *stbi_load_16(char const *filename, int *x, int *y, int *comp, i
 
 #endif //!STBI_NO_STDIO
 
-#if 0 /* not used in SDL */
+#if defined(STBI_OHOS_TERRAIN) /* Retain upstream decoder APIs for the terrain importer. */
 STBIDEF stbi_us *stbi_load_16_from_memory(stbi_uc const *buffer, int len, int *x, int *y, int *channels_in_file, int desired_channels)
 {
    stbi__context s;
@@ -4269,7 +4269,7 @@ static int stbi__jpeg_test(stbi__context *s)
    return r;
 }
 
-#if 0 /* not used in SDL */
+#if defined(STBI_OHOS_TERRAIN) /* Retain upstream decoder APIs for the terrain importer. */
 static int stbi__jpeg_info_raw(stbi__jpeg *j, int *x, int *y, int *comp)
 {
    if (!stbi__decode_jpeg_header(j, STBI__SCAN_header)) {
@@ -5561,7 +5561,7 @@ static int stbi__png_test(stbi__context *s)
    return r;
 }
 
-#if 0 /* not used in SDL */
+#if defined(STBI_OHOS_TERRAIN) /* Retain upstream decoder APIs for the terrain importer. */
 static int stbi__png_info_raw(stbi__png *p, int *x, int *y, int *comp)
 {
    if (!stbi__parse_png_file(p, STBI__SCAN_header, NULL, 0, NULL)) {
@@ -7894,7 +7894,7 @@ static int stbi__pnm_is16(stbi__context *s)
 }
 #endif
 
-#if 0 /* not used in SDL */
+#if defined(STBI_OHOS_TERRAIN) /* Retain upstream decoder APIs for the terrain importer. */
 static int stbi__info_main(stbi__context *s, int *x, int *y, int *comp)
 {
    #ifndef STBI_NO_JPEG
@@ -7998,7 +7998,7 @@ STBIDEF int stbi_is_16_bit_from_file(FILE *f)
 }
 #endif // !STBI_NO_STDIO
 
-#if 0 /* not used in SDL */
+#if defined(STBI_OHOS_TERRAIN) /* Retain upstream decoder APIs for the terrain importer. */
 STBIDEF int stbi_info_from_memory(stbi_uc const *buffer, int len, int *x, int *y, int *comp)
 {
    stbi__context s;

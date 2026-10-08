@@ -84,8 +84,11 @@ ArkTS / EntryAbility          应用宿主与平台生命周期
 
 - Vulkan / GLES 双后端，包含模型、材质、天空盒和图形资源管理代码。
 - 场景 shader 包含 IBL、阴影、模型、Bloom、后处理及 UI 绘制路径。
+- 16 位高度图地形：共享区块网格、四层材质混合、双后端绘制与阴影，以及静态 Jolt 碰撞。
 - glTF / GLB 模型、纹理和动画相关数据加载。
 - 字体、图标、触控覆盖层以及菜单与设置界面。
+
+地形当前采用固定分辨率网格和加载阶段材质烘焙；配置、示例场景与验证方法见 [高度图移植说明](ohos-project/tools/terrain_port/README.md)。
 
 两个后端的功能覆盖和交互行为仍有差异，具体效果以选定后端和设备为准。桌面引擎的编辑器、插件热重载和完整渲染管线仍在主仓库维护。
 
@@ -155,12 +158,11 @@ python .\entry\src\main\cpp\application\build_scene_shaders.py
 运行资源位于 `ohos-project/entry/src/main/resources/rawfile/`。原生 CMake 在配置阶段将场景复制到 `rawfile/scenes/main.json`，读取顺序为：
 
 1. 显式指定的 CMake 参数 `MIKAN_SCENE_FILE`。
-2. 当前源码中配置的作者工作站场景路径（仅在该文件存在时使用）。
-3. 仓库自带的 `application/scene/default_main.json`。
+2. 仓库自带的 `application/scene/default_main.json`，其中包含立方体地面下方的高度图地形。
 
 其他机器默认可以使用仓库中的场景。若需要固定另一个导出场景，可在模块的 `externalNativeOptions.arguments` 中加入 `-DMIKAN_SCENE_FILE=<场景文件路径>`。场景引用的模型、纹理和音频也需要按加载器约定打包到 rawfile；只复制 JSON 不会自动同步外部资产。
 
-当前配置仍包含作者工作站的可选场景探测路径，在该机器上构建可能重新生成打包场景。需要可重复的场景输入时，应显式指定 `MIKAN_SCENE_FILE`。
+构建默认使用仓库自带场景。导入主引擎导出场景时，请显式指定 `MIKAN_SCENE_FILE`；已有构建目录若缓存过该参数，需要清空它才能恢复默认场景。
 
 ## 运行与验证
 

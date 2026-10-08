@@ -263,6 +263,9 @@ void TouchController::HandleEvent(const SDL_Event& event, float width, float hei
                 if (dx * dx + dy * dy <= r * r) {
                     actionBtnFinger_[i] = finger;
                     actionBtnHeld_[i] = true;
+                    if (i == 2) {
+                        sprintEnabled_ = !sprintEnabled_;
+                    }
                     actionBtnPressedMask_ |= (1 << i);
                     TrackDown(finger, x, y, false);
                     return;
@@ -454,7 +457,8 @@ rhi::CameraInput TouchController::FrameInput()
     for (int i = 0; i < rhi::CameraInput::kActionButtonCount; ++i) {
         input.actionButtonX[i] = actionBtnX_[i];
         input.actionButtonY[i] = actionBtnY_[i];
-        input.actionButtonHeld[i] = actionBtnHeld_[i];
+        // Both renderers use this level for speed, animation and highlighting.
+        input.actionButtonHeld[i] = i == 2 ? sprintEnabled_ : actionBtnHeld_[i];
     }
     input.actionButtonRadius = actionBtnRadius_;
     // Edge-triggered presses queued since the last frame; the renderer

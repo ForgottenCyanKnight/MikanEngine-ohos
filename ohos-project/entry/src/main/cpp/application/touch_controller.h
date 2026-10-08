@@ -119,6 +119,8 @@ private:
     float actionBtnY_[rhi::CameraInput::kActionButtonCount] = {};
     float actionBtnRadius_ = 0.0f;
     bool actionBtnHeld_[rhi::CameraInput::kActionButtonCount] = {};
+    // Single-touch devices: Sprint is a tap toggle, independent of finger lift.
+    bool sprintEnabled_ = false;
     SDL_FingerID actionBtnFinger_[rhi::CameraInput::kActionButtonCount] = {};
     int actionBtnPressedMask_ = 0;
 

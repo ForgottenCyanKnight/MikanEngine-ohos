@@ -1,6 +1,7 @@
 #define LOG_DOMAIN 0xD001530
 #define LOG_TAG "NativeVulkan"
 
+#include "water/water_surface.h"
 #include <ace/xcomponent/native_interface_xcomponent.h>
 #include <hilog/log.h>
 
@@ -21,6 +22,7 @@
 #include "audio/audio_manager.h"
 #include "model_loader.h"
 #include "physics/jolt_gameplay_physics.h"
+#include "terrain/frustum_culling.h"
 #include "rhi/rhi.h"
 #include "rhi/sdf_font_metrics.h"
 #include "scene/scene_definition.h"
@@ -35,6 +37,7 @@
 #define STBI_ONLY_JPEG
 #define STBI_ONLY_PNG
 #include "stb_image.h"
+#include "terrain/heightmap_terrain.h"
 
 #include <algorithm>
 #include <array>
@@ -478,11 +481,11 @@ struct ModelVertexGpu {
     float metallicFactor;
     float roughnessFactor;
     float normalScale;
+    float waterSurface; // materialParams0.w
     float emissiveR;
     float emissiveG;
     float emissiveB;
     float aoStrength;
-    float materialPadding;
     std::uint32_t joints[4];
     float weights[4];
 };
@@ -554,6 +557,14 @@ struct UiPushConstants {
 
 static_assert(sizeof(UiPushConstants) == 16, "UI push constants must match std430 layout");
 
+struct WaterPushConstants {
+    Mat4 inverseViewProjection;
+    float camera[4];
+    float params[4];
+    float color[4];
+};
+static_assert(sizeof(WaterPushConstants) == 112, "Water push layout must match GLSL");
+
 struct PostProcessPushConstants {
     float exposure;
     float bloomStrength;
@@ -582,6 +593,8 @@ struct TextureResource {
 
 // GPU residency for one loaded glTF mesh.
 struct ModelMeshResource {
+    terrain::Bounds bounds;
+    bool castShadow = true;
     BufferResource vertexBuffer;
     BufferResource indexBuffer;
     uint32_t indexCount = 0;
@@ -601,6 +614,8 @@ struct ModelMaterialResource {
     float roughnessFactor = 1.0f;
     float normalScale = 1.0f;
     float emissiveFactor[3] = {0.0f, 0.0f, 0.0f};
+    bool waterSurface = false;
+    bool worldSpaceUv = false;
     float aoStrength = 1.0f;
 };
 
@@ -608,6 +623,8 @@ struct ModelMaterialResource {
 // These are hard-cut states by design: the source animation clips already
 // carry the same loop/one-shot semantics as the reference path.
 enum class ModelAnimationState : std::uint8_t {
+    SwimIdle,
+    SwimForward,
     Idle,
     Walk,
     Sprint,
@@ -637,6 +654,8 @@ struct ModelGpuAsset {
     int idleClip = -1;
     int walkClip = -1;
     int sprintClip = -1;
+    int swimIdleClip = -1;
+    int swimForwardClip = -1;
     int crouchClip = -1;
     int attackClip = -1;
     int jumpStartClip = -1;
@@ -658,7 +677,7 @@ struct ModelGpuAsset {
 };
 
 constexpr std::size_t kMaxJoints = 256;
-constexpr uint32_t kShadowMapSize = 1024;
+constexpr uint32_t kShadowMapSize = 2048;
 constexpr int kBloomDsLevels = 6;
 constexpr int kBloomUpLevels = 5;
 constexpr bool kEnableVulkanSkyboxMipmaps = true;
@@ -1130,6 +1149,7 @@ public:
         playerYaw_ = 0.0f;
         playerMoving_ = false;
         playerSprinting_ = false;
+        playerSwimming_ = false;
         crouchEnabled_ = false;
         playerHealth_ = playerMaxHealth_;
         playerAttackCooldown_ = 0.0f;
@@ -1266,6 +1286,9 @@ private:
 
     void DestroyDepthResources()
     {
+        if (device_ != VK_NULL_HANDLE && depthSampleView_ != VK_NULL_HANDLE)
+            vkDestroyImageView(device_, depthSampleView_, nullptr);
+        depthSampleView_ = VK_NULL_HANDLE;
         if (device_ != VK_NULL_HANDLE && depthImageView_ != VK_NULL_HANDLE) {
             vkDestroyImageView(device_, depthImageView_, nullptr);
         }
@@ -1357,6 +1380,7 @@ private:
         destroyAsset(enemyAsset_);
         destroyAsset(helmetAsset_);
         destroyAsset(groundAsset_);
+        destroyAsset(terrainAsset_);
         DestroyBuffer(identityJointBuffer_);
         sceneReady_ = false;
     }
@@ -1382,12 +1406,13 @@ private:
         if (device_ != VK_NULL_HANDLE && descriptorPool_ != VK_NULL_HANDLE &&
             (!descriptorSets_.empty() || !playerAsset_.materialSets.empty() ||
                 !enemyAsset_.materialSets.empty() || !helmetAsset_.materialSets.empty() ||
-                !groundAsset_.materialSets.empty() ||
+                !groundAsset_.materialSets.empty() || !terrainAsset_.materialSets.empty() ||
                 !postDescriptorSets_.empty() || bloomThresholdDescriptorSet_ != VK_NULL_HANDLE)) {
             vkResetDescriptorPool(device_, descriptorPool_, 0);
         }
         descriptorSets_.clear();
         postDescriptorSets_.clear();
+        waterDescriptorSet_ = VK_NULL_HANDLE;
         bloomThresholdDescriptorSet_ = VK_NULL_HANDLE;
         bloomDownDescriptorSets_.fill(VK_NULL_HANDLE);
         bloomUpDescriptorSets_.fill(VK_NULL_HANDLE);
@@ -1397,6 +1422,7 @@ private:
         enemyAsset_.materialSets.clear();
         helmetAsset_.materialSets.clear();
         groundAsset_.materialSets.clear();
+        terrainAsset_.materialSets.clear();
         overlayDescriptorSet_ = VK_NULL_HANDLE;
         actionIconDescriptorSets_.fill(VK_NULL_HANDLE);
 
@@ -1414,6 +1440,8 @@ private:
                 vkDestroyFramebuffer(device_, framebuffer, nullptr);
             }
             postFramebuffers_.clear();
+            if (waterFramebuffer_ != VK_NULL_HANDLE) vkDestroyFramebuffer(device_, waterFramebuffer_, nullptr);
+            waterFramebuffer_ = VK_NULL_HANDLE;
             for (VkFramebuffer framebuffer : bloomDsFramebuffers_) {
                 vkDestroyFramebuffer(device_, framebuffer, nullptr);
             }
@@ -1450,6 +1478,8 @@ private:
                 vkDestroyPipeline(device_, textPipeline_, nullptr);
             }
             textPipeline_ = VK_NULL_HANDLE;
+            if (waterPipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, waterPipeline_, nullptr);
+            waterPipeline_ = VK_NULL_HANDLE;
             if (postPipeline_ != VK_NULL_HANDLE) {
                 vkDestroyPipeline(device_, postPipeline_, nullptr);
             }
@@ -1490,6 +1520,7 @@ private:
                 vkDestroyRenderPass(device_, shadowRenderPass_, nullptr);
             }
             shadowRenderPass_ = VK_NULL_HANDLE;
+            DestroyTexture(waterColorTarget_);
             DestroyTexture(sceneColorTarget_);
             DestroyTexture(shadowMap_);
             for (TextureResource& texture : bloomDs_) {
@@ -3178,7 +3209,7 @@ private:
     {
         const std::size_t staticCubeCount = sceneDefinition_ != nullptr
             ? sceneDefinition_->StaticCubeCount() : 0;
-        modelInstanceData_.assign(4 + staticCubeCount, CharacterInstanceData{});
+        modelInstanceData_.assign(5 + staticCubeCount, CharacterInstanceData{});
         return CreateBuffer(sizeof(CharacterInstanceData) * modelInstanceData_.size(),
             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
@@ -3244,7 +3275,7 @@ private:
             descriptorSetLayout_ = VK_NULL_HANDLE;
             return false;
         }
-        VkDescriptorSetLayoutBinding postBindings[2]{};
+        VkDescriptorSetLayoutBinding postBindings[3]{};
         postBindings[0].binding = 0;
         postBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         postBindings[0].descriptorCount = 1;
@@ -3253,8 +3284,10 @@ private:
         postBindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         postBindings[1].descriptorCount = 1;
         postBindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        postBindings[2] = postBindings[1];
+        postBindings[2].binding = 2;
         VkDescriptorSetLayoutCreateInfo postLayoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-        postLayoutInfo.bindingCount = 2;
+        postLayoutInfo.bindingCount = 3;
         postLayoutInfo.pBindings = postBindings;
         result = vkCreateDescriptorSetLayout(device_, &postLayoutInfo, nullptr,
             &postDescriptorSetLayout_);
@@ -3357,8 +3390,8 @@ private:
     // reading.
     bool CreateModelDescriptorSets()
     {
-        const std::array<ModelGpuAsset*, 4> assets = {
-            &playerAsset_, &enemyAsset_, &helmetAsset_, &groundAsset_};
+        const std::array<ModelGpuAsset*, 5> assets = {
+            &playerAsset_, &enemyAsset_, &helmetAsset_, &groundAsset_, &terrainAsset_};
         size_t totalSets = 0;
         for (const ModelGpuAsset* asset : assets) {
             if (asset->loaded) {
@@ -3605,7 +3638,7 @@ private:
                 return false;
             }
             imageInfos[index].sampler = sampler_;
-            imageInfos[index].imageView = sceneColorTarget_.view;
+            imageInfos[index].imageView = waterColorTarget_.view;
             imageInfos[index].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
             bloomInfos[index].sampler = sampler_;
             bloomInfos[index].imageView = bloomUp_[0].view;
@@ -3622,6 +3655,30 @@ private:
             writes.push_back(write);
         }
         vkUpdateDescriptorSets(device_, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+        return true;
+    }
+
+    bool CreateWaterDescriptorSet()
+    {
+        VkDescriptorSetAllocateInfo allocate{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        allocate.descriptorPool = descriptorPool_;
+        allocate.descriptorSetCount = 1;
+        allocate.pSetLayouts = &postDescriptorSetLayout_;
+        if (vkAllocateDescriptorSets(device_, &allocate, &waterDescriptorSet_) != VK_SUCCESS) return false;
+        VkDescriptorImageInfo images[3]{};
+        images[0] = {sampler_, sceneColorTarget_.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        images[1] = {sampler_, depthSampleView_, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL};
+        images[2] = {sampler_, skyboxTexture_.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet writes[3]{};
+        for (uint32_t i = 0; i < 3; ++i) {
+            writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[i].dstSet = waterDescriptorSet_;
+            writes[i].dstBinding = i;
+            writes[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[i].descriptorCount = 1;
+            writes[i].pImageInfo = &images[i];
+        }
+        vkUpdateDescriptorSets(device_, 3, writes, 0, nullptr);
         return true;
     }
 
@@ -3668,7 +3725,7 @@ private:
             return true;
         };
 
-        if (!allocateSet(bloomThresholdDescriptorSet_, sceneColorTarget_, nullptr)) {
+        if (!allocateSet(bloomThresholdDescriptorSet_, waterColorTarget_, nullptr)) {
             return false;
         }
         for (int level = 1; level < kBloomDsLevels; ++level) {
@@ -3834,6 +3891,12 @@ private:
                 "SDL3_MODEL stage=load_failed path=%s error=%s", path, error.c_str());
             return false;
         }
+        if (&asset == &groundAsset_) for (auto& material : model.materials) material.worldSpaceUv = true;
+        return UploadModelAsset(path, model, asset, bakeSkinned);
+    }
+
+    bool UploadModelAsset(const char* path, ohos_model::Model& model, ModelGpuAsset& asset, bool bakeSkinned)
+    {
         asset.textures.reserve(model.images.size());
         for (const ohos_model::Image& image : model.images) {
             asset.textures.emplace_back();
@@ -3863,6 +3926,8 @@ private:
             resource.metallicFactor = material.metallicFactor;
             resource.roughnessFactor = material.roughnessFactor;
             resource.normalScale = material.normalScale;
+            resource.waterSurface = material.waterSurface;
+            resource.worldSpaceUv = material.worldSpaceUv;
             std::memcpy(resource.emissiveFactor, material.emissiveFactor,
                 sizeof(resource.emissiveFactor));
             asset.materials.push_back(resource);
@@ -3874,6 +3939,8 @@ private:
                 continue;
             }
             ModelMeshResource resource;
+            resource.castShadow = mesh.castShadow;
+            for (const auto& vertex : mesh.vertices) resource.bounds.Add(vertex.position);
             resource.indexCount = static_cast<uint32_t>(mesh.indices.size());
             resource.materialIndex = mesh.materialIndex;
             resource.indexType = mesh.indexBytes == 4 ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
@@ -3936,7 +4003,7 @@ private:
                 destination.emissiveG = materialInfo.emissiveFactor[1];
                 destination.emissiveB = materialInfo.emissiveFactor[2];
                 destination.aoStrength = materialInfo.aoStrength;
-                destination.materialPadding = 0.0f;
+                destination.waterSurface = materialInfo.worldSpaceUv ? 2.0f : (materialInfo.waterSurface ? 1.0f : 0.0f);
                 for (int slot = 0; slot < 4; ++slot) {
                     destination.joints[slot] = source.joints[slot];
                     destination.weights[slot] = static_cast<float>(source.weights[slot]) / 255.0f;
@@ -4005,6 +4072,8 @@ private:
                 asset.idleClip = findClip("Idle_Loop");
                 asset.walkClip = findClip("Walk_Loop");
                 asset.sprintClip = findClip("Sprint_Loop");
+                asset.swimIdleClip = findClip("Swim_Idle_Loop");
+                asset.swimForwardClip = findClip("Swim_Fwd_Loop");
                 asset.crouchClip = findClip("Crouch_Idle_Loop");
                 asset.attackClip = findClip("Punch_Jab");
                 asset.jumpStartClip = findClip("Jump_Start");
@@ -4040,6 +4109,18 @@ private:
         (void)LoadModelAsset(kModelPath, enemyAsset_, true);
         (void)LoadModelAsset(kHelmetPath, helmetAsset_, false);
         (void)LoadModelAsset(kCubePath, groundAsset_, false);
+        if (sceneDefinition_ != nullptr) {
+            ohos_model::Model model;
+            std::string error;
+            if (!terrain::BuildModel(*sceneDefinition_, physics::kGroundCollider.centerY +
+                    physics::kGroundCollider.halfExtentY, model, error)) {
+                SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "SDL3_TERRAIN stage=load_failed error=%s", error.c_str());
+            } else {
+                // Sea is composited after opaque rendering; preserve bottom color/depth.
+                if (!model.meshes.empty())
+                    (void)UploadModelAsset("terrain", model, terrainAsset_, false);
+            }
+        }
     }
 
     bool CreateSceneResources()
@@ -4293,6 +4374,7 @@ private:
         VkShaderModule textFragment = VK_NULL_HANDLE;
         VkShaderModule postVertex = VK_NULL_HANDLE;
         VkShaderModule postFragment = VK_NULL_HANDLE;
+        VkShaderModule waterFragment = VK_NULL_HANDLE;
         VkShaderModule bloomThresholdFragment = VK_NULL_HANDLE;
         VkShaderModule bloomDownFragment = VK_NULL_HANDLE;
         VkShaderModule bloomUpFragment = VK_NULL_HANDLE;
@@ -4312,6 +4394,8 @@ private:
             !CreateShaderModule(kSceneTextFragSpv, kSceneTextFragSpvWordCount, &textFragment) ||
             !CreateShaderModule(kScenePostVertSpv, kScenePostVertSpvWordCount, &postVertex) ||
             !CreateShaderModule(kScenePostFragSpv, kScenePostFragSpvWordCount, &postFragment) ||
+            !CreateShaderModule(native_vulkan_scene::kSceneWaterFragSpv,
+                native_vulkan_scene::kSceneWaterFragSpvWordCount, &waterFragment) ||
             !CreateShaderModule(kSceneBloomThresholdFragSpv, kSceneBloomThresholdFragSpvWordCount,
                 &bloomThresholdFragment) ||
             !CreateShaderModule(kSceneBloomDownFragSpv, kSceneBloomDownFragSpvWordCount,
@@ -4333,6 +4417,7 @@ private:
             if (textFragment != VK_NULL_HANDLE) vkDestroyShaderModule(device_, textFragment, nullptr);
             if (postVertex != VK_NULL_HANDLE) vkDestroyShaderModule(device_, postVertex, nullptr);
             if (postFragment != VK_NULL_HANDLE) vkDestroyShaderModule(device_, postFragment, nullptr);
+            if (waterFragment != VK_NULL_HANDLE) vkDestroyShaderModule(device_, waterFragment, nullptr);
             if (bloomThresholdFragment != VK_NULL_HANDLE) vkDestroyShaderModule(device_, bloomThresholdFragment, nullptr);
             if (bloomDownFragment != VK_NULL_HANDLE) vkDestroyShaderModule(device_, bloomDownFragment, nullptr);
             if (bloomUpFragment != VK_NULL_HANDLE) vkDestroyShaderModule(device_, bloomUpFragment, nullptr);
@@ -4382,6 +4467,8 @@ private:
                 VertexLayout::kText, VK_TRUE);
             postPipeline_ = CreatePipeline(postVertex, postFragment, VK_CULL_MODE_NONE, VK_FALSE, VK_FALSE,
                 VertexLayout::kNone, VK_FALSE, postRenderPass_);
+            waterPipeline_ = CreatePipeline(postVertex, waterFragment, VK_CULL_MODE_NONE, VK_FALSE, VK_FALSE,
+                VertexLayout::kNone, VK_FALSE, bloomRenderPass_);
             bloomThresholdPipeline_ = CreatePipeline(postVertex, bloomThresholdFragment,
                 VK_CULL_MODE_NONE, VK_FALSE, VK_FALSE, VertexLayout::kNone, VK_FALSE, bloomRenderPass_);
             bloomDownPipeline_ = CreatePipeline(postVertex, bloomDownFragment,
@@ -4392,7 +4479,7 @@ private:
                 modelPipeline_ == VK_NULL_HANDLE || shadowPipeline_ == VK_NULL_HANDLE ||
                 overlayPipeline_ == VK_NULL_HANDLE ||
                 iconPipeline_ == VK_NULL_HANDLE ||
-                textPipeline_ == VK_NULL_HANDLE || postPipeline_ == VK_NULL_HANDLE ||
+                textPipeline_ == VK_NULL_HANDLE || postPipeline_ == VK_NULL_HANDLE || waterPipeline_ == VK_NULL_HANDLE ||
                 bloomThresholdPipeline_ == VK_NULL_HANDLE || bloomDownPipeline_ == VK_NULL_HANDLE ||
                 bloomUpPipeline_ == VK_NULL_HANDLE) {
                 result = VK_ERROR_INITIALIZATION_FAILED;
@@ -4414,6 +4501,7 @@ private:
         vkDestroyShaderModule(device_, textFragment, nullptr);
         vkDestroyShaderModule(device_, postVertex, nullptr);
         vkDestroyShaderModule(device_, postFragment, nullptr);
+        vkDestroyShaderModule(device_, waterFragment, nullptr);
         vkDestroyShaderModule(device_, bloomThresholdFragment, nullptr);
         vkDestroyShaderModule(device_, bloomDownFragment, nullptr);
         vkDestroyShaderModule(device_, bloomUpFragment, nullptr);
@@ -4446,6 +4534,8 @@ private:
                 vkDestroyPipeline(device_, textPipeline_, nullptr);
                 textPipeline_ = VK_NULL_HANDLE;
             }
+            if (waterPipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, waterPipeline_, nullptr);
+            waterPipeline_ = VK_NULL_HANDLE;
             if (postPipeline_ != VK_NULL_HANDLE) {
                 vkDestroyPipeline(device_, postPipeline_, nullptr);
                 postPipeline_ = VK_NULL_HANDLE;
@@ -4495,7 +4585,8 @@ private:
         for (VkFormat format : candidates) {
             VkFormatProperties properties{};
             vkGetPhysicalDeviceFormatProperties(physicalDevice_, format, &properties);
-            if ((properties.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) != 0) {
+            if ((properties.optimalTilingFeatures & (VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)) ==
+                (VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)) {
                 return format;
             }
         }
@@ -4522,11 +4613,12 @@ private:
             return false;
         }
         if (!CreateImage(SceneExtent().width, SceneExtent().height, 1, depthFormat_,
-            VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, 0, depthImage_, depthMemory_)) {
+            VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, 0, depthImage_, depthMemory_)) {
             return false;
         }
         if (!CreateImageView(depthImage_, depthFormat_, VK_IMAGE_VIEW_TYPE_2D, 1, DepthAspectMask(),
-            &depthImageView_)) {
+            &depthImageView_) ||
+            !CreateImageView(depthImage_, depthFormat_, VK_IMAGE_VIEW_TYPE_2D, 1, VK_IMAGE_ASPECT_DEPTH_BIT, &depthSampleView_)) {
             DestroyDepthResources();
             return false;
         }
@@ -4605,12 +4697,39 @@ private:
         if (!asset.loaded || modelInstanceBuffer_.buffer == VK_NULL_HANDLE || instanceCount == 0) {
             return;
         }
-        const ModelPushConstants pushConstants = {viewProj, Mat4Identity(), enemyDissolve, {}};
+        const terrain::Frustum frustum(viewProj.value, true);
+        const size_t firstInstance = static_cast<size_t>(instanceOffset / sizeof(CharacterInstanceData));
+        const bool actor = &asset == &playerAsset_ || &asset == &enemyAsset_;
+        if (actor) {
+            uint32_t visibleCount = 0;
+            uint32_t visibleInstance = 0;
+            for (uint32_t i=0; i<instanceCount; ++i) {
+                const size_t slot = firstInstance+i;
+                if (slot >= modelInstanceData_.size()) continue;
+                const bool enemy = modelInstanceData_[slot].skinIndex == 1;
+                if (frustum.Intersects(terrain::TransformBounds(terrain::ActorBounds(enemy),
+                        modelInstanceData_[slot].model.value))) {
+                    ++visibleCount; visibleInstance=i;
+                }
+            }
+            if (!visibleCount) return;
+            if (visibleCount != instanceCount) {
+                RecordModelDraw(commandBuffer, imageIndex, asset, viewProj,
+                    instanceOffset + sizeof(CharacterInstanceData)*visibleInstance, 1, enemyDissolve);
+                return;
+            }
+        }
+        const ModelPushConstants pushConstants = {viewProj, Mat4Identity(), enemyDissolve,
+            {static_cast<float>(SDL_GetTicks() % 3600000U) * 0.001f, 0.0f, 0.0f}};
         vkCmdPushConstants(commandBuffer, pipelineLayout_,
             VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
             sizeof(pushConstants), &pushConstants);
         const size_t materialCount = asset.materials.empty() ? 1 : asset.materials.size();
+
         for (const ModelMeshResource& mesh : asset.meshes) {
+            if (!actor && firstInstance < modelInstanceData_.size() &&
+                !frustum.Intersects(terrain::TransformBounds(mesh.bounds,
+                    modelInstanceData_[firstInstance].model.value))) continue;
             if (mesh.indexCount == 0 || mesh.vertexBuffer.buffer == VK_NULL_HANDLE ||
                 mesh.indexBuffer.buffer == VK_NULL_HANDLE) {
                 continue;
@@ -4644,12 +4763,39 @@ private:
         if (!asset.loaded || modelInstanceBuffer_.buffer == VK_NULL_HANDLE || instanceCount == 0) {
             return;
         }
+        const terrain::Frustum frustum(shadowViewProj.value, true);
+        const size_t firstInstance = static_cast<size_t>(instanceOffset / sizeof(CharacterInstanceData));
+        const bool actor = &asset == &playerAsset_ || &asset == &enemyAsset_;
+        if (actor) {
+            uint32_t visibleCount = 0;
+            uint32_t visibleInstance = 0;
+            for (uint32_t i=0; i<instanceCount; ++i) {
+                const size_t slot = firstInstance+i;
+                if (slot >= modelInstanceData_.size()) continue;
+                const bool enemy = modelInstanceData_[slot].skinIndex == 1;
+                if (frustum.Intersects(terrain::TransformBounds(terrain::ActorBounds(enemy),
+                        modelInstanceData_[slot].model.value))) {
+                    ++visibleCount; visibleInstance=i;
+                }
+            }
+            if (!visibleCount) return;
+            if (visibleCount != instanceCount) {
+                RecordShadowDraw(commandBuffer, imageIndex, asset, shadowViewProj,
+                    instanceOffset + sizeof(CharacterInstanceData)*visibleInstance, 1, enemyDissolve);
+                return;
+            }
+        }
         const ModelPushConstants pushConstants = {shadowViewProj, Mat4Identity(), enemyDissolve, {}};
         vkCmdPushConstants(commandBuffer, pipelineLayout_,
             VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
             sizeof(pushConstants), &pushConstants);
         const size_t materialCount = asset.materials.empty() ? 1 : asset.materials.size();
+
         for (const ModelMeshResource& mesh : asset.meshes) {
+            if (!actor && firstInstance < modelInstanceData_.size() &&
+                !frustum.Intersects(terrain::TransformBounds(mesh.bounds,
+                    modelInstanceData_[firstInstance].model.value))) continue;
+            if (!mesh.castShadow) continue;
             if (mesh.indexCount == 0 || mesh.vertexBuffer.buffer == VK_NULL_HANDLE ||
                 mesh.indexBuffer.buffer == VK_NULL_HANDLE) {
                 continue;
@@ -5640,6 +5786,7 @@ private:
         instances[2].skinIndex = 0;
         instances[3].model = groundTransform;
         instances[3].skinIndex = 0;
+        instances[modelInstanceData_.size() - 1].model = Mat4Identity();
         std::size_t nextStaticInstance = 4;
         if (sceneDefinition_ != nullptr) {
             for (const scene::Entity& entity : sceneDefinition_->entities) {
@@ -5709,6 +5856,10 @@ private:
                     ++staticInstance;
                 }
             }
+            if (terrainAsset_.loaded) {
+                RecordShadowDraw(commandBuffer, static_cast<uint32_t>(index), terrainAsset_,
+                    shadowMatrix_, sizeof(CharacterInstanceData) * (modelInstanceData_.size() - 1), 1);
+            }
             vkCmdEndRenderPass(commandBuffer);
         }
 
@@ -5736,8 +5887,12 @@ private:
             vkCmdDraw(commandBuffer, 3, 1, 0, 0);
             if (renderGameplayScene) {
                 if (playerAsset_.loaded || (enemyVisible_ && enemyAsset_.loaded) ||
-                    helmetAsset_.loaded || groundAsset_.loaded) {
+                    helmetAsset_.loaded || groundAsset_.loaded || terrainAsset_.loaded) {
                     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, modelPipeline_);
+                    if (terrainAsset_.loaded) {
+                        RecordModelDraw(commandBuffer, static_cast<uint32_t>(index), terrainAsset_,
+                            viewProj_, sizeof(CharacterInstanceData) * (modelInstanceData_.size() - 1), 1);
+                    }
                     if (playerAsset_.loaded) {
                         RecordModelDraw(commandBuffer, static_cast<uint32_t>(index), playerAsset_,
                             viewProj_, 0, characterInstanceCount, enemyDissolveAmount_);
@@ -5773,6 +5928,39 @@ private:
             }
         }
 
+        vkCmdEndRenderPass(commandBuffer);
+
+        // Retained opaque color/depth -> water composite -> bloom/tonemap.
+        VkClearValue waterClear{};
+        VkRenderPassBeginInfo waterPass{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+        waterPass.renderPass = bloomRenderPass_;
+        waterPass.framebuffer = waterFramebuffer_;
+        waterPass.renderArea.extent = sceneExtent;
+        waterPass.clearValueCount = 1;
+        waterPass.pClearValues = &waterClear;
+        vkCmdBeginRenderPass(commandBuffer, &waterPass, VK_SUBPASS_CONTENTS_INLINE);
+        VkViewport waterViewport{};
+        waterViewport.width = static_cast<float>(sceneExtent.width);
+        waterViewport.height = static_cast<float>(sceneExtent.height);
+        waterViewport.maxDepth = 1.0f;
+        VkRect2D waterScissor{};
+        waterScissor.extent = sceneExtent;
+        vkCmdSetViewport(commandBuffer, 0, 1, &waterViewport);
+        vkCmdSetScissor(commandBuffer, 0, 1, &waterScissor);
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, waterPipeline_);
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
+            2, 1, &waterDescriptorSet_, 0, nullptr);
+        WaterPushConstants waterPush{};
+        const bool inverseReady = water::InverseViewProjection(viewProj_.value, waterPush.inverseViewProjection.value);
+        const scene::WaterSurface waterSettings = sceneDefinition_ != nullptr ? sceneDefinition_->water : scene::WaterSurface{};
+        waterPush.camera[0] = camPosX_; waterPush.camera[1] = camPosY_; waterPush.camera[2] = camPosZ_;
+        waterPush.camera[3] = renderGameplayScene && waterSettings.enabled && inverseReady ? 1.0f : 0.0f;
+        waterPush.params[0] = waterSettings.height; waterPush.params[1] = waterSettings.size * 0.5f;
+        waterPush.params[2] = waterSettings.roughness;
+        waterPush.params[3] = static_cast<float>(SDL_GetTicks() % 3600000U) * 0.001f;
+        waterPush.color[0] = waterSettings.color.x; waterPush.color[1] = waterSettings.color.y; waterPush.color[2] = waterSettings.color.z;
+        vkCmdPushConstants(commandBuffer, pipelineLayout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(waterPush), &waterPush);
+        vkCmdDraw(commandBuffer, 3, 1, 0, 0);
         vkCmdEndRenderPass(commandBuffer);
 
         // GLES bloom chain: threshold at 1/2 resolution, five dual-kernel
@@ -5970,6 +6158,15 @@ private:
             return true;
         };
         const VkExtent2D sceneExtent = SceneExtent();
+        if (!createBloomTexture(waterColorTarget_, sceneExtent.width, sceneExtent.height)) return false;
+        VkFramebufferCreateInfo waterFramebufferInfo{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+        waterFramebufferInfo.renderPass = bloomRenderPass_;
+        waterFramebufferInfo.attachmentCount = 1;
+        waterFramebufferInfo.pAttachments = &waterColorTarget_.view;
+        waterFramebufferInfo.width = sceneExtent.width;
+        waterFramebufferInfo.height = sceneExtent.height;
+        waterFramebufferInfo.layers = 1;
+        if (vkCreateFramebuffer(device_, &waterFramebufferInfo, nullptr, &waterFramebuffer_) != VK_SUCCESS) return false;
         uint32_t bloomWidth = std::max(sceneExtent.width / 2U, 1U);
         uint32_t bloomHeight = std::max(sceneExtent.height / 2U, 1U);
         for (int level = 0; level < kBloomDsLevels; ++level) {
@@ -6101,7 +6298,7 @@ private:
         if (!CreateOverlayDescriptorSet()) {
             return false;
         }
-        if (!CreateBloomDescriptorSets() || !CreatePostDescriptorSets()) {
+        if (!CreateBloomDescriptorSets() || !CreateWaterDescriptorSet() || !CreatePostDescriptorSets()) {
             return false;
         }
         for (size_t index = 0; index < commandBuffers_.size(); ++index) {
@@ -6206,6 +6403,8 @@ private:
     static const char* AnimationStateName(ModelAnimationState state)
     {
         switch (state) {
+        case ModelAnimationState::SwimIdle:
+        case ModelAnimationState::SwimForward: return "SWIM";
         case ModelAnimationState::Idle: return "IDLE";
         case ModelAnimationState::Walk: return "WALK";
         case ModelAnimationState::Sprint: return "RUN";
@@ -6222,6 +6421,7 @@ private:
 
     ModelAnimationState GroundedPlayerAnimationState() const
     {
+        if (playerSwimming_) return playerMoving_ ? ModelAnimationState::SwimForward : ModelAnimationState::SwimIdle;
         if (crouchEnabled_) {
             return ModelAnimationState::Crouch;
         }
@@ -6247,6 +6447,10 @@ private:
         int targetClip = asset.walkClip;
         bool targetLoop = true;
         switch (next) {
+        case ModelAnimationState::SwimIdle:
+            targetClip = asset.swimIdleClip; targetLoop = true; break;
+        case ModelAnimationState::SwimForward:
+            targetClip = asset.swimForwardClip; targetLoop = true; break;
         case ModelAnimationState::Idle:
             targetClip = asset.idleClip; targetLoop = true; break;
         case ModelAnimationState::Walk:
@@ -6307,6 +6511,13 @@ private:
             }
             return;
         }
+        if (playerSwimming_) {
+            EnterPlayerAnimationState(GroundedPlayerAnimationState());
+            return;
+        }
+        if (asset.animationState == ModelAnimationState::SwimIdle ||
+            asset.animationState == ModelAnimationState::SwimForward)
+            EnterPlayerAnimationState(GroundedPlayerAnimationState());
         // UpdateEnemyAi admits the attack edge only when the shared combat
         // cooldown is ready.  Reuse that decision here so the animation and
         // the hit query cannot disagree when the button is tapped rapidly.
@@ -6355,6 +6566,8 @@ private:
                 EnterPlayerAnimationState(GroundedPlayerAnimationState());
             }
             break;
+        case ModelAnimationState::SwimIdle:
+        case ModelAnimationState::SwimForward:
         case ModelAnimationState::Idle:
         case ModelAnimationState::Walk:
         case ModelAnimationState::Sprint:
@@ -6484,6 +6697,10 @@ private:
         int targetClip = asset.walkClip;
         bool targetLoop = true;
         switch (next) {
+        case ModelAnimationState::SwimIdle:
+            targetClip = asset.swimIdleClip; targetLoop = true; break;
+        case ModelAnimationState::SwimForward:
+            targetClip = asset.swimForwardClip; targetLoop = true; break;
         case ModelAnimationState::Idle:
             targetClip = asset.idleClip; targetLoop = true; break;
         case ModelAnimationState::Walk:
@@ -6763,7 +6980,7 @@ private:
             if (physicsWorld_ == nullptr || !physicsWorld_->IsReady()) {
                 enemyX_ += enemyDesiredVelocityX_ * dt;
                 enemyZ_ += enemyDesiredVelocityZ_ * dt;
-                constexpr float kGroundBound = 8.5f;
+                constexpr float kGroundBound = physics::kGroundCollider.halfExtentX - 1.5f;
                 enemyX_ = std::max(-kGroundBound, std::min(kGroundBound, enemyX_));
                 enemyZ_ = std::max(-kGroundBound, std::min(kGroundBound, enemyZ_));
             }
@@ -6883,7 +7100,7 @@ private:
                 if (!physicsReady) {
                     playerX_ += desiredVelocityX * dt;
                     playerZ_ += desiredVelocityZ * dt;
-                    constexpr float kGroundBound = 8.5f;
+                    constexpr float kGroundBound = physics::kGroundCollider.halfExtentX - 1.5f;
                     playerX_ = std::max(-kGroundBound, std::min(kGroundBound, playerX_));
                     playerZ_ = std::max(-kGroundBound, std::min(kGroundBound, playerZ_));
                     playerY_ = 0.0f;
@@ -6913,6 +7130,8 @@ private:
             playerY_ = 0.0f;
         }
         playerMoving_ = stickMagnitude > 0.15f && !playerLocked;
+        playerSwimming_ = sceneDefinition_ != nullptr && water::PlayerSubmerged(*sceneDefinition_,
+            playerX_, playerY_ - physics::kPlayerVisualOriginOffset, playerZ_, playerSwimming_);
         // Keep the action edge available for UpdatePlayerAnimationStateMachine;
         // the same edge is used here for an in-range enemy hit.
         if (gameplayInput) {
@@ -7300,11 +7519,11 @@ private:
         depthAttachment.format = depthFormat_;
         depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
         depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
         depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
         depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
         VkAttachmentDescription sceneAttachments[] = {sceneColorAttachment, depthAttachment};
         VkAttachmentReference sceneColorReference{};
         sceneColorReference.attachment = 0;
@@ -7323,13 +7542,16 @@ private:
         sceneDependencies[0].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
             VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
         sceneDependencies[0].dstStageMask = sceneDependencies[0].srcStageMask;
+        sceneDependencies[0].srcStageMask |= VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        sceneDependencies[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
         sceneDependencies[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
             VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
         sceneDependencies[1].srcSubpass = 0;
         sceneDependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
-        sceneDependencies[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        sceneDependencies[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
         sceneDependencies[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-        sceneDependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        sceneDependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
         sceneDependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
         VkRenderPassCreateInfo sceneCreateInfo{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
         sceneCreateInfo.attachmentCount = 2;
@@ -7532,6 +7754,7 @@ private:
     VkImage depthImage_ = VK_NULL_HANDLE;
     VkDeviceMemory depthMemory_ = VK_NULL_HANDLE;
     VkImageView depthImageView_ = VK_NULL_HANDLE;
+    VkImageView depthSampleView_ = VK_NULL_HANDLE;
     VkRenderPass renderPass_ = VK_NULL_HANDLE;
     VkRenderPass postRenderPass_ = VK_NULL_HANDLE;
     VkRenderPass bloomRenderPass_ = VK_NULL_HANDLE;
@@ -7576,6 +7799,10 @@ private:
     TextureResource textAtlasTexture_;
     std::array<TextureResource, rhi::CameraInput::kActionButtonCount> actionIconTextures_{};
     TextureResource sceneColorTarget_;
+    TextureResource waterColorTarget_;
+    VkFramebuffer waterFramebuffer_ = VK_NULL_HANDLE;
+    VkDescriptorSet waterDescriptorSet_ = VK_NULL_HANDLE;
+    VkPipeline waterPipeline_ = VK_NULL_HANDLE;
     TextureResource shadowMap_;
     std::array<TextureResource, kBloomDsLevels> bloomDs_{};
     std::array<TextureResource, kBloomUpLevels> bloomUp_{};
@@ -7609,11 +7836,12 @@ private:
     ModelGpuAsset enemyAsset_;
     ModelGpuAsset helmetAsset_;
     ModelGpuAsset groundAsset_;
+    ModelGpuAsset terrainAsset_;
     static constexpr const char* kModelPath =
         "models/Quaternius/AnimationLibrary_Standard.glb";
     static constexpr const char* kHelmetPath =
         "models/DamagedHelmet/glTF/DamagedHelmet.gltf";
-    static constexpr const char* kCubePath = "models/BaseModel/cube.glb";
+    static constexpr const char* kCubePath = "models/CrackedStonebrick/cube.gltf";
     bool sceneReady_ = false;
     bool swapchainDirty_ = false;
     bool surfaceNeedsRecreate_ = false;
@@ -7672,6 +7900,7 @@ private:
     float enemyDesiredVelocityZ_ = 0.0f;
     bool playerMoving_ = false;
     bool playerSprinting_ = false;
+    bool playerSwimming_ = false;
     bool crouchEnabled_ = false;
     Uint64 moveLastTicks_ = 0;
     Mat4 viewProj_{};

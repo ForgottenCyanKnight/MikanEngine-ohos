@@ -32,6 +32,7 @@ layout(location = 4) in vec4 vMaterialParams0;
 layout(location = 5) in vec4 vMaterialParams1;
 layout(location = 6) in vec4 vInstanceMarker;
 layout(location = 7) in flat float vDissolve;
+layout(location = 8) in flat float vWaterTime;
 
 layout(location = 0) out vec4 outColor;
 
@@ -80,7 +81,7 @@ float ShadowVisibility(vec3 worldPosition, vec3 N, vec3 L)
     // Keep this in lockstep with the GLES deferred-lighting shader.  The
     // larger slope-scaled receiver bias complements the shadow-pass offset.
     float bias = max(0.008 * (1.0 - max(dot(N, L), 0.0)), 0.0015);
-    vec2 texel = vec2(1.0 / 1024.0);
+    vec2 texel = 1.0 / vec2(textureSize(shadowMap, 0));
     float visible = 0.0;
     for (int y = -1; y <= 1; ++y) {
         for (int x = -1; x <= 1; ++x) {
@@ -168,21 +169,94 @@ vec3 PerturbNormal(vec3 geometricNormal, vec3 worldPosition, vec2 uv, float norm
     return normalize(tbn * mapNormal);
 }
 
+// Four advected noise octaves with analytic height gradients. Geometry stays
+// at the fixed sea level; only the reflection normal changes.
+float WaterHash(vec2 p)
+{
+    vec3 q = fract(vec3(p.xyx) * 0.1031);
+    q += dot(q, q.yzx + 33.33);
+    return fract((q.x + q.y) * q.z);
+}
+
+vec2 WaterNoiseGradient(vec2 p)
+{
+    vec2 cell = floor(p);
+    vec2 f = fract(p);
+    // Quintic interpolation gives continuous first and second derivatives
+    // across lattice boundaries, without finite-difference texture samples.
+    vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+    vec2 du = 30.0 * f * f * (f * (f - 2.0) + 1.0);
+    float a = WaterHash(cell);
+    float b = WaterHash(cell + vec2(1.0, 0.0));
+    float c = WaterHash(cell + vec2(0.0, 1.0));
+    float d = WaterHash(cell + vec2(1.0, 1.0));
+    return vec2(mix(b - a, d - c, u.y) * du.x,
+                mix(c - a, d - b, u.x) * du.y);
+}
+
+vec3 WaterNormal(vec3 worldPosition, float time)
+{
+    vec2 p = worldPosition.xz;
+    float footprint = max(length(dFdx(p)), length(dFdy(p)));
+    const mat2 turn = mat2(0.8, 0.6, -0.6, 0.8);
+    mat2 basis = mat2(1.0);
+    vec2 drift = vec2(0.12, -0.08);
+    vec2 offset = vec2(17.3, -9.2);
+    vec2 slope = vec2(0.0);
+    float frequency = 0.45;
+    float amplitude = 0.24;
+    for (int octave = 0; octave < 4; ++octave) {
+        // Each layer has its own scale, orientation, origin and flow direction.
+        vec2 q = basis * p * frequency + drift * (time * 3.0) + offset;
+        float filterWeight = 1.0 - smoothstep(0.25, 0.85, footprint * frequency);
+        slope += transpose(basis) * WaterNoiseGradient(q)
+            * (amplitude * frequency * filterWeight);
+        basis = turn * basis;
+        drift = turn * drift * 1.19;
+        offset = turn * offset + vec2(23.7, 11.9);
+        frequency *= 2.17;
+        amplitude *= 0.43;
+    }
+    return normalize(vec3(-slope.x, 1.0, -slope.y));
+}
+
+// Dominant-axis mapping gives scaled cube instances a consistent brick size.
+vec2 CubeWorldUv(vec3 p, vec3 n)
+{
+    vec3 a = abs(n);
+    if (a.y >= a.x && a.y >= a.z) return vec2(p.x, -p.z * (n.y >= 0.0 ? 1.0 : -1.0));
+    if (a.x >= a.z) return vec2(-p.z * (n.x >= 0.0 ? 1.0 : -1.0), p.y);
+    return vec2(p.x * (n.z >= 0.0 ? 1.0 : -1.0), p.y);
+}
+
 void main()
 {
-    vec4 materialColor = texture(baseColorTexture, vTexCoord) * vBaseColorFactor;
+    vec2 materialUv = vMaterialParams0.w > 1.5 ? CubeWorldUv(vWorldPosition, normalize(vNormal)) : vTexCoord;
+    vec4 materialColor = texture(baseColorTexture, materialUv) * vBaseColorFactor;
     // The marker is a per-instance gameplay presentation tint.  It leaves
     // the source material untouched when its alpha/strength is zero.
     materialColor.rgb = mix(materialColor.rgb, vInstanceMarker.rgb,
         clamp(vInstanceMarker.a, 0.0, 1.0));
     vec3 albedo = sRGBToLinear(materialColor.rgb);
-    vec4 mr = texture(metallicRoughnessTexture, vTexCoord);
+    if (vMaterialParams0.w > 0.5 && vMaterialParams0.w < 1.5) {
+        vec3 N = WaterNormal(vWorldPosition, vWaterTime);
+        vec3 V = normalize(scene.cameraPosition.xyz - vWorldPosition);
+        if (dot(N, V) < 0.0) N = -N;
+        float NoV = max(dot(N, V), 0.0);
+        float fresnel = 0.02 + 0.98 * pow(1.0 - NoV, 5.0);
+        vec3 reflection = sRGBToLinear(textureLod(skyboxTexture, reflect(-V, N),
+            vMaterialParams0.y * 4.0).rgb);
+        // Main-engine water Fresnel F0=0.02 and sky-cube fallback, without SSR.
+        outColor = vec4(mix(albedo, reflection, fresnel), 1.0);
+        return;
+    }
+    vec4 mr = texture(metallicRoughnessTexture, materialUv);
     float metallic = clamp(mr.b * vMaterialParams0.x, 0.0, 1.0);
     float roughness = clamp(mr.g * vMaterialParams0.y, 0.045, 1.0);
-    float ao = clamp(texture(aoTexture, vTexCoord).r * vMaterialParams1.w, 0.0, 1.0);
+    float ao = clamp(texture(aoTexture, materialUv).r * vMaterialParams1.w, 0.0, 1.0);
     vec3 N = normalize(vNormal);
     if (vMaterialParams0.z > 0.0) {
-        N = PerturbNormal(N, vWorldPosition, vTexCoord, vMaterialParams0.z);
+        N = PerturbNormal(N, vWorldPosition, materialUv, vMaterialParams0.z);
     }
     vec3 V = normalize(scene.cameraPosition.xyz - vWorldPosition);
     float NoV = max(dot(N, V), 1e-4);
@@ -230,7 +304,7 @@ void main()
     vec3 fmsEms = ems * fssEss * fAvg / max(1.0 - fAvg * ems, 1e-4);
     vec3 envBrdf = fssEss + fmsEms;
     vec3 specularIbl = prefiltered * SpecOcclusion(NoV, ao, roughness) * envBrdf;
-    vec3 emissive = sRGBToLinear(texture(emissiveTexture, vTexCoord).rgb) *
+    vec3 emissive = sRGBToLinear(texture(emissiveTexture, materialUv).rgb) *
         vMaterialParams1.xyz;
     vec3 color = direct + fill + pointLights + diffuseIbl * ao + specularIbl + emissive;
     if (vDissolve > 0.0) {

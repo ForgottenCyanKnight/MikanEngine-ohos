@@ -377,12 +377,13 @@ float FloatOr(const JsonValue& object, const char* key, float fallback)
 
 int IntOr(const JsonValue& object, const char* key, int fallback)
 {
-    float value = static_cast<float>(fallback);
-    if (!ReadFloat(Member(object, key), value) || value < static_cast<float>(std::numeric_limits<int>::min()) ||
-        value > static_cast<float>(std::numeric_limits<int>::max())) {
+    const JsonValue* value = Member(object, key);
+    if (value == nullptr || value->type != JsonValue::Type::Number || !std::isfinite(value->number) ||
+        value->number < static_cast<double>(std::numeric_limits<int>::min()) ||
+        value->number > static_cast<double>(std::numeric_limits<int>::max())) {
         return fallback;
     }
-    return static_cast<int>(value);
+    return static_cast<int>(value->number);
 }
 
 bool BoolOr(const JsonValue& object, const char* key, bool fallback)
@@ -722,6 +723,27 @@ bool ParseMikanScene(const char* json, std::size_t size, Definition& output,
         return false;
     }
     parsed.game = StringOr(root, "game");
+    if (const JsonValue* water = Member(root, "water")) {
+        if (water->type != JsonValue::Type::Object) {
+            error = "water must be an object";
+            return false;
+        }
+        auto& w = parsed.water;
+        w.enabled = BoolOr(*water, "enabled", true);
+        w.height = FloatOr(*water, "height", w.height);
+        w.size = FloatOr(*water, "size", w.size);
+        w.roughness = FloatOr(*water, "roughness", w.roughness);
+        ReadVec3(Member(*water, "color"), w.color);
+        if (!std::isfinite(w.height) || std::fabs(w.height) > 10000 ||
+            !std::isfinite(w.size) || w.size <= 0 || w.size > 4096 ||
+            !std::isfinite(w.roughness) || w.roughness < 0.045f || w.roughness > 1 ||
+            !std::isfinite(w.color.x) || !std::isfinite(w.color.y) || !std::isfinite(w.color.z) ||
+            w.color.x < 0 || w.color.x > 1 || w.color.y < 0 || w.color.y > 1 ||
+            w.color.z < 0 || w.color.z > 1) {
+            error = "invalid water height, size, roughness or color";
+            return false;
+        }
+    }
     const JsonValue* entities = Member(root, "entities");
     if (entities == nullptr || entities->type != JsonValue::Type::Array ||
         entities->array.size() > kMaxEntities) {
@@ -772,6 +794,47 @@ bool ParseMikanScene(const char* json, std::size_t size, Definition& output,
             entity.collider = ParseColliderSettings(*collider, false);
         }
         ParseMaterial(Member(source, "material"), entity.material);
+        if (const JsonValue* terrain = Member(source, "terrain")) {
+            if (terrain->type != JsonValue::Type::Object) {
+                error = "terrain must be an object";
+                return false;
+            }
+            auto& t = entity.terrain;
+            t.present = true;
+            t.enabled = BoolOr(*terrain, "enabled", true);
+            t.heightmapPath = StringOr(*terrain, "heightmapPath");
+            t.sculptedHeightmapPath = StringOr(*terrain, "sculptedHeightmapPath");
+            if (const JsonValue* worldSize = Member(*terrain, "worldSize")) {
+                if (worldSize->type != JsonValue::Type::Array || worldSize->array.size() != 2 ||
+                    !ReadFloat(&worldSize->array[0], t.worldSizeX) ||
+                    !ReadFloat(&worldSize->array[1], t.worldSizeZ)) {
+                    error = "terrain.worldSize must contain two finite numbers";
+                    return false;
+                }
+            }
+            t.heightScale = FloatOr(*terrain, "heightScale", t.heightScale);
+            t.heightOffset = FloatOr(*terrain, "heightOffset", t.heightOffset);
+            t.chunkCount = IntOr(*terrain, "chunkCount", t.chunkCount);
+            t.patchResolution = IntOr(*terrain, "patchResolution", t.patchResolution);
+            t.collisionEnabled = BoolOr(*terrain, "collisionEnabled", true);
+            t.collisionResolution = IntOr(*terrain, "collisionResolution", t.collisionResolution);
+            t.materialTiling = FloatOr(*terrain, "materialTiling", t.materialTiling);
+            t.blendSharpness = FloatOr(*terrain, "blendSharpness", t.blendSharpness);
+            for (int layer = 0; layer < 4; ++layer) {
+                const std::string key = "layer" + std::to_string(layer) + "Path";
+                t.layerPaths[layer] = StringOr(*terrain, key.c_str());
+            }
+            t.controlMapPath = StringOr(*terrain, "controlMapPath");
+            t.paintedControlMapPath = StringOr(*terrain, "paintedControlMapPath");
+            if (t.worldSizeX <= 0 || t.worldSizeZ <= 0 || t.chunkCount < 1 ||
+                t.chunkCount > 16 || t.patchResolution < 2 || t.patchResolution > 129 ||
+                t.chunkCount * (t.patchResolution - 1) > 512 ||
+                t.collisionResolution < 2 || t.collisionResolution > 513 ||
+                t.blendSharpness <= 0 || std::fabs(t.materialTiling) > 1024) {
+                error = "terrain parameters exceed OHOS bounds (16 chunks, 129 patch vertices, 512 intervals)";
+                return false;
+            }
+        }
 
         if (const JsonValue* cameraValue = Member(source, "camera")) {
             const Camera camera = ParseCamera(*cameraValue);

@@ -1,4 +1,15 @@
 {
+  "water": {
+    "enabled": true,
+    "height": -2.6,
+    "size": 384,
+    "roughness": 0.08,
+    "color": [
+      0.035,
+      0.18,
+      0.22
+    ]
+  },
   "formatVersion": 1,
   "game": "cesiumwalk",
   "entities": [
@@ -8,9 +19,22 @@
         "name": "Main Camera"
       },
       "transform": {
-        "position": [-5.13074e-07, 2.19747, -5.86889],
-        "rotation": [4.34719e-08, -4.56909e-09, -0.994522, -0.104528],
-        "scale": [1, 1, 1]
+        "position": [
+          -5.13074e-07,
+          2.19747,
+          -5.86889
+        ],
+        "rotation": [
+          4.34719e-08,
+          -4.56909e-09,
+          -0.994522,
+          -0.104528
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
       },
       "hierarchy": {
         "parent": 4294967295,
@@ -19,7 +43,7 @@
       "camera": {
         "fov": 60,
         "nearPlane": 0.1,
-        "farPlane": 300,
+        "farPlane": 600,
         "isMainCamera": true,
         "isOrthographic": false,
         "orthographicSize": 5,
@@ -32,7 +56,11 @@
         "useBVHCulling": false,
         "thirdPersonEnabled": true,
         "thirdPersonTargetName": "AnimationPlayer",
-        "thirdPersonTargetOffset": [0, 0.95, 0],
+        "thirdPersonTargetOffset": [
+          0,
+          0.95,
+          0
+        ],
         "thirdPersonDistance": 6,
         "thirdPersonMinDistance": 2,
         "thirdPersonMaxDistance": 12,
@@ -74,9 +102,22 @@
         "name": "Directional Light"
       },
       "transform": {
-        "position": [0, 12, 10],
-        "rotation": [0.875426, 0.408218, -0.23457, 0.109382],
-        "scale": [1, 1, 1]
+        "position": [
+          0,
+          12,
+          10
+        ],
+        "rotation": [
+          0.875426,
+          0.408218,
+          -0.23457,
+          0.109382
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
       },
       "hierarchy": {
         "parent": 4294967295,
@@ -84,7 +125,11 @@
       },
       "light": {
         "type": 0,
-        "color": [1, 1, 1],
+        "color": [
+          1,
+          1,
+          1
+        ],
         "intensity": 1.2,
         "range": 10,
         "spotAngle": 45,
@@ -100,9 +145,22 @@
         "name": "Skybox"
       },
       "transform": {
-        "position": [0, 0, 0],
-        "rotation": [1, 0, 0, 0],
-        "scale": [1, 1, 1]
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
       },
       "hierarchy": {
         "parent": 4294967295,
@@ -111,7 +169,11 @@
       "skybox": {
         "enabled": true,
         "textureName": "skybox",
-        "tint": [1, 1, 1],
+        "tint": [
+          1,
+          1,
+          1
+        ],
         "intensity": 1
       },
       "script": {
@@ -124,9 +186,22 @@
         "name": "Ground"
       },
       "transform": {
-        "position": [0, -0.469711, 0],
-        "rotation": [1, 0, 0, 0],
-        "scale": [20, 0.5, 20]
+        "position": [
+          0,
+          -0.469711,
+          0
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          40,
+          0.5,
+          40
+        ]
       },
       "hierarchy": {
         "parent": 4294967295,
@@ -148,8 +223,16 @@
       "rigidBody": {
         "type": 0,
         "shapeType": 0,
-        "size": [2, 2, 2],
-        "offset": [0, 0, 0],
+        "size": [
+          2,
+          2,
+          2
+        ],
+        "offset": [
+          0,
+          0,
+          0
+        ],
         "mass": 0,
         "restitution": 0,
         "useGravity": false,
@@ -165,8 +248,16 @@
       },
       "collider": {
         "type": 0,
-        "offset": [0, 0, 0],
-        "size": [2, 2, 2],
+        "offset": [
+          0,
+          0,
+          0
+        ],
+        "size": [
+          2,
+          2,
+          2
+        ],
         "isTrigger": false,
         "useOBB": false,
         "syncWithModel": true,
@@ -183,9 +274,22 @@
         "name": "AnimationPlayer"
       },
       "transform": {
-        "position": [0, 0, 0],
-        "rotation": [1, 0, 0, 0],
-        "scale": [1, 1, 1]
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
       },
       "hierarchy": {
         "parent": 4294967295,
@@ -211,7 +315,11 @@
         "metallicPath": "",
         "aoPath": "",
         "emissivePath": "",
-        "albedoColor": [1, 1, 1],
+        "albedoColor": [
+          1,
+          1,
+          1
+        ],
         "metallic": 0,
         "roughness": 0.5,
         "ao": 1,
@@ -232,8 +340,16 @@
       "rigidBody": {
         "type": 1,
         "shapeType": 2,
-        "size": [0.5, 1.32872, 0.5],
-        "offset": [0, 0.91482, 0.0206451],
+        "size": [
+          0.5,
+          1.32872,
+          0.5
+        ],
+        "offset": [
+          0,
+          0.91482,
+          0.0206451
+        ],
         "mass": 70,
         "restitution": 0,
         "useGravity": true,
@@ -249,8 +365,16 @@
       },
       "collider": {
         "type": 2,
-        "offset": [0, 0.91482, 0.0206451],
-        "size": [0.5, 1.32872, 0.5],
+        "offset": [
+          0,
+          0.91482,
+          0.0206451
+        ],
+        "size": [
+          0.5,
+          1.32872,
+          0.5
+        ],
         "isTrigger": false,
         "useOBB": false,
         "syncWithModel": true,
@@ -259,7 +383,56 @@
       },
       "script": {
         "scriptName": "PlayerWalkScript",
-        "params": {"moveSpeed":5,"jumpSpeed":7,"camDistance":6,"camHeight":3,"camLerpSpeed":12,"maxHealth":100,"health":100,"hitClipIndex":7,"deathClipIndex":4,"hitDuration":0.333,"deathDuration":2.4,"yawOffsetDeg":0,"walkAnimSpeed":1.5,"animBlendSpeed":6,"idleClipIndex":9,"walkClipIndex":45,"runClipIndex":38,"runSpeedRatio":0.6,"sprintSpeedMultiplier":1.6,"crouchSpeedMultiplier":0.5,"crouchIdleClipIndex":2,"crouchMoveClipIndex":1,"attackClipIndex":26,"jumpStartClipIndex":16,"jumpLoopClipIndex":15,"jumpLandClipIndex":14,"jumpStartDuration":0.35,"attackDuration":0.87,"attackHitboxCenter":[0, 0.95, 1.1],"attackHitboxHalfExtents":[0.6, 0.85, 0.9],"attackHitboxStartTime":0.2,"attackHitboxEndTime":0.52,"attackDamage":25,"invincibilityDuration":0.45,"landDuration":0.45,"turnSpeedDeg":360,"disableAnim":0,"autoWalk":0,"autoStateTest":0,"autoAttack":0}
+        "params": {
+          "moveSpeed": 5,
+          "jumpSpeed": 7,
+          "camDistance": 6,
+          "camHeight": 3,
+          "camLerpSpeed": 12,
+          "maxHealth": 100,
+          "health": 100,
+          "hitClipIndex": 7,
+          "deathClipIndex": 4,
+          "hitDuration": 0.333,
+          "deathDuration": 2.4,
+          "yawOffsetDeg": 0,
+          "walkAnimSpeed": 1.5,
+          "animBlendSpeed": 6,
+          "idleClipIndex": 9,
+          "walkClipIndex": 45,
+          "runClipIndex": 38,
+          "runSpeedRatio": 0.6,
+          "sprintSpeedMultiplier": 1.6,
+          "crouchSpeedMultiplier": 0.5,
+          "crouchIdleClipIndex": 2,
+          "crouchMoveClipIndex": 1,
+          "attackClipIndex": 26,
+          "jumpStartClipIndex": 16,
+          "jumpLoopClipIndex": 15,
+          "jumpLandClipIndex": 14,
+          "jumpStartDuration": 0.35,
+          "attackDuration": 0.87,
+          "attackHitboxCenter": [
+            0,
+            0.95,
+            1.1
+          ],
+          "attackHitboxHalfExtents": [
+            0.6,
+            0.85,
+            0.9
+          ],
+          "attackHitboxStartTime": 0.2,
+          "attackHitboxEndTime": 0.52,
+          "attackDamage": 25,
+          "invincibilityDuration": 0.45,
+          "landDuration": 0.45,
+          "turnSpeedDeg": 360,
+          "disableAnim": 0,
+          "autoWalk": 0,
+          "autoStateTest": 0,
+          "autoAttack": 0
+        }
       }
     },
     {
@@ -268,9 +441,22 @@
         "name": "Block_A"
       },
       "transform": {
-        "position": [3, 1, -2],
-        "rotation": [1, 0, 0, 0],
-        "scale": [1, 1, 1]
+        "position": [
+          3,
+          1,
+          -2
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
       },
       "hierarchy": {
         "parent": 4294967295,
@@ -292,8 +478,16 @@
       "rigidBody": {
         "type": 0,
         "shapeType": 0,
-        "size": [2, 2, 2],
-        "offset": [0, 0, 0],
+        "size": [
+          2,
+          2,
+          2
+        ],
+        "offset": [
+          0,
+          0,
+          0
+        ],
         "mass": 0,
         "restitution": 0,
         "useGravity": false,
@@ -309,8 +503,16 @@
       },
       "collider": {
         "type": 0,
-        "offset": [0, 0, 0],
-        "size": [2, 2, 2],
+        "offset": [
+          0,
+          0,
+          0
+        ],
+        "size": [
+          2,
+          2,
+          2
+        ],
         "isTrigger": false,
         "useOBB": false,
         "syncWithModel": true,
@@ -327,9 +529,22 @@
         "name": "Block_B"
       },
       "transform": {
-        "position": [-3, 1.5, -5],
-        "rotation": [1, 0, 0, 0],
-        "scale": [1, 1.5, 1]
+        "position": [
+          -3,
+          1.5,
+          -5
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1.5,
+          1
+        ]
       },
       "hierarchy": {
         "parent": 4294967295,
@@ -351,8 +566,16 @@
       "rigidBody": {
         "type": 0,
         "shapeType": 0,
-        "size": [2, 2, 2],
-        "offset": [0, 0, 0],
+        "size": [
+          2,
+          2,
+          2
+        ],
+        "offset": [
+          0,
+          0,
+          0
+        ],
         "mass": 0,
         "restitution": 0,
         "useGravity": false,
@@ -368,8 +591,16 @@
       },
       "collider": {
         "type": 0,
-        "offset": [0, 0, 0],
-        "size": [2, 2, 2],
+        "offset": [
+          0,
+          0,
+          0
+        ],
+        "size": [
+          2,
+          2,
+          2
+        ],
         "isTrigger": false,
         "useOBB": false,
         "syncWithModel": true,
@@ -386,9 +617,22 @@
         "name": "Block_C"
       },
       "transform": {
-        "position": [4, 0.5, 3],
-        "rotation": [1, 0, 0, 0],
-        "scale": [0.75, 0.5, 0.75]
+        "position": [
+          4,
+          0.5,
+          3
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.75,
+          0.5,
+          0.75
+        ]
       },
       "hierarchy": {
         "parent": 4294967295,
@@ -410,8 +654,16 @@
       "rigidBody": {
         "type": 0,
         "shapeType": 0,
-        "size": [2, 2, 2],
-        "offset": [0, 0, 0],
+        "size": [
+          2,
+          2,
+          2
+        ],
+        "offset": [
+          0,
+          0,
+          0
+        ],
         "mass": 0,
         "restitution": 0,
         "useGravity": false,
@@ -427,8 +679,16 @@
       },
       "collider": {
         "type": 0,
-        "offset": [0, 0, 0],
-        "size": [2, 2, 2],
+        "offset": [
+          0,
+          0,
+          0
+        ],
+        "size": [
+          2,
+          2,
+          2
+        ],
         "isTrigger": false,
         "useOBB": false,
         "syncWithModel": true,
@@ -445,9 +705,22 @@
         "name": "LockTargetCube"
       },
       "transform": {
-        "position": [-4, 1, -2],
-        "rotation": [1, 0, 0, 0],
-        "scale": [0.8, 1, 0.8]
+        "position": [
+          -4,
+          1,
+          -2
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.8,
+          1,
+          0.8
+        ]
       },
       "hierarchy": {
         "parent": 4294967295,
@@ -469,8 +742,16 @@
       "rigidBody": {
         "type": 0,
         "shapeType": 0,
-        "size": [2, 2, 2],
-        "offset": [0, 0, 0],
+        "size": [
+          2,
+          2,
+          2
+        ],
+        "offset": [
+          0,
+          0,
+          0
+        ],
         "mass": 0,
         "restitution": 0,
         "useGravity": false,
@@ -486,8 +767,16 @@
       },
       "collider": {
         "type": 0,
-        "offset": [0, 0, 0],
-        "size": [2, 2, 2],
+        "offset": [
+          0,
+          0,
+          0
+        ],
+        "size": [
+          2,
+          2,
+          2
+        ],
         "isTrigger": false,
         "useOBB": false,
         "syncWithModel": true,
@@ -504,13 +793,29 @@
         "name": "Canvas"
       },
       "transform": {
-        "position": [0, 0, 0],
-        "rotation": [1, 0, 0, 0],
-        "scale": [1, 1, 1]
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
       },
       "hierarchy": {
         "parent": 4294967295,
-        "children": [10, 19]
+        "children": [
+          10,
+          19
+        ]
       },
       "script": {
         "scriptName": ""
@@ -528,9 +833,22 @@
         "name": "InfoText"
       },
       "transform": {
-        "position": [40, 1030, 0],
-        "rotation": [1, 0, 0, 0],
-        "scale": [1, 1, 1]
+        "position": [
+          40,
+          1030,
+          0
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
       },
       "hierarchy": {
         "parent": 9,
@@ -543,12 +861,26 @@
         "text": "状态:Idle  脚本:on  物理:ok\nWASD移动  Ctrl奔跑  C蹲伏  F攻击  空格跳跃\nAI:Patrol  右键环视  滚轮缩放  Shift瞄准  Q锁敌",
         "isUI": true,
         "fontSize": 18,
-        "color": [0.82, 0.84, 0.86, 0.92],
+        "color": [
+          0.82,
+          0.84,
+          0.86,
+          0.92
+        ],
         "layer": 3,
         "renderMode": 2,
-        "anchorMin": [0, 0],
-        "anchorMax": [0, 0],
-        "pivot": [0, 0]
+        "anchorMin": [
+          0,
+          0
+        ],
+        "anchorMax": [
+          0,
+          0
+        ],
+        "pivot": [
+          0,
+          0
+        ]
       }
     },
     {
@@ -557,9 +889,22 @@
         "name": "PhysicsDynamicCube_A"
       },
       "transform": {
-        "position": [0, 4.5, 3],
-        "rotation": [1, 0, 0, 0],
-        "scale": [0.75, 0.75, 0.75]
+        "position": [
+          0,
+          4.5,
+          3
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.75,
+          0.75,
+          0.75
+        ]
       },
       "hierarchy": {
         "parent": 4294967295,
@@ -581,8 +926,16 @@
       "rigidBody": {
         "type": 1,
         "shapeType": 0,
-        "size": [2, 2, 2],
-        "offset": [0, 0, 0],
+        "size": [
+          2,
+          2,
+          2
+        ],
+        "offset": [
+          0,
+          0,
+          0
+        ],
         "mass": 2,
         "restitution": 0.05,
         "useGravity": true,
@@ -598,8 +951,16 @@
       },
       "collider": {
         "type": 0,
-        "offset": [0, 0, 0],
-        "size": [2, 2, 2],
+        "offset": [
+          0,
+          0,
+          0
+        ],
+        "size": [
+          2,
+          2,
+          2
+        ],
         "isTrigger": false,
         "useOBB": false,
         "syncWithModel": true,
@@ -616,9 +977,22 @@
         "name": "PhysicsDynamicCube_B"
       },
       "transform": {
-        "position": [0, 7, 3],
-        "rotation": [1, 0, 0, 0],
-        "scale": [0.6, 0.6, 0.6]
+        "position": [
+          0,
+          7,
+          3
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.6,
+          0.6,
+          0.6
+        ]
       },
       "hierarchy": {
         "parent": 4294967295,
@@ -640,8 +1014,16 @@
       "rigidBody": {
         "type": 1,
         "shapeType": 0,
-        "size": [2, 2, 2],
-        "offset": [0, 0, 0],
+        "size": [
+          2,
+          2,
+          2
+        ],
+        "offset": [
+          0,
+          0,
+          0
+        ],
         "mass": 1,
         "restitution": 0.05,
         "useGravity": true,
@@ -657,8 +1039,16 @@
       },
       "collider": {
         "type": 0,
-        "offset": [0, 0, 0],
-        "size": [2, 2, 2],
+        "offset": [
+          0,
+          0,
+          0
+        ],
+        "size": [
+          2,
+          2,
+          2
+        ],
         "isTrigger": false,
         "useOBB": false,
         "syncWithModel": true,
@@ -675,9 +1065,22 @@
         "name": "PhysicsDynamicPusher"
       },
       "transform": {
-        "position": [-3, 0.75, 3],
-        "rotation": [1, 0, 0, 0],
-        "scale": [0.75, 0.75, 0.75]
+        "position": [
+          -3,
+          0.75,
+          3
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.75,
+          0.75,
+          0.75
+        ]
       },
       "hierarchy": {
         "parent": 4294967295,
@@ -699,8 +1102,16 @@
       "rigidBody": {
         "type": 1,
         "shapeType": 0,
-        "size": [2, 2, 2],
-        "offset": [0, 0, 0],
+        "size": [
+          2,
+          2,
+          2
+        ],
+        "offset": [
+          0,
+          0,
+          0
+        ],
         "mass": 2,
         "restitution": 0,
         "useGravity": true,
@@ -716,8 +1127,16 @@
       },
       "collider": {
         "type": 0,
-        "offset": [0, 0, 0],
-        "size": [2, 2, 2],
+        "offset": [
+          0,
+          0,
+          0
+        ],
+        "size": [
+          2,
+          2,
+          2
+        ],
         "isTrigger": false,
         "useOBB": false,
         "syncWithModel": true,
@@ -734,9 +1153,22 @@
         "name": "PuppetEnemy"
       },
       "transform": {
-        "position": [0, 0, 2.6],
-        "rotation": [1, 0, 0, 0],
-        "scale": [1, 1, 1]
+        "position": [
+          0,
+          0,
+          2.6
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
       },
       "hierarchy": {
         "parent": 4294967295,
@@ -762,7 +1194,11 @@
         "metallicPath": "",
         "aoPath": "",
         "emissivePath": "",
-        "albedoColor": [0.85, 0.25, 0.22],
+        "albedoColor": [
+          0.85,
+          0.25,
+          0.22
+        ],
         "metallic": 0,
         "roughness": 0.5,
         "ao": 1,
@@ -783,8 +1219,16 @@
       "rigidBody": {
         "type": 1,
         "shapeType": 2,
-        "size": [0.5, 1.32872, 0.5],
-        "offset": [0, 0.91482, 0.0206451],
+        "size": [
+          0.5,
+          1.32872,
+          0.5
+        ],
+        "offset": [
+          0,
+          0.91482,
+          0.0206451
+        ],
         "mass": 55,
         "restitution": 0,
         "useGravity": false,
@@ -800,8 +1244,16 @@
       },
       "collider": {
         "type": 2,
-        "offset": [0, 0.91482, 0.0206451],
-        "size": [0.5, 1.32872, 0.5],
+        "offset": [
+          0,
+          0.91482,
+          0.0206451
+        ],
+        "size": [
+          0.5,
+          1.32872,
+          0.5
+        ],
         "isTrigger": false,
         "useOBB": false,
         "syncWithModel": true,
@@ -810,7 +1262,45 @@
       },
       "script": {
         "scriptName": "PuppetEnemyScript",
-        "params": {"maxHealth":100,"health":100,"idleClipIndex":9,"hitClipIndex":7,"deathClipIndex":4,"hitDuration":0.333,"deathDuration":2.4,"pathCellSize":0.5,"pathRepathInterval":0.35,"pathObstaclePadding":0.1,"animSpeed":1,"healthBarOffsetY":2.1,"moveClipIndex":45,"attackClipIndex":24,"patrolAxis":0,"detectionRange":6,"disengageRange":10,"patrolDistance":2,"patrolSpeed":1.2,"chaseSpeed":2.6,"attackRange":1.7,"attackCooldown":1.2,"attackDuration":0.9,"attackDamage":10,"attackHitboxCenter":[0, 0.95, 0.85],"attackHitboxHalfExtents":[0.55, 0.75, 0.7],"attackHitboxStartTime":0.25,"attackHitboxEndTime":0.55,"invincibilityDuration":0.18}
+        "params": {
+          "maxHealth": 100,
+          "health": 100,
+          "idleClipIndex": 9,
+          "hitClipIndex": 7,
+          "deathClipIndex": 4,
+          "hitDuration": 0.333,
+          "deathDuration": 2.4,
+          "pathCellSize": 0.5,
+          "pathRepathInterval": 0.35,
+          "pathObstaclePadding": 0.1,
+          "animSpeed": 1,
+          "healthBarOffsetY": 2.1,
+          "moveClipIndex": 45,
+          "attackClipIndex": 24,
+          "patrolAxis": 0,
+          "detectionRange": 6,
+          "disengageRange": 10,
+          "patrolDistance": 2,
+          "patrolSpeed": 1.2,
+          "chaseSpeed": 2.6,
+          "attackRange": 1.7,
+          "attackCooldown": 1.2,
+          "attackDuration": 0.9,
+          "attackDamage": 10,
+          "attackHitboxCenter": [
+            0,
+            0.95,
+            0.85
+          ],
+          "attackHitboxHalfExtents": [
+            0.55,
+            0.75,
+            0.7
+          ],
+          "attackHitboxStartTime": 0.25,
+          "attackHitboxEndTime": 0.55,
+          "invincibilityDuration": 0.18
+        }
       }
     },
     {
@@ -819,9 +1309,22 @@
         "name": "PuppetEnemy_B"
       },
       "transform": {
-        "position": [-4, 0, 2.5],
-        "rotation": [1, 0, 0, 0],
-        "scale": [1, 1, 1]
+        "position": [
+          -4,
+          0,
+          2.5
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
       },
       "hierarchy": {
         "parent": 4294967295,
@@ -847,7 +1350,11 @@
         "metallicPath": "",
         "aoPath": "",
         "emissivePath": "",
-        "albedoColor": [0.25, 0.45, 0.9],
+        "albedoColor": [
+          0.25,
+          0.45,
+          0.9
+        ],
         "metallic": 0,
         "roughness": 0.5,
         "ao": 1,
@@ -868,8 +1375,16 @@
       "rigidBody": {
         "type": 1,
         "shapeType": 2,
-        "size": [0.5, 1.32872, 0.5],
-        "offset": [0, 0.91482, 0.0206451],
+        "size": [
+          0.5,
+          1.32872,
+          0.5
+        ],
+        "offset": [
+          0,
+          0.91482,
+          0.0206451
+        ],
         "mass": 55,
         "restitution": 0,
         "useGravity": false,
@@ -885,8 +1400,16 @@
       },
       "collider": {
         "type": 2,
-        "offset": [0, 0.91482, 0.0206451],
-        "size": [0.5, 1.32872, 0.5],
+        "offset": [
+          0,
+          0.91482,
+          0.0206451
+        ],
+        "size": [
+          0.5,
+          1.32872,
+          0.5
+        ],
         "isTrigger": false,
         "useOBB": false,
         "syncWithModel": true,
@@ -895,7 +1418,45 @@
       },
       "script": {
         "scriptName": "PuppetEnemyScript",
-        "params": {"maxHealth":100,"health":100,"idleClipIndex":9,"hitClipIndex":7,"deathClipIndex":4,"hitDuration":0.333,"deathDuration":2.4,"pathCellSize":0.5,"pathRepathInterval":0.35,"pathObstaclePadding":0.1,"animSpeed":1,"healthBarOffsetY":2.1,"moveClipIndex":45,"attackClipIndex":24,"patrolAxis":1,"detectionRange":6,"disengageRange":10,"patrolDistance":2,"patrolSpeed":1.2,"chaseSpeed":2.6,"attackRange":1.7,"attackCooldown":1.2,"attackDuration":0.9,"attackDamage":10,"attackHitboxCenter":[0, 0.95, 0.85],"attackHitboxHalfExtents":[0.55, 0.75, 0.7],"attackHitboxStartTime":0.25,"attackHitboxEndTime":0.55,"invincibilityDuration":0.18}
+        "params": {
+          "maxHealth": 100,
+          "health": 100,
+          "idleClipIndex": 9,
+          "hitClipIndex": 7,
+          "deathClipIndex": 4,
+          "hitDuration": 0.333,
+          "deathDuration": 2.4,
+          "pathCellSize": 0.5,
+          "pathRepathInterval": 0.35,
+          "pathObstaclePadding": 0.1,
+          "animSpeed": 1,
+          "healthBarOffsetY": 2.1,
+          "moveClipIndex": 45,
+          "attackClipIndex": 24,
+          "patrolAxis": 1,
+          "detectionRange": 6,
+          "disengageRange": 10,
+          "patrolDistance": 2,
+          "patrolSpeed": 1.2,
+          "chaseSpeed": 2.6,
+          "attackRange": 1.7,
+          "attackCooldown": 1.2,
+          "attackDuration": 0.9,
+          "attackDamage": 10,
+          "attackHitboxCenter": [
+            0,
+            0.95,
+            0.85
+          ],
+          "attackHitboxHalfExtents": [
+            0.55,
+            0.75,
+            0.7
+          ],
+          "attackHitboxStartTime": 0.25,
+          "attackHitboxEndTime": 0.55,
+          "invincibilityDuration": 0.18
+        }
       }
     },
     {
@@ -904,9 +1465,22 @@
         "name": "PuppetEnemy_C"
       },
       "transform": {
-        "position": [4.5, 0, 5],
-        "rotation": [1, 0, 0, 0],
-        "scale": [1, 1, 1]
+        "position": [
+          4.5,
+          0,
+          5
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
       },
       "hierarchy": {
         "parent": 4294967295,
@@ -932,7 +1506,11 @@
         "metallicPath": "",
         "aoPath": "",
         "emissivePath": "",
-        "albedoColor": [0.3, 0.75, 0.35],
+        "albedoColor": [
+          0.3,
+          0.75,
+          0.35
+        ],
         "metallic": 0,
         "roughness": 0.5,
         "ao": 1,
@@ -953,8 +1531,16 @@
       "rigidBody": {
         "type": 1,
         "shapeType": 2,
-        "size": [0.5, 1.32872, 0.5],
-        "offset": [0, 0.91482, 0.0206451],
+        "size": [
+          0.5,
+          1.32872,
+          0.5
+        ],
+        "offset": [
+          0,
+          0.91482,
+          0.0206451
+        ],
         "mass": 55,
         "restitution": 0,
         "useGravity": false,
@@ -970,8 +1556,16 @@
       },
       "collider": {
         "type": 2,
-        "offset": [0, 0.91482, 0.0206451],
-        "size": [0.5, 1.32872, 0.5],
+        "offset": [
+          0,
+          0.91482,
+          0.0206451
+        ],
+        "size": [
+          0.5,
+          1.32872,
+          0.5
+        ],
         "isTrigger": false,
         "useOBB": false,
         "syncWithModel": true,
@@ -980,7 +1574,45 @@
       },
       "script": {
         "scriptName": "PuppetEnemyScript",
-        "params": {"maxHealth":100,"health":100,"idleClipIndex":9,"hitClipIndex":7,"deathClipIndex":4,"hitDuration":0.333,"deathDuration":2.4,"pathCellSize":0.5,"pathRepathInterval":0.35,"pathObstaclePadding":0.1,"animSpeed":1,"healthBarOffsetY":2.1,"moveClipIndex":45,"attackClipIndex":24,"patrolAxis":0,"detectionRange":6,"disengageRange":10,"patrolDistance":2,"patrolSpeed":1.2,"chaseSpeed":2.6,"attackRange":1.7,"attackCooldown":1.2,"attackDuration":0.9,"attackDamage":10,"attackHitboxCenter":[0, 0.95, 0.85],"attackHitboxHalfExtents":[0.55, 0.75, 0.7],"attackHitboxStartTime":0.25,"attackHitboxEndTime":0.55,"invincibilityDuration":0.18}
+        "params": {
+          "maxHealth": 100,
+          "health": 100,
+          "idleClipIndex": 9,
+          "hitClipIndex": 7,
+          "deathClipIndex": 4,
+          "hitDuration": 0.333,
+          "deathDuration": 2.4,
+          "pathCellSize": 0.5,
+          "pathRepathInterval": 0.35,
+          "pathObstaclePadding": 0.1,
+          "animSpeed": 1,
+          "healthBarOffsetY": 2.1,
+          "moveClipIndex": 45,
+          "attackClipIndex": 24,
+          "patrolAxis": 0,
+          "detectionRange": 6,
+          "disengageRange": 10,
+          "patrolDistance": 2,
+          "patrolSpeed": 1.2,
+          "chaseSpeed": 2.6,
+          "attackRange": 1.7,
+          "attackCooldown": 1.2,
+          "attackDuration": 0.9,
+          "attackDamage": 10,
+          "attackHitboxCenter": [
+            0,
+            0.95,
+            0.85
+          ],
+          "attackHitboxHalfExtents": [
+            0.55,
+            0.75,
+            0.7
+          ],
+          "attackHitboxStartTime": 0.25,
+          "attackHitboxEndTime": 0.55,
+          "invincibilityDuration": 0.18
+        }
       }
     },
     {
@@ -989,9 +1621,22 @@
         "name": "PuppetEnemy_D"
       },
       "transform": {
-        "position": [-5, 0, -2.5],
-        "rotation": [1, 0, 0, 0],
-        "scale": [1, 1, 1]
+        "position": [
+          -5,
+          0,
+          -2.5
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
       },
       "hierarchy": {
         "parent": 4294967295,
@@ -1017,7 +1662,11 @@
         "metallicPath": "",
         "aoPath": "",
         "emissivePath": "",
-        "albedoColor": [0.85, 0.62, 0.15],
+        "albedoColor": [
+          0.85,
+          0.62,
+          0.15
+        ],
         "metallic": 0,
         "roughness": 0.5,
         "ao": 1,
@@ -1038,8 +1687,16 @@
       "rigidBody": {
         "type": 1,
         "shapeType": 2,
-        "size": [0.5, 1.32872, 0.5],
-        "offset": [0, 0.91482, 0.0206451],
+        "size": [
+          0.5,
+          1.32872,
+          0.5
+        ],
+        "offset": [
+          0,
+          0.91482,
+          0.0206451
+        ],
         "mass": 55,
         "restitution": 0,
         "useGravity": false,
@@ -1055,8 +1712,16 @@
       },
       "collider": {
         "type": 2,
-        "offset": [0, 0.91482, 0.0206451],
-        "size": [0.5, 1.32872, 0.5],
+        "offset": [
+          0,
+          0.91482,
+          0.0206451
+        ],
+        "size": [
+          0.5,
+          1.32872,
+          0.5
+        ],
         "isTrigger": false,
         "useOBB": false,
         "syncWithModel": true,
@@ -1065,7 +1730,45 @@
       },
       "script": {
         "scriptName": "PuppetEnemyScript",
-        "params": {"maxHealth":100,"health":100,"idleClipIndex":9,"hitClipIndex":7,"deathClipIndex":4,"hitDuration":0.333,"deathDuration":2.4,"pathCellSize":0.5,"pathRepathInterval":0.35,"pathObstaclePadding":0.1,"animSpeed":1,"healthBarOffsetY":2.1,"moveClipIndex":45,"attackClipIndex":24,"patrolAxis":1,"detectionRange":6,"disengageRange":10,"patrolDistance":2,"patrolSpeed":1.2,"chaseSpeed":2.6,"attackRange":1.7,"attackCooldown":1.2,"attackDuration":0.9,"attackDamage":10,"attackHitboxCenter":[0, 0.95, 0.85],"attackHitboxHalfExtents":[0.55, 0.75, 0.7],"attackHitboxStartTime":0.25,"attackHitboxEndTime":0.55,"invincibilityDuration":0.18}
+        "params": {
+          "maxHealth": 100,
+          "health": 100,
+          "idleClipIndex": 9,
+          "hitClipIndex": 7,
+          "deathClipIndex": 4,
+          "hitDuration": 0.333,
+          "deathDuration": 2.4,
+          "pathCellSize": 0.5,
+          "pathRepathInterval": 0.35,
+          "pathObstaclePadding": 0.1,
+          "animSpeed": 1,
+          "healthBarOffsetY": 2.1,
+          "moveClipIndex": 45,
+          "attackClipIndex": 24,
+          "patrolAxis": 1,
+          "detectionRange": 6,
+          "disengageRange": 10,
+          "patrolDistance": 2,
+          "patrolSpeed": 1.2,
+          "chaseSpeed": 2.6,
+          "attackRange": 1.7,
+          "attackCooldown": 1.2,
+          "attackDuration": 0.9,
+          "attackDamage": 10,
+          "attackHitboxCenter": [
+            0,
+            0.95,
+            0.85
+          ],
+          "attackHitboxHalfExtents": [
+            0.55,
+            0.75,
+            0.7
+          ],
+          "attackHitboxStartTime": 0.25,
+          "attackHitboxEndTime": 0.55,
+          "invincibilityDuration": 0.18
+        }
       }
     },
     {
@@ -1074,13 +1777,28 @@
         "name": "LanternMeshCollider"
       },
       "transform": {
-        "position": [6, -0.02, 1],
-        "rotation": [1, 0, 0, 0],
-        "scale": [0.1, 0.1, 0.1]
+        "position": [
+          6,
+          -0.02,
+          1
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.1,
+          0.1,
+          0.1
+        ]
       },
       "hierarchy": {
         "parent": 4294967295,
-        "children": [20]
+        "children": [
+          20
+        ]
       },
       "mesh": {
         "type": 4,
@@ -1102,7 +1820,11 @@
         "metallicPath": "models/2.0/Lantern/glTF/Lantern_roughnessMetallic.png",
         "aoPath": "",
         "emissivePath": "models/2.0/Lantern/glTF/Lantern_emissive.png",
-        "albedoColor": [1, 1, 1],
+        "albedoColor": [
+          1,
+          1,
+          1
+        ],
         "metallic": 0.2,
         "roughness": 0.5,
         "ao": 1,
@@ -1123,8 +1845,16 @@
       "rigidBody": {
         "type": 0,
         "shapeType": 4,
-        "size": [1, 1, 1],
-        "offset": [0, 0, 0],
+        "size": [
+          1,
+          1,
+          1
+        ],
+        "offset": [
+          0,
+          0,
+          0
+        ],
         "mass": 0,
         "restitution": 0,
         "useGravity": false,
@@ -1148,9 +1878,22 @@
         "name": "FpsText"
       },
       "transform": {
-        "position": [-24, 24, 0],
-        "rotation": [1, 0, 0, 0],
-        "scale": [1, 1, 1]
+        "position": [
+          -24,
+          24,
+          0
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
       },
       "hierarchy": {
         "parent": 9,
@@ -1163,12 +1906,26 @@
         "text": "FPS: 61.8",
         "isUI": true,
         "fontSize": 24,
-        "color": [0.82, 0.84, 0.87, 1],
+        "color": [
+          0.82,
+          0.84,
+          0.87,
+          1
+        ],
         "layer": 40,
         "renderMode": 2,
-        "anchorMin": [1, 0],
-        "anchorMax": [1, 0],
-        "pivot": [1, 0]
+        "anchorMin": [
+          1,
+          0
+        ],
+        "anchorMax": [
+          1,
+          0
+        ],
+        "pivot": [
+          1,
+          0
+        ]
       }
     },
     {
@@ -1177,9 +1934,22 @@
         "name": "LanternPointLight"
       },
       "transform": {
-        "position": [9.58201, 18.0092, 0],
-        "rotation": [1, 0, 0, 0],
-        "scale": [1, 1, 1]
+        "position": [
+          9.58201,
+          18.0092,
+          0
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
       },
       "hierarchy": {
         "parent": 18,
@@ -1187,7 +1957,11 @@
       },
       "light": {
         "type": 1,
-        "color": [1, 0.92, 1],
+        "color": [
+          1,
+          0.92,
+          1
+        ],
         "intensity": 1,
         "range": 8,
         "spotAngle": 45,
@@ -1195,6 +1969,54 @@
       },
       "script": {
         "scriptName": ""
+      }
+    },
+    {
+      "id": 9001,
+      "name": {
+        "name": "Archipelago Terrain"
+      },
+      "transform": {
+        "position": [
+          0,
+          -5.529711,
+          0
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      },
+      "terrain": {
+        "enabled": true,
+        "heightmapPath": "terrain/archipelago_height16.png",
+        "worldSize": [
+          192,
+          192
+        ],
+        "heightScale": 20,
+        "heightOffset": 0,
+        "chunkCount": 8,
+        "patchResolution": 17,
+        "collisionEnabled": true,
+        "collisionResolution": 129,
+        "materialTiling": 48,
+        "blendSharpness": 1,
+        "layer0Path": "terrain/island_grass.png",
+        "layer1Path": "terrain/island_rock.png",
+        "layer2Path": "terrain/island_soil.png"
       }
     }
   ]

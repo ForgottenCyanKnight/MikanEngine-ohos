@@ -1,4 +1,6 @@
 #include "jolt_gameplay_physics.h"
+#include "../terrain/heightmap_terrain.h"
+#include "../water/water_surface.h"
 
 #include <SDL3/SDL.h>
 
@@ -14,6 +16,7 @@
 #include <Jolt/Physics/Character/CharacterVirtual.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
+#include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/Shape.h>
@@ -142,12 +145,15 @@ struct JoltGameplayPhysics::Impl {
     JPH::BodyID floorBody;
     JPH::BodyID helmetBody;
     std::vector<JPH::BodyID> sceneColliderBodies;
+    std::vector<JPH::BodyID> terrainBodies;
     JPH::ShapeRefC floorShape;
     JPH::ShapeRefC helmetShape;
     JPH::ShapeRefC characterShape;
     std::unique_ptr<JPH::CharacterVirtual> player;
     std::unique_ptr<JPH::CharacterVirtual> enemy;
     JPH::CharacterVsCharacterCollisionSimple characterCollision;
+    scene::Definition waterScene;
+    bool playerSwimming = false;
 
     ~Impl()
     {
@@ -174,6 +180,11 @@ struct JoltGameplayPhysics::Impl {
                 bodyInterface.DestroyBody(body);
             }
             sceneColliderBodies.clear();
+            for (const JPH::BodyID body : terrainBodies) {
+                bodyInterface.RemoveBody(body);
+                bodyInterface.DestroyBody(body);
+            }
+            terrainBodies.clear();
             if (!helmetBody.IsInvalid()) {
                 bodyInterface.RemoveBody(helmetBody);
                 bodyInterface.DestroyBody(helmetBody);
@@ -389,6 +400,7 @@ struct JoltGameplayPhysics::Impl {
             return;
         }
 
+        playerSwimming = false;
         player->SetPosition(JPH::RVec3(playerX, playerY, playerZ));
         enemy->SetPosition(JPH::RVec3(enemyX, enemyY, enemyZ));
         player->SetLinearVelocity(JPH::Vec3::sZero());
@@ -430,7 +442,17 @@ struct JoltGameplayPhysics::Impl {
 
         velocity.SetX(desiredVelocityX);
         velocity.SetZ(desiredVelocityZ);
-        if (jumpPressed && supported) {
+        const auto position = character->GetPosition();
+        const bool isPlayer = character == player.get();
+        if (isPlayer) playerSwimming = water::PlayerSubmerged(waterScene,
+            float(position.GetX()), float(position.GetY()), float(position.GetZ()), playerSwimming);
+        const bool swimming = isPlayer && playerSwimming;
+        if (swimming) {
+            // Keep the capsule feet 0.95 m below the sea, with swept collision
+            // during ascent so shores and overhead geometry still constrain motion.
+            const float targetY = waterScene.water.height - 0.95f;
+            velocity.SetY(std::clamp((targetY - float(position.GetY())) * 8.0f, -2.0f, 3.0f));
+        } else if (jumpPressed && supported) {
             velocity.SetY(kJumpSpeed);
         } else if (supported && velocity.GetY() < 0.0f) {
             // Keep the virtual character attached to the floor while walking.
@@ -449,9 +471,13 @@ struct JoltGameplayPhysics::Impl {
         JPH::CharacterVirtual::ExtendedUpdateSettings updateSettings;
         updateSettings.mStickToFloorStepDown = JPH::Vec3(0.0f, -0.5f, 0.0f);
         updateSettings.mWalkStairsStepUp = JPH::Vec3(0.0f, 0.3f, 0.0f);
+        if (swimming) {
+            updateSettings.mStickToFloorStepDown = JPH::Vec3::sZero();
+            updateSettings.mWalkStairsStepUp = JPH::Vec3::sZero();
+        }
         character->ExtendedUpdate(
             dt,
-            JPH::Vec3(0.0f, kGravityY, 0.0f),
+            JPH::Vec3(0.0f, swimming ? 0.0f : kGravityY, 0.0f),
             updateSettings,
             broadPhaseFilter,
             objectLayerFilter,
@@ -459,29 +485,9 @@ struct JoltGameplayPhysics::Impl {
             shapeFilter,
             *tempAllocator);
 
-        // A character base is the bottom of the capsule.  Keep a small
-        // recovery guard tied to the OBB's top plane so a large frame gap or a
-        // device-side precision hiccup cannot leave the visual model inside
-        // the slab.  Normal frames are resolved by the actual Jolt sweep.
-        const double minimumBaseY = static_cast<double>(
-            kGroundCollider.centerY + kGroundCollider.halfExtentY
-            - kGameplayCharacterPadding);
-        JPH::RVec3 position = character->GetPosition();
-        if (position.GetY() < minimumBaseY) {
-            position.SetY(minimumBaseY);
-            character->SetPosition(position);
-            JPH::Vec3 correctedVelocity = character->GetLinearVelocity();
-            if (correctedVelocity.GetY() < 0.0f) {
-                correctedVelocity.SetY(0.0f);
-                character->SetLinearVelocity(correctedVelocity);
-            }
-            character->RefreshContacts(
-                broadPhaseFilter,
-                objectLayerFilter,
-                bodyFilter,
-                shapeFilter,
-                *tempAllocator);
-        }
+        // Keep the swept collision result: the finite platform and terrain
+        // determine support height. A global Y clamp would create an invisible
+        // infinite floor and cancel gravity everywhere below the platform.
     }
 };
 
@@ -518,6 +524,46 @@ bool JoltGameplayPhysics::SetStaticSceneColliders(
     const std::vector<scene::StaticBoxCollider>& colliders)
 {
     return impl_ != nullptr && impl_->SetStaticSceneColliders(colliders);
+}
+
+bool JoltGameplayPhysics::SetTerrainColliders(const scene::Definition& definition)
+{
+    if (!IsReady()) return false;
+    ohos_model::Model model;
+    std::string error;
+    if (!terrain::BuildModel(definition, kGroundCollider.centerY + kGroundCollider.halfExtentY,
+            model, error, true)) {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "SDL3_TERRAIN stage=collision_load_failed error=%s", error.c_str());
+        return false;
+    }
+    auto& bodies = impl_->physicsSystem->GetBodyInterface();
+    std::vector<JPH::BodyID> created;
+    const auto rollback = [&]() {
+        for (auto body : created) { bodies.RemoveBody(body); bodies.DestroyBody(body); }
+    };
+    for (const auto& mesh : model.meshes) {
+        JPH::MeshShapeSettings shapeSettings;
+        for (const auto& vertex : mesh.vertices)
+            shapeSettings.mTriangleVertices.emplace_back(vertex.position[0], vertex.position[1], vertex.position[2]);
+        for (size_t i = 0; i < mesh.indices.size(); i += 3)
+            shapeSettings.mIndexedTriangles.emplace_back(mesh.indices[i], mesh.indices[i+1], mesh.indices[i+2], 0);
+        auto shape = shapeSettings.Create();
+        if (shape.HasError()) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "SDL3_TERRAIN stage=collision_shape_failed error=%s", shape.GetError().c_str());
+            rollback(); return false;
+        }
+        JPH::BodyCreationSettings settings(shape.Get().GetPtr(), JPH::RVec3::sZero(),
+            JPH::Quat::sIdentity(), JPH::EMotionType::Static, kNonMovingLayer);
+        const auto body = bodies.CreateAndAddBody(settings, JPH::EActivation::DontActivate);
+        if (body.IsInvalid()) { rollback(); return false; }
+        created.push_back(body);
+    }
+    for (auto body : impl_->terrainBodies) { bodies.RemoveBody(body); bodies.DestroyBody(body); }
+    impl_->terrainBodies.swap(created);
+    impl_->waterScene.water = definition.water;
+    impl_->playerSwimming = false;
+    SDL_Log("SDL3_TERRAIN stage=collision_ready bodies=%zu triangles=%u", impl_->terrainBodies.size(), model.triangleCount);
+    return true;
 }
 
 void JoltGameplayPhysics::Reset(float playerX, float playerY, float playerZ,

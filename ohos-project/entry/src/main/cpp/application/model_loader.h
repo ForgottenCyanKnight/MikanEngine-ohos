@@ -84,6 +84,7 @@ struct AnimationClip {
 };
 
 struct Mesh {
+    bool castShadow = true;
     std::vector<Vertex> vertices;
     std::vector<std::uint32_t> indices;
     std::uint32_t materialIndex = 0;
@@ -94,6 +95,8 @@ struct Mesh {
 };
 
 struct Material {
+    bool waterSurface = false;
+    bool worldSpaceUv = false; // Cube faces repeat once per world metre.
     // glTF material name, e.g. "M_Joints" -- the renderer uses it to skip
     // debug-only sub-meshes (Quaternius' weight-paint shell lives INSIDE the
     // body and pokes through the surface when rendered opaquely).

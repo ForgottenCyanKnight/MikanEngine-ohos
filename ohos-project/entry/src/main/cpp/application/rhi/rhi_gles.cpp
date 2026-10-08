@@ -22,10 +22,12 @@
 
 // Same directory as this file; the include path does not contain application/,
 // only the cpp root, so the sibling header is addressed relatively.
+#include "../water/water_surface.h"
 #include "rhi.h"
 #include "../audio/audio_manager.h"
 #include "../inventory.h"
 #include "../physics/jolt_gameplay_physics.h"
+#include "../terrain/frustum_culling.h"
 #include "../scene/scene_definition.h"
 
 #include "sdf_font_metrics.h"
@@ -41,6 +43,7 @@
 #include <GLES3/gl3.h>
 
 #include "stb_image.h"
+#include "../terrain/heightmap_terrain.h"
 
 #include <cctype>
 #include <cmath>
@@ -645,11 +648,11 @@ float ShadowVisibility(vec3 worldPosition, vec3 N, vec3 L)
         shadowUv.y >= 1.0 || receiverDepth <= 0.0 || receiverDepth >= 1.0) {
         return 1.0;
     }
-    // Use a larger slope-scaled receiver bias for this single 1024^2 map.
+    // Use a larger slope-scaled receiver bias for this single shadow map.
     // The raster pass also applies polygon offset; keeping both terms here
     // suppresses acne without relying on a driver-specific depth precision.
     float bias = max(0.008 * (1.0 - max(dot(N, L), 0.0)), 0.0015);
-    vec2 texel = vec2(1.0 / 1024.0);
+    vec2 texel = 1.0 / vec2(textureSize(shadowMap, 0));
     float visible = 0.0;
     for (int y = -1; y <= 1; ++y) {
         for (int x = -1; x <= 1; ++x) {
@@ -772,6 +775,21 @@ void main()
     vec3 emissive = sRGBToLinear(texture(emissiveTexture, vUV).rgb) * emissiveFactor;
     vec3 N = OctahedronDecode(texture(normalTexture, vUV).xy * 2.0 - 1.0);
 
+    if (mat.w > 0.5) {
+        float NoV = max(dot(N, V), 0.0);
+        float fresnel = 0.02 + 0.98 * pow(1.0 - NoV, 5.0);
+        vec3 reflection = sRGBToLinear(textureLod(skyboxTexture, reflect(-V, N), roughness * 4.0).rgb);
+        vec3 color = mix(albedo, reflection, fresnel);
+        if (hdrOutput == 1) {
+            outColor = vec4(color, 1.0);
+        } else {
+            color *= 1.8;
+            color = color / (color + vec3(1.0));
+            outColor = vec4(pow(color, vec3(1.0 / 2.2)), 1.0);
+        }
+        return;
+    }
+
     // Key light is deliberately angled so the scene shadow has a visible
     // footprint instead of collapsing into a small noon-time patch.
     vec3 L = normalize(vec3(0.45, 1.0, 0.55));
@@ -862,7 +880,7 @@ void main()
 // 1826x1080.
 constexpr uint32_t kRenderWidth = 1920;
 constexpr uint32_t kRenderHeight = 1080;
-constexpr GLsizei kShadowMapSize = 1024;
+constexpr GLsizei kShadowMapSize = 2048;
 
 // HDR composite format preference.  R11G11B10 packs into 32 bpp -- half the
 // bandwidth of RGBA16F for the same exponent range (up to 65024, ~6e-5 min),
@@ -871,6 +889,135 @@ constexpr GLsizei kShadowMapSize = 1024;
 // order: R11G11B10 -> RGBA16F -> RGBA8 LDR fallback; all renderable via
 // EXT_color_buffer_float, completeness-checked by actually attaching.
 constexpr GLenum kHdrFormats[] = {GL_R11F_G11F_B10F, GL_RGBA16F};
+
+const char* const kWaterFragmentSource = R"(#version 300 es
+precision highp float;
+precision highp int;
+uniform sampler2D opaqueColor;
+uniform highp sampler2D opaqueDepth;
+uniform samplerCube waterSky;
+uniform mat4 waterInvViewProj;
+uniform vec4 waterCamera;
+uniform vec4 waterParams;
+uniform vec4 waterColor;
+uniform int waterLdr;
+in vec2 vUV;
+out vec4 outColor;
+#define WATER_INV waterInvViewProj
+#define WATER_CAMERA waterCamera
+#define WATER_PARAMS waterParams
+#define WATER_COLOR waterColor
+#define WATER_UV vUV
+#define DEPTH_NDC (depth * 2.0 - 1.0)
+#define WATER_LDR (waterLdr == 1)
+// Four advected noise octaves with analytic height gradients. Geometry stays
+// at the fixed sea level; only the reflection normal changes.
+float WaterHash(vec2 p)
+{
+    vec3 q = fract(vec3(p.xyx) * 0.1031);
+    q += dot(q, q.yzx + 33.33);
+    return fract((q.x + q.y) * q.z);
+}
+
+vec2 WaterNoiseGradient(vec2 p)
+{
+    vec2 cell = floor(p);
+    vec2 f = fract(p);
+    // Quintic interpolation gives continuous first and second derivatives
+    // across lattice boundaries, without finite-difference texture samples.
+    vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+    vec2 du = 30.0 * f * f * (f * (f - 2.0) + 1.0);
+    float a = WaterHash(cell);
+    float b = WaterHash(cell + vec2(1.0, 0.0));
+    float c = WaterHash(cell + vec2(0.0, 1.0));
+    float d = WaterHash(cell + vec2(1.0, 1.0));
+    return vec2(mix(b - a, d - c, u.y) * du.x,
+                mix(c - a, d - b, u.x) * du.y);
+}
+
+vec3 WaterNormal(vec3 worldPosition, float time)
+{
+    vec2 p = worldPosition.xz;
+    float footprint = max(length(dFdx(p)), length(dFdy(p)));
+    const mat2 turn = mat2(0.8, 0.6, -0.6, 0.8);
+    mat2 basis = mat2(1.0);
+    vec2 drift = vec2(0.12, -0.08);
+    vec2 offset = vec2(17.3, -9.2);
+    vec2 slope = vec2(0.0);
+    float frequency = 0.45;
+    float amplitude = 0.24;
+    for (int octave = 0; octave < 4; ++octave) {
+        // Each layer has its own scale, orientation, origin and flow direction.
+        vec2 q = basis * p * frequency + drift * (time * 3.0) + offset;
+        float filterWeight = 1.0 - smoothstep(0.25, 0.85, footprint * frequency);
+        slope += transpose(basis) * WaterNoiseGradient(q)
+            * (amplitude * frequency * filterWeight);
+        basis = turn * basis;
+        drift = turn * drift * 1.19;
+        offset = turn * offset + vec2(23.7, 11.9);
+        frequency *= 2.17;
+        amplitude *= 0.43;
+    }
+    return normalize(vec3(-slope.x, 1.0, -slope.y));
+}
+
+
+vec3 ReconstructWorld(vec2 uv, float depth)
+{
+    vec4 h = WATER_INV * vec4(uv * 2.0 - 1.0, DEPTH_NDC, 1.0);
+    return h.xyz / h.w;
+}
+
+void main()
+{
+    vec2 uv = WATER_UV;
+    vec3 source = texture(opaqueColor, uv).rgb;
+    if (WATER_CAMERA.w < 0.5) { outColor = vec4(source, 1.0); return; }
+    vec3 background = source;
+    if (WATER_LDR) {
+        vec3 mapped = pow(max(source, vec3(0.0)), vec3(2.2));
+        background = mapped / max(vec3(1.0) - mapped, vec3(0.0001)) / 1.8;
+    }
+    ivec2 extent = textureSize(opaqueDepth, 0);
+    ivec2 pixel = clamp(ivec2(uv * vec2(extent)), ivec2(0), extent - ivec2(1));
+    float depth = texelFetch(opaqueDepth, pixel, 0).r;
+    vec3 camera = WATER_CAMERA.xyz;
+    vec3 bottom = ReconstructWorld(uv, depth);
+    vec3 ray = normalize(ReconstructWorld(uv, 1.0) - camera);
+    float bottomDistance = depth >= 0.99999 ? 10000.0 : max(dot(bottom - camera, ray), 0.0);
+    float surfaceDistance = abs(ray.y) > 0.00001 ? (WATER_PARAMS.x - camera.y) / ray.y : -1.0;
+    vec3 surface = camera + ray * max(surfaceDistance, 0.0);
+    bool insideSea = abs(surface.x) <= WATER_PARAMS.y && abs(surface.z) <= WATER_PARAMS.y;
+    bool hitsWater = insideSea && surfaceDistance > 0.0 && surfaceDistance < bottomDistance - 0.001;
+    bool underwater = camera.y < WATER_PARAMS.x && abs(camera.x) <= WATER_PARAMS.y && abs(camera.z) <= WATER_PARAMS.y;
+    vec3 waveNormal = WaterNormal(surface, WATER_PARAMS.w);
+    if (!hitsWater && !underwater) { outColor = vec4(source, 1.0); return; }
+
+    // Retained opaque depth gives the submerged optical path in world units.
+    float pathLength = underwater ? (hitsWater ? surfaceDistance : bottomDistance) : bottomDistance - surfaceDistance;
+    pathLength = clamp(pathLength, 0.0, 60.0);
+    // Beer-Lambert: red is absorbed first; blue/green penetrate farther.
+    vec3 transmission = exp(-vec3(0.45, 0.12, 0.06) * pathLength);
+    vec3 body = pow(max(WATER_COLOR.rgb, vec3(0.0)), vec3(2.2));
+    vec3 throughWater = background * transmission + body * (vec3(1.0) - transmission);
+    vec3 color = throughWater;
+    if (hitsWater) {
+        vec3 N = waveNormal;
+        vec3 V = -ray;
+        if (dot(N, V) < 0.0) N = -N;
+        float NoV = clamp(dot(N, V), 0.0, 1.0);
+        float fresnel = 0.02 + 0.98 * pow(1.0 - NoV, 5.0);
+        vec3 reflected = pow(max(textureLod(waterSky, reflect(ray, N), WATER_PARAMS.z * 4.0).rgb,
+                                 vec3(0.0)), vec3(2.2));
+        color = mix(throughWater, reflected, fresnel);
+    }
+    if (WATER_LDR) {
+        color *= 1.8;
+        color = pow(max(color / (color + vec3(1.0)), vec3(0.0)), vec3(1.0 / 2.2));
+    }
+    outColor = vec4(color, 1.0);
+}
+)";
 
 // Diagnostic toggle for the flickering-black-blocks investigation: false
 // skips the whole bloom ds/up chain (12 of the 15 per-frame FBO binds) and
@@ -1402,6 +1549,7 @@ layout(location = 9) in vec4 inInstanceColor;
 
 uniform int skinningOn;
 uniform int instancingOn;
+uniform int instanceBase;
 // Enemy death dissolve (0 = intact).  Only instance 1 of the skinned
 // character batch is the enemy, so the per-draw uniform is gated on
 // gl_InstanceID and static/prop draws (instance 0) can never be affected.
@@ -1444,7 +1592,7 @@ void main()
         // LBS: skin = sum w_i * (normalise * global_i * inverseBind_i).  The
         // normalisation translate is irrelevant for normals; mat3() of the
         // joint matrix carries its uniform scale, removed by the renormalise.
-        mat4 skinMatrix = SkinMatrix(joint, inWeights, gl_InstanceID);
+        mat4 skinMatrix = SkinMatrix(joint, inWeights, gl_InstanceID + instanceBase);
         skinnedPosition = (skinMatrix * vec4(inPosition, 1.0)).xyz;
         skinnedNormal = mat3(skinMatrix) * inNormal;
     }
@@ -1465,7 +1613,7 @@ void main()
     // would mirror the image back to front.
     vTexCoord = inTexCoord;
     vInstanceColor = instanceColor;
-    vDissolve = gl_InstanceID == 1 ? enemyDissolve : 0.0;
+    vDissolve = gl_InstanceID + instanceBase == 1 ? enemyDissolve : 0.0;
 }
 )";
 
@@ -1494,6 +1642,7 @@ layout(location = 8) in vec4 inInstanceModel3;
 uniform mat4 shadowMvp;
 uniform int skinningOn;
 uniform int instancingOn;
+uniform int instanceBase;
 uniform float enemyDissolve;
 
 flat out float vDissolve;
@@ -1522,12 +1671,12 @@ void main()
     vec3 shadowPosition = inPosition;
     if (skinningOn == 1 && dot(inWeights, vec4(1.0)) > 0.001) {
         ivec4 joint = clamp(ivec4(inJoints + vec4(0.5)), ivec4(0), ivec4(255));
-        mat4 skinMatrix = SkinMatrix(joint, inWeights, gl_InstanceID);
+        mat4 skinMatrix = SkinMatrix(joint, inWeights, gl_InstanceID + instanceBase);
         shadowPosition = (skinMatrix * vec4(inPosition, 1.0)).xyz;
     }
     vec4 shadowWorldPosition = model * vec4(shadowPosition, 1.0);
     gl_Position = shadowMvp * shadowWorldPosition;
-    vDissolve = gl_InstanceID == 1 ? enemyDissolve : 0.0;
+    vDissolve = gl_InstanceID + instanceBase == 1 ? enemyDissolve : 0.0;
     vShadowWorldPos = shadowWorldPosition.xyz;
 }
 )";
@@ -1593,7 +1742,8 @@ uniform sampler2D aoTexture;
 uniform sampler2D emissiveTexture;
 
 uniform vec3 cameraPosition;
-// x = metallic factor, y = roughness factor, z = normal scale, w = unused.
+// x = metallic, y = roughness, z = normal scale, w = water flag.
+uniform float waterTime;
 uniform vec4 materialParams;
 uniform vec4 materialBaseColorFactor;
 // 0 when the material has no normal map.  PerturbNormal reconstructs the
@@ -1679,26 +1829,89 @@ vec3 PerturbNormal(vec3 N, vec3 V, vec2 uv)
     return normalize(TBN * mapN);
 }
 
+// Four advected noise octaves with analytic height gradients. Geometry stays
+// at the fixed sea level; only the reflection normal changes.
+float WaterHash(vec2 p)
+{
+    vec3 q = fract(vec3(p.xyx) * 0.1031);
+    q += dot(q, q.yzx + 33.33);
+    return fract((q.x + q.y) * q.z);
+}
+
+vec2 WaterNoiseGradient(vec2 p)
+{
+    vec2 cell = floor(p);
+    vec2 f = fract(p);
+    // Quintic interpolation gives continuous first and second derivatives
+    // across lattice boundaries, without finite-difference texture samples.
+    vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+    vec2 du = 30.0 * f * f * (f * (f - 2.0) + 1.0);
+    float a = WaterHash(cell);
+    float b = WaterHash(cell + vec2(1.0, 0.0));
+    float c = WaterHash(cell + vec2(0.0, 1.0));
+    float d = WaterHash(cell + vec2(1.0, 1.0));
+    return vec2(mix(b - a, d - c, u.y) * du.x,
+                mix(c - a, d - b, u.x) * du.y);
+}
+
+vec3 WaterNormal(vec3 worldPosition, float time)
+{
+    vec2 p = worldPosition.xz;
+    float footprint = max(length(dFdx(p)), length(dFdy(p)));
+    const mat2 turn = mat2(0.8, 0.6, -0.6, 0.8);
+    mat2 basis = mat2(1.0);
+    vec2 drift = vec2(0.12, -0.08);
+    vec2 offset = vec2(17.3, -9.2);
+    vec2 slope = vec2(0.0);
+    float frequency = 0.45;
+    float amplitude = 0.24;
+    for (int octave = 0; octave < 4; ++octave) {
+        // Each layer has its own scale, orientation, origin and flow direction.
+        vec2 q = basis * p * frequency + drift * (time * 3.0) + offset;
+        float filterWeight = 1.0 - smoothstep(0.25, 0.85, footprint * frequency);
+        slope += transpose(basis) * WaterNoiseGradient(q)
+            * (amplitude * frequency * filterWeight);
+        basis = turn * basis;
+        drift = turn * drift * 1.19;
+        offset = turn * offset + vec2(23.7, 11.9);
+        frequency *= 2.17;
+        amplitude *= 0.43;
+    }
+    return normalize(vec3(-slope.x, 1.0, -slope.y));
+}
+
+// Dominant-axis mapping gives scaled cube instances a consistent brick size.
+vec2 CubeWorldUv(vec3 p, vec3 n)
+{
+    vec3 a = abs(n);
+    if (a.y >= a.x && a.y >= a.z) return vec2(p.x, -p.z * (n.y >= 0.0 ? 1.0 : -1.0));
+    if (a.x >= a.z) return vec2(-p.z * (n.x >= 0.0 ? 1.0 : -1.0), p.y);
+    return vec2(p.x * (n.z >= 0.0 ? 1.0 : -1.0), p.y);
+}
+
 void main()
 {
+    vec2 materialUv = materialParams.w > 1.5 ? CubeWorldUv(vWorldPosition, normalize(vNormal)) : vTexCoord;
+    bool isWater = materialParams.w > 0.5 && materialParams.w < 1.5;
     // Keep the source material texture/factors intact for normal instances;
     // the enemy marker is an explicit gameplay presentation tint carried by
     // the instance stream rather than a baked texture/material change.
-    vec3 baseAlbedo = texture(baseColorTexture, vTexCoord).rgb
+    vec3 baseAlbedo = texture(baseColorTexture, materialUv).rgb
         * materialBaseColorFactor.rgb;
     float markerStrength = clamp(vInstanceColor.a, 0.0, 1.0);
     vec3 albedo = mix(baseAlbedo, vInstanceColor.rgb, markerStrength);
-    vec4 mr = texture(metallicRoughnessTexture, vTexCoord);
+    vec4 mr = texture(metallicRoughnessTexture, materialUv);
     // Roughness lower bound (0.045) is applied in the lighting pass, after the
     // 8-bit round-trip, matching the forward clamp ordering.
     float metallic = clamp(mr.b * materialParams.x, 0.0, 1.0);
     float roughness = clamp(mr.g * materialParams.y, 0.0, 1.0);
-    float ao = texture(aoTexture, vTexCoord).r;
+    float ao = texture(aoTexture, materialUv).r;
 
-    vec3 N = normalize(vNormal);
+    vec3 N = isWater ? WaterNormal(vWorldPosition, waterTime) : normalize(vNormal);
     vec3 V = normalize(cameraPosition - vWorldPosition);
-    if (hasNormalMap == 1) {
-        N = PerturbNormal(N, V, vTexCoord);
+    if (isWater && dot(N, V) < 0.0) N = -N;
+    if (hasNormalMap == 1 && !isWater) {
+        N = PerturbNormal(N, vWorldPosition, materialUv);
     }
 
     vec3 emberGlow = vec3(0.0);
@@ -1718,11 +1931,11 @@ void main()
 
     outAlbedo = vec4(albedo, 1.0);
     outNormal = vec4(OctahedronEncode(N) * 0.5 + 0.5, 0.0, 1.0);
-    outMaterial = vec4(metallic, roughness, ao, 1.0);
+    outMaterial = vec4(metallic, roughness, ao, isWater ? 1.0 : 0.0);
     // Raw emissive texel; the emissive factor multiplies in the lighting pass
     // so factors above 1 are not clamped by the 8-bit attachment.  The
     // dissolve ember rides the same channel.
-    outEmissive = vec4(texture(emissiveTexture, vTexCoord).rgb + emberGlow, 1.0);
+    outEmissive = vec4(texture(emissiveTexture, materialUv).rgb + emberGlow, 1.0);
 }
 )";
 
@@ -1831,6 +2044,8 @@ void BindSceneUniformBlock(GLuint program, const char* label)
 }
 
 struct GlesMesh {
+    terrain::Bounds bounds;
+    bool castShadow = true;
     GLuint vao = 0;
     GLuint vertexBuffer = 0;
     GLuint indexBuffer = 0;
@@ -3139,6 +3354,7 @@ public:
                         Mat4Scale(physics::kHelmetCollider.renderScale)));
                 DrawShadowMeshList(helmetMeshes_, false, helmetTransform);
             }
+            DrawShadowMeshList(terrainMeshes_, false, Mat4Identity());
             if (!groundMeshes_.empty()) {
                 const Mat4 groundTransform = Mat4Multiply(
                     Mat4Translation(physics::kGroundCollider.centerX,
@@ -3222,6 +3438,7 @@ public:
                         Mat4Scale(physics::kHelmetCollider.renderScale)));
                 DrawStaticMeshList(helmetMeshes_, helmetTextures_, helmetMaterials_, helmetSpin);
             }
+            DrawStaticMeshList(terrainMeshes_, terrainTextures_, terrainMaterials_, Mat4Identity());
             if (!groundMeshes_.empty()) {
                 // Ground: the Base Model cube stretched into a slab.  Top
                 // surface sits at the character's feet line (y = -0.94):
@@ -3312,6 +3529,34 @@ public:
         glDepthMask(GL_TRUE);
         glUseProgram(0);
         LogGlErrors("lighting_pass");
+
+        // Separate source/output targets: no attachment feedback. Keep the
+        // opaque scene and depth intact until transmission has been resolved.
+        if (renderGameplayScene && sceneDefinition_ != nullptr && sceneDefinition_->water.enabled) {
+            const auto& water = sceneDefinition_->water;
+            glBindFramebuffer(GL_FRAMEBUFFER, waterFbo_);
+            glViewport(0, 0, static_cast<GLsizei>(postWidth_), static_cast<GLsizei>(postHeight_));
+            glDisable(GL_DEPTH_TEST);
+            glDepthMask(GL_FALSE);
+            glUseProgram(waterProgram_);
+            glUniformMatrix4fv(waterInverseLocation_, 1, GL_FALSE, invViewProj_.value);
+            glUniform4f(waterCameraLocation_, camPosX_, camPosY_, camPosZ_, 1.0f);
+            glUniform4f(waterParamsLocation_, water.height, water.size * 0.5f, water.roughness,
+                static_cast<float>(SDL_GetTicks() % 3600000U) * 0.001f);
+            glUniform4f(waterColorLocation_, water.color.x, water.color.y, water.color.z, 1.0f);
+            glUniform1i(waterLdrLocation_, hdrPipeline_ ? 0 : 1);
+            glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, postColorTex_);
+            glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, gbufferDepthTex_);
+            glActiveTexture(GL_TEXTURE2); glBindTexture(GL_TEXTURE_CUBE_MAP, skyboxTexture_);
+            glBindVertexArray(fullscreenVao_);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+            glActiveTexture(GL_TEXTURE0);
+            glDepthMask(GL_TRUE);
+            glUseProgram(0);
+            std::swap(postFbo_, waterFbo_);
+            std::swap(postColorTex_, waterColorTex_);
+            LogGlErrors("water_transmission_pass");
+        }
 
         // ---- bloom chain (engine postprocess_chain_mobile order) ----
         // ds[0]: soft-knee threshold at half res; ds[1..5]: dual-kernel /2;
@@ -3510,6 +3755,15 @@ public:
             }
         }
         groundMeshes_.clear();
+        for (const GlesMesh& mesh : terrainMeshes_) {
+            if (mesh.vao) glDeleteVertexArrays(1, &mesh.vao);
+            if (mesh.vertexBuffer) glDeleteBuffers(1, &mesh.vertexBuffer);
+            if (mesh.indexBuffer) glDeleteBuffers(1, &mesh.indexBuffer);
+        }
+        terrainMeshes_.clear();
+        if (!terrainTextures_.empty()) glDeleteTextures(static_cast<GLsizei>(terrainTextures_.size()), terrainTextures_.data());
+        terrainTextures_.clear();
+        terrainMaterials_.clear();
         // Alias check must run before skyboxTexture_ is deleted: on IBL
         // creation failure irradianceTexture_ points at the skybox texture.
         const bool irradianceAliasesSkybox = irradianceTexture_ != 0 && irradianceTexture_ == skyboxTexture_;
@@ -3617,6 +3871,7 @@ public:
             glDeleteProgram(shadowProgram_);
             shadowProgram_ = 0;
         }
+        if (waterProgram_ != 0) { glDeleteProgram(waterProgram_); waterProgram_ = 0; }
         if (lightingProgram_ != 0) {
             glDeleteProgram(lightingProgram_);
             lightingProgram_ = 0;
@@ -3659,6 +3914,7 @@ public:
         playerYaw_ = 0.0f;
         playerMoving_ = false;
         playerSprinting_ = false;
+        playerSwimming_ = false;
         crouchEnabled_ = false;
         playerHealth_ = playerMaxHealth_;
         playerAttackCooldown_ = 0.0f;
@@ -3734,13 +3990,14 @@ private:
         gbufferProgram_ = LinkProgram(kModelVertexSource, kGBufferFragmentSource, "gbuffer");
         shadowProgram_ = LinkProgram(kShadowVertexSource, kShadowFragmentSource, "shadow");
         lightingProgram_ = LinkProgram(kFullscreenVertexSource, kLightingFragmentSource, "lighting");
+        waterProgram_ = LinkProgram(kFullscreenVertexSource, kWaterFragmentSource, "water_transmission");
         fxaaProgram_ = LinkProgram(kFullscreenVertexSource, kFxaaFragmentSource, "fxaa");
         bloomThProgram_ = LinkProgram(kFullscreenVertexSource, kBloomThresholdFragmentSource, "bloom_th");
         bloomDownProgram_ = LinkProgram(kFullscreenVertexSource, kBloomDownFragmentSource, "bloom_down");
         bloomUpProgram_ = LinkProgram(kFullscreenVertexSource, kBloomUpFragmentSource, "bloom_up");
         tonemapProgram_ = LinkProgram(kFullscreenVertexSource, kTonemapFragmentSource, "tonemap");
         if (irradianceProgram_ == 0 || prefilterProgram_ == 0 || gbufferProgram_ == 0
-            || lightingProgram_ == 0 || fxaaProgram_ == 0 || bloomThProgram_ == 0
+            || lightingProgram_ == 0 || waterProgram_ == 0 || fxaaProgram_ == 0 || bloomThProgram_ == 0
             || bloomDownProgram_ == 0 || bloomUpProgram_ == 0 || tonemapProgram_ == 0) {
             return false;
         }
@@ -3771,12 +4028,15 @@ private:
         }
         skinningOnLocation_ = glGetUniformLocation(gbufferProgram_, "skinningOn");
         instancingOnLocation_ = glGetUniformLocation(gbufferProgram_, "instancingOn");
+        instanceBaseLocation_ = glGetUniformLocation(gbufferProgram_, "instanceBase");
         enemyDissolveLocation_ = glGetUniformLocation(gbufferProgram_, "enemyDissolve");
         shadowMvpLocation_ = shadowProgram_ != 0 ? glGetUniformLocation(shadowProgram_, "shadowMvp") : -1;
         shadowSkinningOnLocation_ = shadowProgram_ != 0
             ? glGetUniformLocation(shadowProgram_, "skinningOn") : -1;
         shadowInstancingOnLocation_ = shadowProgram_ != 0
             ? glGetUniformLocation(shadowProgram_, "instancingOn") : -1;
+        shadowInstanceBaseLocation_ = shadowProgram_ != 0
+            ? glGetUniformLocation(shadowProgram_, "instanceBase") : -1;
         shadowEnemyDissolveLocation_ = shadowProgram_ != 0
             ? glGetUniformLocation(shadowProgram_, "enemyDissolve") : -1;
         irradianceSampler_ = glGetUniformLocation(irradianceProgram_, "skyboxTexture");
@@ -3792,6 +4052,7 @@ private:
         modelEmissiveSampler_ = glGetUniformLocation(gbufferProgram_, "emissiveTexture");
         cameraPositionLocation_ = glGetUniformLocation(gbufferProgram_, "cameraPosition");
         materialParamsLocation_ = glGetUniformLocation(gbufferProgram_, "materialParams");
+        waterTimeLocation_ = glGetUniformLocation(gbufferProgram_, "waterTime");
         materialBaseColorFactorLocation_ = glGetUniformLocation(gbufferProgram_, "materialBaseColorFactor");
         hasNormalMapLocation_ = glGetUniformLocation(gbufferProgram_, "hasNormalMap");
         // Lighting pass (G-buffer reads + IBL + sky).
@@ -3815,6 +4076,16 @@ private:
         lightingUseShadowMapLocation_ = glGetUniformLocation(lightingProgram_, "useShadowMap");
         lightingDebugNormalLocation_ = glGetUniformLocation(lightingProgram_, "debugNormal");
         lightingHdrOutputLocation_ = glGetUniformLocation(lightingProgram_, "hdrOutput");
+        waterInverseLocation_ = glGetUniformLocation(waterProgram_, "waterInvViewProj");
+        waterCameraLocation_ = glGetUniformLocation(waterProgram_, "waterCamera");
+        waterParamsLocation_ = glGetUniformLocation(waterProgram_, "waterParams");
+        waterColorLocation_ = glGetUniformLocation(waterProgram_, "waterColor");
+        waterLdrLocation_ = glGetUniformLocation(waterProgram_, "waterLdr");
+        glUseProgram(waterProgram_);
+        glUniform1i(glGetUniformLocation(waterProgram_, "opaqueColor"), 0);
+        glUniform1i(glGetUniformLocation(waterProgram_, "opaqueDepth"), 1);
+        glUniform1i(glGetUniformLocation(waterProgram_, "waterSky"), 2);
+        glUseProgram(0);
         // Post-processing chain (FXAA).
         fxaaSampler_ = glGetUniformLocation(fxaaProgram_, "colorTex");
         // Bloom + AgX tonemap chain.
@@ -4086,6 +4357,11 @@ private:
             }
             hdrFormat = GL_RGBA8;
         }
+        if (!makeTarget(waterFbo_, waterColorTex_, w, h, hdrFormat)) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "SDL3_GLES stage=water_target_failed");
+            DestroyPostTarget();
+            return false;
+        }
         const GLenum bloomFormat = hdrFormat;
 
         // Bloom mip chain (engine postprocess_chain_mobile.json):
@@ -4130,6 +4406,8 @@ private:
 
     void DestroyPostTarget()
     {
+        if (waterFbo_ != 0) { glDeleteFramebuffers(1, &waterFbo_); waterFbo_ = 0; }
+        if (waterColorTex_ != 0) { glDeleteTextures(1, &waterColorTex_); waterColorTex_ = 0; }
         if (postFbo_ != 0) {
             glDeleteFramebuffers(1, &postFbo_);
             postFbo_ = 0;
@@ -4478,6 +4756,8 @@ private:
         }
         walkClip_ = FindClipIndex("Walk_Loop");
         sprintClip_ = FindClipIndex("Sprint_Loop");
+        swimIdleClip_ = FindClipIndex("Swim_Idle_Loop");
+        swimForwardClip_ = FindClipIndex("Swim_Fwd_Loop");
         idleClip_ = FindClipIndex("Idle_Loop");
         crouchClip_ = FindClipIndex("Crouch_Idle_Loop");
         attackClip_ = FindClipIndex("Punch_Jab");
@@ -4636,6 +4916,20 @@ private:
 
         LoadHelmetModel();
         LoadGroundModel();
+        if (sceneDefinition_ != nullptr) {
+            ohos_model::Model terrainModel;
+            std::string terrainError;
+            if (!terrain::BuildModel(*sceneDefinition_, physics::kGroundCollider.centerY +
+                    physics::kGroundCollider.halfExtentY, terrainModel, terrainError)) {
+                SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "SDL3_TERRAIN stage=load_failed error=%s", terrainError.c_str());
+            } else {
+                // Sea is composited after opaque lighting; preserve bottom color/depth.
+                terrainMaterials_ = terrainModel.materials;
+                LoadStaticTextures(terrainModel, terrainTextures_);
+                BuildStaticMeshes(terrainModel, terrainMeshes_);
+                SDL_Log("SDL3_TERRAIN stage=gles_ready meshes=%zu vertices=%u", terrainMeshes_.size(), terrainModel.vertexCount);
+            }
+        }
     }
 
     void CreateCharacterInstanceBuffer()
@@ -4718,6 +5012,8 @@ private:
                 continue;
             }
             GlesMesh mesh;
+            mesh.castShadow = source.castShadow;
+            for (const auto& vertex : source.vertices) mesh.bounds.Add(vertex.position);
             mesh.indexCount = static_cast<GLuint>(source.indices.size());
             mesh.indexType = source.indexBytes == 4 ? GL_UNSIGNED_INT : GL_UNSIGNED_SHORT;
             mesh.materialIndex = source.materialIndex;
@@ -4783,6 +5079,7 @@ private:
             SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "SDL3_GLES stage=ground_load_failed error=unexpected_skin");
             return;
         }
+        for (auto& material : model.materials) material.worldSpaceUv = true;
         groundMaterials_ = model.materials;
         LoadStaticTextures(model, groundTextures_);
         BuildStaticMeshes(model, groundMeshes_);
@@ -4824,11 +5121,13 @@ private:
     // whose first/last frames match).  MikanEngine's "script system" is pure
     // C++ (IScriptBehaviour), so there was nothing to port beyond this
     // pattern; the three on-screen buttons replace its keyboard/touch input.
-    enum class AnimState { Idle, Walk, Sprint, Attack, JumpStart, JumpLoop, JumpLand, Crouch, Hit, Death };
+    enum class AnimState { SwimIdle, SwimForward, Idle, Walk, Sprint, Attack, JumpStart, JumpLoop, JumpLand, Crouch, Hit, Death };
 
     static const char* AnimStateHudName(AnimState state)
     {
         switch (state) {
+        case AnimState::SwimIdle:
+        case AnimState::SwimForward: return "SWIM";
         case AnimState::Idle: return "IDLE";
         case AnimState::Walk: return "WALK";
         case AnimState::Sprint: return "RUN";
@@ -4849,6 +5148,7 @@ private:
     // booleans, extended with a sprint level).
     AnimState GroundedState() const
     {
+        if (playerSwimming_) return playerMoving_ ? AnimState::SwimForward : AnimState::SwimIdle;
         if (crouchEnabled_) {
             return AnimState::Crouch;
         }
@@ -4873,6 +5173,8 @@ private:
         int targetClip = walkClip_;
         bool targetLoop = true;
         switch (next) {
+        case AnimState::SwimIdle: targetClip = swimIdleClip_; targetLoop = true; break;
+        case AnimState::SwimForward: targetClip = swimForwardClip_; targetLoop = true; break;
         case AnimState::Idle: targetClip = idleClip_; targetLoop = true; break;
         case AnimState::Walk: targetClip = walkClip_; targetLoop = true; break;
         case AnimState::Sprint: targetClip = sprintClip_; targetLoop = true; break;
@@ -4918,6 +5220,12 @@ private:
             }
             return;
         }
+        if (playerSwimming_) {
+            EnterAnimState(GroundedState());
+            return;
+        }
+        if (animState_ == AnimState::SwimIdle || animState_ == AnimState::SwimForward)
+            EnterAnimState(GroundedState());
         // UpdateEnemyAi admits the attack edge only when the shared combat
         // cooldown is ready.  Reuse that decision here so the animation and
         // the hit query cannot disagree when the button is tapped rapidly.
@@ -4978,6 +5286,8 @@ private:
                 EnterAnimState(GroundedState());
             }
             break;
+        case AnimState::SwimIdle:
+        case AnimState::SwimForward:
         case AnimState::Idle:
         case AnimState::Walk:
         case AnimState::Sprint:
@@ -5165,6 +5475,8 @@ private:
         int targetClip = enemyWalkClip_;
         bool targetLoop = true;
         switch (next) {
+        case AnimState::SwimIdle: targetClip = swimIdleClip_; targetLoop = true; break;
+        case AnimState::SwimForward: targetClip = swimForwardClip_; targetLoop = true; break;
         case AnimState::Idle: targetClip = enemyIdleClip_; targetLoop = true; break;
         case AnimState::Walk: targetClip = enemyWalkClip_; targetLoop = true; break;
         case AnimState::Sprint: targetClip = enemySprintClip_; targetLoop = true; break;
@@ -5406,11 +5718,37 @@ private:
         return enemyVisible_ ? 2 : 1;
     }
 
+    int VisibleCharacters(const Mat4& matrix, int count, int& base) const
+    {
+        const terrain::Frustum frustum(matrix.value, false);
+        const bool player = count > 0 && frustum.Intersects(terrain::TransformBounds(
+            terrain::ActorBounds(false), playerMatrix_.value));
+        const bool enemy = count > 1 && frustum.Intersects(terrain::TransformBounds(
+            terrain::ActorBounds(true), enemyMatrix_.value));
+        base = player ? 0 : 1;
+        return int(player) + int(enemy);
+    }
+    void SetCharacterInstanceOffset(int base)
+    {
+        glBindBuffer(GL_ARRAY_BUFFER, characterInstanceVbo_);
+        const size_t offset = sizeof(CharacterInstanceData)*base;
+        for (GLuint column=0; column<4; ++column)
+            glVertexAttribPointer(5+column, 4, GL_FLOAT, GL_FALSE, sizeof(CharacterInstanceData),
+                reinterpret_cast<const void*>(offset + sizeof(float)*4*column));
+        glVertexAttribPointer(9, 4, GL_FLOAT, GL_FALSE, sizeof(CharacterInstanceData),
+            reinterpret_cast<const void*>(offset+sizeof(Mat4)));
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+
     void DrawShadowCharacterBatch(const std::vector<GlesMesh>& meshes, int instanceCount)
     {
         if (meshes.empty() || instanceCount <= 0 || characterInstanceVbo_ == 0) {
             return;
         }
+        int base = 0;
+        instanceCount = VisibleCharacters(shadowMatrix_, instanceCount, base);
+        if (!instanceCount) return;
+        glUniform1i(shadowInstanceBaseLocation_, base);
         glUniform1i(shadowSkinningOnLocation_, 1);
         glUniform1i(shadowInstancingOnLocation_, 1);
         glUniform1f(shadowEnemyDissolveLocation_, enemyDissolveAmount_);
@@ -5422,6 +5760,7 @@ private:
                 continue;
             }
             glBindVertexArray(mesh.vao);
+            SetCharacterInstanceOffset(base);
             glDrawElementsInstanced(GL_TRIANGLES, static_cast<GLsizei>(mesh.indexCount),
                 mesh.indexType, nullptr, instanceCount);
         }
@@ -5433,6 +5772,10 @@ private:
         if (meshes.empty() || instanceCount <= 0 || characterInstanceVbo_ == 0) {
             return;
         }
+        int base = 0;
+        instanceCount = VisibleCharacters(viewProj_, instanceCount, base);
+        if (!instanceCount) return;
+        glUniform1i(instanceBaseLocation_, base);
         glUniform1i(skinningOnLocation_, 1);
         glUniform1i(instancingOnLocation_, 1);
         glUniform1f(enemyDissolveLocation_, enemyDissolveAmount_);
@@ -5460,14 +5803,16 @@ private:
 
             glUniform4fv(materialBaseColorFactorLocation_, 1, material->baseColorFactor);
             const float materialParams[4] = {material->metallicFactor,
-                material->roughnessFactor, material->normalScale, 0.0f};
+                material->roughnessFactor, material->normalScale, material->worldSpaceUv ? 2.0f : (material->waterSurface ? 1.0f : 0.0f)};
             glUniform4fv(materialParamsLocation_, 1, materialParams);
+            glUniform1f(waterTimeLocation_, static_cast<float>(SDL_GetTicks() % 3600000U) * 0.001f);
             glUniform1i(hasNormalMapLocation_, material->normalImage >= 0 ? 1 : 0);
             lightingEmissive_[0] = material->emissiveFactor[0];
             lightingEmissive_[1] = material->emissiveFactor[1];
             lightingEmissive_[2] = material->emissiveFactor[2];
 
             glBindVertexArray(mesh.vao);
+            SetCharacterInstanceOffset(base);
             glDrawElementsInstanced(GL_TRIANGLES, static_cast<GLsizei>(mesh.indexCount),
                 mesh.indexType, nullptr, instanceCount);
         }
@@ -5479,13 +5824,17 @@ private:
     {
         glUniform1i(shadowSkinningOnLocation_, skinned ? 1 : 0);
         glUniform1i(shadowInstancingOnLocation_, 0);
+        glUniform1i(shadowInstanceBaseLocation_, 0);
         glUniform1f(shadowEnemyDissolveLocation_, 0.0f);
         if (skinned && skinBuffer != 0) {
             glBindBufferBase(GL_UNIFORM_BUFFER, 1, skinBuffer);
         }
         const Mat4 shadowMvp = Mat4Multiply(shadowMatrix_, world);
         glUniformMatrix4fv(shadowMvpLocation_, 1, GL_FALSE, shadowMvp.value);
+        const terrain::Frustum frustum(shadowMvp.value, false);
         for (const GlesMesh& mesh : meshes) {
+            if (!frustum.Intersects(mesh.bounds)) continue;
+            if (!mesh.castShadow) continue;
             if (mesh.indexCount == 0) {
                 continue;
             }
@@ -5507,6 +5856,7 @@ private:
     {
         glUniform1i(skinningOnLocation_, skinned ? 1 : 0);
         glUniform1i(instancingOnLocation_, 0);
+        glUniform1i(instanceBaseLocation_, 0);
         glUniform1f(enemyDissolveLocation_, 0.0f);
         if (skinned && skinBuffer != 0) {
             glBindBufferBase(GL_UNIFORM_BUFFER, 1, skinBuffer);
@@ -5516,7 +5866,9 @@ private:
         glBufferSubData(GL_UNIFORM_BUFFER, 128, sizeof(Mat4), mvp.value);
         glBufferSubData(GL_UNIFORM_BUFFER, 192, sizeof(Mat4), world.value);
         glBindBuffer(GL_UNIFORM_BUFFER, 0);
+        const terrain::Frustum frustum(mvp.value, false);
         for (const GlesMesh& mesh : meshes) {
+            if (!frustum.Intersects(mesh.bounds)) continue;
             if (mesh.indexCount == 0) {
                 continue;
             }
@@ -5541,8 +5893,9 @@ private:
 
             glUniform4fv(materialBaseColorFactorLocation_, 1, material->baseColorFactor);
             const float materialParams[4] = {material->metallicFactor,
-                material->roughnessFactor, material->normalScale, 0.0f};
+                material->roughnessFactor, material->normalScale, material->worldSpaceUv ? 2.0f : (material->waterSurface ? 1.0f : 0.0f)};
             glUniform4fv(materialParamsLocation_, 1, materialParams);
+            glUniform1f(waterTimeLocation_, static_cast<float>(SDL_GetTicks() % 3600000U) * 0.001f);
             glUniform1i(hasNormalMapLocation_, material->normalImage >= 0 ? 1 : 0);
 
             glBindVertexArray(mesh.vao);
@@ -5648,7 +6001,7 @@ private:
             if (physicsWorld_ == nullptr || !physicsWorld_->IsReady()) {
                 enemyX_ += enemyDesiredVelocityX_ * dt;
                 enemyZ_ += enemyDesiredVelocityZ_ * dt;
-                constexpr float kGroundBound = 8.5f;
+                constexpr float kGroundBound = physics::kGroundCollider.halfExtentX - 1.5f;
                 enemyX_ = std::max(-kGroundBound, std::min(kGroundBound, enemyX_));
                 enemyZ_ = std::max(-kGroundBound, std::min(kGroundBound, enemyZ_));
             }
@@ -5802,9 +6155,9 @@ private:
                 if (!physicsReady) {
                     playerX_ += desiredVelocityX * dt;
                     playerZ_ += desiredVelocityZ * dt;
-                    // Keep the character on the 20x20 ground slab (half extent
-                    // 10, a margin for the character's ~0.5 footprint).
-                    constexpr float kGroundBound = 8.5f;
+                    // Keep the character on the 40x40 ground slab (half extent
+                    // 20, a margin for the character's ~0.5 footprint).
+                    constexpr float kGroundBound = physics::kGroundCollider.halfExtentX - 1.5f;
                     playerX_ = playerX_ > kGroundBound ? kGroundBound
                         : (playerX_ < -kGroundBound ? -kGroundBound : playerX_);
                     playerZ_ = playerZ_ > kGroundBound ? kGroundBound
@@ -5839,6 +6192,8 @@ private:
             playerY_ = 0.0f;
         }
         playerMoving_ = stickMag > 0.15f && !playerLocked;
+        playerSwimming_ = sceneDefinition_ != nullptr && water::PlayerSubmerged(*sceneDefinition_,
+            playerX_, playerY_ - physics::kPlayerVisualOriginOffset, playerZ_, playerSwimming_);
 
         // The enemy is an independent actor: it approaches the player, takes
         // attack damage, and periodically strikes back when in range.  The
@@ -5911,7 +6266,7 @@ private:
     static constexpr const char* kHelmetPath =
         "models/DamagedHelmet/glTF/DamagedHelmet.gltf";
     static constexpr const char* kCubePath =
-        "models/BaseModel/cube.glb";
+        "models/CrackedStonebrick/cube.gltf";
     // Skin UBO capacity: 256 mat4 = 16 KiB, the ES 3.0 minimum
     // MAX_UNIFORM_BLOCK_SIZE (matches the shader's SkinUniforms array).
     static constexpr int kMaxJoints = 256;
@@ -5928,6 +6283,14 @@ private:
     GLuint gbufferProgram_ = 0;
     GLuint shadowProgram_ = 0;
     GLuint lightingProgram_ = 0;
+    GLuint waterProgram_ = 0;
+    GLuint waterFbo_ = 0;
+    GLuint waterColorTex_ = 0;
+    GLint waterInverseLocation_ = -1;
+    GLint waterCameraLocation_ = -1;
+    GLint waterParamsLocation_ = -1;
+    GLint waterColorLocation_ = -1;
+    GLint waterLdrLocation_ = -1;
     GLuint shadowFbo_ = 0;
     GLuint shadowDepthTexture_ = 0;
     bool shadowReady_ = false;
@@ -6017,6 +6380,7 @@ private:
     GLint modelAoSampler_ = -1;
     GLint modelEmissiveSampler_ = -1;
     GLint cameraPositionLocation_ = -1;
+    GLint waterTimeLocation_ = -1;
     GLint materialParamsLocation_ = -1;
     GLint materialBaseColorFactorLocation_ = -1;
     GLint hasNormalMapLocation_ = -1;
@@ -6030,6 +6394,8 @@ private:
     GLuint characterInstanceVbo_ = 0;
     GLint skinningOnLocation_ = -1;
     GLint instancingOnLocation_ = -1;
+    GLint instanceBaseLocation_ = -1;
+    GLint shadowInstanceBaseLocation_ = -1;
     GLint enemyDissolveLocation_ = -1;
     GLint shadowMvpLocation_ = -1;
     GLint shadowSkinningOnLocation_ = -1;
@@ -6049,6 +6415,8 @@ private:
     bool animLoop_ = true;
     int walkClip_ = -1;
     int sprintClip_ = -1;
+    int swimIdleClip_ = -1;
+    int swimForwardClip_ = -1;
     int idleClip_ = -1;
     int crouchClip_ = -1;
     bool crouchEnabled_ = false;
@@ -6174,6 +6542,7 @@ private:
     // Held RUN button (action button 2): read in UpdateSceneUniforms to scale
     // the walk speed and by the animation state machine to pick Sprint_Loop.
     bool playerSprinting_ = false;
+    bool playerSwimming_ = false;
     Uint64 moveLastTicks_ = 0;
     Uint64 zoomLastLogTicks_ = 0;
     float camPosX_ = 0.0f;
@@ -6228,6 +6597,9 @@ private:
     std::vector<ohos_model::Material> helmetMaterials_;
     // Ground slab (stretched Base Model cube) static geometry.
     std::vector<GlesMesh> groundMeshes_;
+    std::vector<GlesMesh> terrainMeshes_;
+    std::vector<GLuint> terrainTextures_;
+    std::vector<ohos_model::Material> terrainMaterials_;
     std::vector<GLuint> groundTextures_;
     std::vector<ohos_model::Material> groundMaterials_;
 };

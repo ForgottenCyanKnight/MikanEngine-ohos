@@ -192,6 +192,11 @@ int main()
         }
     }
 
+    if (mikanSceneLoaded && physicsWorld.IsReady() &&
+        !physicsWorld.SetTerrainColliders(sceneDefinition)) {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "SDL3_TERRAIN stage=collision_sync_failed");
+    }
+
     const rhi::Backend preferred = rhi::SelectBackend();
     Session session = BringUp(preferred, sceneDefinition);
 

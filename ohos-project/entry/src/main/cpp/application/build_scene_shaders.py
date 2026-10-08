@@ -45,6 +45,7 @@ SHADERS = [
     ("scene_text.frag", "kSceneTextFragSpv", "kSceneTextFragSpvWordCount"),
     ("scene_post.vert", "kScenePostVertSpv", "kScenePostVertSpvWordCount"),
     ("scene_post.frag", "kScenePostFragSpv", "kScenePostFragSpvWordCount"),
+    ("scene_water.frag", "kSceneWaterFragSpv", "kSceneWaterFragSpvWordCount"),
     ("scene_bloom_threshold.frag", "kSceneBloomThresholdFragSpv", "kSceneBloomThresholdFragSpvWordCount"),
     ("scene_bloom_down.frag", "kSceneBloomDownFragSpv", "kSceneBloomDownFragSpvWordCount"),
     ("scene_bloom_up.frag", "kSceneBloomUpFragSpv", "kSceneBloomUpFragSpvWordCount"),

@@ -61,6 +61,7 @@ layout(location = 4) out vec4 vMaterialParams0;
 layout(location = 5) out vec4 vMaterialParams1;
 layout(location = 6) out vec4 vInstanceMarker;
 layout(location = 7) out flat float vDissolve;
+layout(location = 8) out flat float vWaterTime;
 
 void main()
 {
@@ -84,6 +85,7 @@ void main()
     }
     vec4 worldPosition = instanceModel * vec4(skinnedPosition, 1.0);
     gl_Position = scene.viewProj * worldPosition;
+    vWaterTime = object.pad[0];
     vNormal = normalize(mat3(instanceModel) * skinnedNormal);
     vTexCoord = inTexCoord;
     vBaseColorFactor = inBaseColorFactor;

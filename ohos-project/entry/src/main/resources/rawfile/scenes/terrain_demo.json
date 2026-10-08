@@ -1,0 +1,54 @@
+{
+  "formatVersion": 1,
+  "game": "",
+  "entities": [
+    {
+      "id": 9001,
+      "name": {
+        "name": "Heightmap terrain"
+      },
+      "transform": {
+        "position": [
+          0,
+          -0.94,
+          0
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      },
+      "terrain": {
+        "enabled": true,
+        "heightmapPath": "terrain/demo_height16.png",
+        "worldSize": [
+          20,
+          20
+        ],
+        "heightScale": 4,
+        "heightOffset": 0,
+        "chunkCount": 4,
+        "patchResolution": 17,
+        "collisionEnabled": true,
+        "collisionResolution": 65,
+        "materialTiling": 8,
+        "blendSharpness": 1,
+        "layer0Path": "terrain/demo_layer0.png",
+        "layer1Path": "terrain/demo_layer1.png",
+        "layer2Path": "terrain/demo_layer2.png"
+      }
+    }
+  ]
+}

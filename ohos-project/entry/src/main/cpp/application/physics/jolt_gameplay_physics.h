@@ -20,7 +20,7 @@ struct GroundColliderSpec {
 
 inline constexpr GroundColliderSpec kGroundCollider{
     0.0f, -1.14f, 0.0f,
-    10.0f, 0.2f, 10.0f,
+    20.0f, 0.2f, 20.0f,
 };
 
 struct HelmetColliderSpec {
@@ -74,6 +74,7 @@ public:
     void Shutdown();
     bool IsReady() const;
     bool SetStaticSceneColliders(const std::vector<scene::StaticBoxCollider>& colliders);
+    bool SetTerrainColliders(const scene::Definition& definition);
 
     void Reset(float playerX, float playerY, float playerZ,
                float enemyX, float enemyY, float enemyZ);

@@ -70,6 +70,26 @@ struct StaticBoxCollider {
     Quaternion rotation{};
 };
 
+struct Terrain {
+    bool present = false;
+    bool enabled = true;
+    std::string heightmapPath;
+    std::string sculptedHeightmapPath;
+    float worldSizeX = 256.0f;
+    float worldSizeZ = 256.0f;
+    float heightScale = 64.0f;
+    float heightOffset = 0.0f;
+    int chunkCount = 8;
+    int patchResolution = 33;
+    bool collisionEnabled = true;
+    int collisionResolution = 257;
+    float materialTiling = 8.0f;
+    float blendSharpness = 1.0f;
+    std::string layerPaths[4];
+    std::string controlMapPath;
+    std::string paintedControlMapPath;
+};
+
 enum class MeshKind {
     None,
     UnitCube,
@@ -93,6 +113,7 @@ struct Entity {
     bool groundSurface = false;
     bool importAsStaticCube = false;
     Material material{};
+    Terrain terrain{};
 };
 
 struct Camera {
@@ -127,7 +148,17 @@ struct Skybox {
     float intensity = 1.0f;
 };
 
+// OHOS fixed sea plane, in runtime world coordinates (no ground alignment).
+struct WaterSurface {
+    bool enabled = false;
+    float height = -2.6f;
+    float size = 128.0f;
+    float roughness = 0.08f;
+    Vec3 color{0.035f, 0.18f, 0.22f}; // sRGB body tint
+};
+
 struct Definition {
+    WaterSurface water{};
     int formatVersion = 0;
     std::string game;
     std::vector<Entity> entities;

@@ -111,6 +111,7 @@ struct CameraInput {
     float actionButtonX[kActionButtonCount] = {0.0f, 0.0f, 0.0f, 0.0f};
     float actionButtonY[kActionButtonCount] = {0.0f, 0.0f, 0.0f, 0.0f};
     float actionButtonRadius = 0.0f;
+    // Active levels: Sprint (index 2) is latched by tapping; others follow hold.
     bool actionButtonHeld[kActionButtonCount] = {false, false, false, false};
 
     // Main-menu / settings taps: the touch layer forwards raw tap edges (down

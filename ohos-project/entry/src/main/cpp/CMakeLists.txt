@@ -12,9 +12,9 @@ if(DEFINED PACKAGE_FIND_FILE)
     include(${PACKAGE_FIND_FILE})
 endif()
 
-# MikanEngine remains the scene authoring source; SDL packages a read-only
-# copy of its versioned scene and consumes it through OHOS rawfile at runtime.
-# Pass -DMIKAN_SCENE_FILE=<path> to point at another Mikan-exported scene.
+# Package the versioned OHOS scene by default. Import a Mikan-exported scene
+# explicitly with -DMIKAN_SCENE_FILE=<path>; never override local additions
+# based on the presence of a workstation-specific project directory.
 set(MIKAN_SCENE_FILE "" CACHE FILEPATH "Optional Mikan SceneSerializer v1 main.json")
 set(_mikan_scene_fallback "${NATIVERENDER_ROOT_PATH}/application/scene/default_main.json")
 if(MIKAN_SCENE_FILE)
@@ -23,13 +23,7 @@ if(MIKAN_SCENE_FILE)
     endif()
     set(_mikan_scene_source "${MIKAN_SCENE_FILE}")
 else()
-    set(_mikan_scene_workstation_default
-        "D:/Engine project/vulkan engine/projects/third-person-navigation/scenes/main.json")
-    if(EXISTS "${_mikan_scene_workstation_default}")
-        set(_mikan_scene_source "${_mikan_scene_workstation_default}")
-    else()
-        set(_mikan_scene_source "${_mikan_scene_fallback}")
-    endif()
+    set(_mikan_scene_source "${_mikan_scene_fallback}")
 endif()
 if(NOT EXISTS "${_mikan_scene_source}")
     message(FATAL_ERROR "No Mikan scene source is available: ${_mikan_scene_source}")
@@ -61,6 +55,7 @@ add_library(entry SHARED
     application/app_main.cpp
     application/audio/audio_manager.cpp
     application/scene/scene_definition.cpp
+    application/terrain/heightmap_terrain.cpp
     application/stb_image_impl.cpp
     application/model_loader.cpp
     application/touch_controller.cpp

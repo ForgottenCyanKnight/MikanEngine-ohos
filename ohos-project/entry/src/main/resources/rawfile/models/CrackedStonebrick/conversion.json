@@ -1,0 +1,12 @@
+{
+  "sourceSha256": "4890d79ca947683e09dfa4003e9bef4fc4746a22dbb3f15ac8da456d12eed482",
+  "quadrantSize": 128,
+  "layout": {
+    "topLeft": "unmodified albedo",
+    "topRight": "roughness, red channel",
+    "bottomLeft": "unmodified tangent-space normal",
+    "bottomRight": "occlusion, red channel"
+  },
+  "outputORM": "R=occlusion, G=roughness, B=0 (nonmetal)",
+  "rendererMapping": "world-space dominant-axis cube mapping, one repeat per metre"
+}

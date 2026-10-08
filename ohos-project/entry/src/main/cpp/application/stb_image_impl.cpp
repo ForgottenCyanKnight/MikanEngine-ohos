@@ -9,6 +9,7 @@
 // Keeping the implementation in its own TU means a backend only has to bring
 // what it actually uses.
 
+#define STBI_OHOS_TERRAIN
 #define STBI_NO_STDIO
 // The skybox is six JPEGs, and the glTF sample textures are PNGs.  Both
 // decoders have to stay enabled: each STBI_ONLY_x only suppresses the matching

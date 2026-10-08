@@ -1,0 +1,166 @@
+{
+  "asset": {
+    "version": "2.0",
+    "generator": "MikanEngine OBJ to GLB converter"
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "name": "cube",
+      "mesh": 0
+    }
+  ],
+  "meshes": [
+    {
+      "name": "cube",
+      "primitives": [
+        {
+          "material": 0,
+          "attributes": {
+            "POSITION": 0,
+            "TEXCOORD_0": 2,
+            "NORMAL": 1
+          },
+          "indices": 3
+        }
+      ]
+    }
+  ],
+  "materials": [
+    {
+      "name": "CrackedStonebrick",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "baseColorTexture": {
+          "index": 0
+        },
+        "metallicFactor": 0,
+        "roughnessFactor": 1,
+        "metallicRoughnessTexture": {
+          "index": 2
+        }
+      },
+      "normalTexture": {
+        "index": 1,
+        "scale": 1
+      },
+      "occlusionTexture": {
+        "index": 2,
+        "strength": 1
+      }
+    }
+  ],
+  "accessors": [
+    {
+      "min": [
+        -1,
+        -1,
+        -1
+      ],
+      "type": "VEC3",
+      "max": [
+        1,
+        1,
+        1
+      ],
+      "count": 24,
+      "bufferView": 0,
+      "componentType": 5126
+    },
+    {
+      "type": "VEC3",
+      "bufferView": 1,
+      "count": 24,
+      "componentType": 5126
+    },
+    {
+      "type": "VEC2",
+      "bufferView": 2,
+      "count": 24,
+      "componentType": 5126
+    },
+    {
+      "type": "SCALAR",
+      "bufferView": 3,
+      "count": 36,
+      "componentType": 5125
+    }
+  ],
+  "bufferViews": [
+    {
+      "byteLength": 288,
+      "byteOffset": 0,
+      "target": 34962,
+      "buffer": 0
+    },
+    {
+      "byteLength": 288,
+      "byteOffset": 288,
+      "target": 34962,
+      "buffer": 0
+    },
+    {
+      "byteLength": 192,
+      "byteOffset": 576,
+      "target": 34962,
+      "buffer": 0
+    },
+    {
+      "byteLength": 144,
+      "byteOffset": 768,
+      "target": 34963,
+      "buffer": 0
+    }
+  ],
+  "buffers": [
+    {
+      "byteLength": 912,
+      "uri": "cube.bin"
+    }
+  ],
+  "images": [
+    {
+      "uri": "albedo.png"
+    },
+    {
+      "uri": "normal.png"
+    },
+    {
+      "uri": "orm.png"
+    }
+  ],
+  "samplers": [
+    {
+      "wrapS": 10497,
+      "wrapT": 10497,
+      "minFilter": 9987,
+      "magFilter": 9729
+    }
+  ],
+  "textures": [
+    {
+      "source": 0,
+      "sampler": 0
+    },
+    {
+      "source": 1,
+      "sampler": 0
+    },
+    {
+      "source": 2,
+      "sampler": 0
+    }
+  ]
+}
