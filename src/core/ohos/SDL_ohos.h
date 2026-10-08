@@ -1,0 +1,40 @@
+#ifndef SDL_OHOS_H
+#define SDL_OHOS_H
+
+#include <stddef.h>
+
+#include "SDL3/SDL_video.h"
+#include "video/SDL_sysvideo.h"
+#include <native_window/external_window.h>
+
+void OHOS_windowDataFill(SDL_Window* w);
+void OHOS_removeWindow(SDL_Window* w);
+void OHOS_LockPage();
+void OHOS_UnlockPage();
+int OHOS_FetchWidth();
+int OHOS_FetchHeight();
+
+int OHOS_ReadRawFile(const char *path, void **data, size_t *size);
+void OHOS_FreeRawFile(void *data);
+
+void OHOS_MessageBox(const char* title, const char* message);
+const char* OHOS_Locale();
+void OHOS_OpenLink(const char* url);
+bool OHOS_IsBatteryPresent();
+bool OHOS_IsBatteryCharging();
+bool OHOS_IsBatteryCharged();
+int OHOS_GetBatteryPercent();
+void OHOS_SetClipboardText(const char* data);
+void OHOS_HideNativeSplash(void);
+
+bool OHOS_IsScreenKeyboardShown(); 
+void OHOS_StartTextInput();
+void OHOS_StopTextInput();
+
+typedef struct SDL_VideoData {
+    SDL_Rect textRect;
+    int      isPaused;
+    int      isPausing;
+} SDL_VideoData;
+
+#endif
