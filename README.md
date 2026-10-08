@@ -1,7 +1,7 @@
 # MikanEngine OHOS
 
 <p align="center">
-  <img src="ohos-project/entry/src/main/resources/base/media/mikan_engine_splash.png" alt="MikanEngine" width="240">
+  <img src="ohos-project/entry/src/main/resources/base/media/foreground.png" alt="MikanEngine logo" width="180">
 </p>
 
 <p align="center">
