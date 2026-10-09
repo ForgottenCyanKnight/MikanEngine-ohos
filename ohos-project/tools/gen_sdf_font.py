@@ -26,13 +26,14 @@ OUT_HEADER = r"D:\ohosengine\sdl3-ohos-vulkan\ohos-project\entry\src\main\cpp\ap
 CHARSET = ("0123456789.:FPSfps-+%ACDEHIJKLMNOPRTUWBGVXYZx×"
            "开始游戏设置菜单你死了重试关视角灵敏度泛光渲染分辨率显示血量敌人调试面板鸿蒙运行时返回标题"
            "背包物品装备武器盔甲护剑弓药水空卸轻点用铁法透明度")
+CHARSET += "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ基于自研游戏引擎的鸿蒙系统客户端实例"
 CHARSET = "".join(dict.fromkeys(CHARSET))  # dedupe, keep first-seen order
 EM = 64            # 1x em size the metrics are measured at
 PAD = 8            # 1x margin around the em box inside a cell
 CELL = EM + 2 * PAD   # 80 atlas texels per cell
 SS = 4             # supersample factor for rasterisation
 PX_RANGE = 8.0     # signed-distance range in texels (edge at 0.5)
-COLUMNS = 5
+COLUMNS = 8
 
 INF = 1e12
 

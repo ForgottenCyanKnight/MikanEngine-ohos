@@ -472,14 +472,66 @@ void main()
 )";
 
 const char* const kOverlayFragmentSource = R"(#version 300 es
-precision mediump float;
-
+precision highp float;
 uniform vec4 overlayColor;
+uniform vec2 overlayResolution;
+uniform vec4 glassShape;
+uniform float glassRadius;
+uniform sampler2D glassBackground;
 out vec4 outColor;
-
-void main()
+vec3 GlassScene(vec2 uv) { return texture(glassBackground, clamp(vec2(uv.x,1.0-uv.y),vec2(0.0),vec2(1.0))).rgb; }
+// Rounded glass lens in top-left window pixels. Background excludes all UI.
+vec4 ShadeGlass(vec2 pixel, vec4 shape, float radius, vec4 tint, vec2 resolution)
 {
-    outColor = overlayColor;
+    if (radius < 3.0 || min(shape.z, shape.w) < 16.0 || tint.a < 0.001)
+        return tint; // Masks, status fills and opacity-zero controls stay unchanged.
+    vec2 p = pixel - shape.xy;
+    vec2 q = abs(p) - (shape.zw - vec2(radius));
+    vec2 corner = max(q, vec2(0.0));
+    float distance = length(corner) + min(max(q.x, q.y), 0.0) - radius;
+    vec2 direction = length(corner) > 0.001 ? normalize(corner) :
+        (q.x > q.y ? vec2(1.0, 0.0) : vec2(0.0, 1.0));
+    direction *= vec2(p.x >= 0.0 ? 1.0 : -1.0, p.y >= 0.0 ? 1.0 : -1.0);
+    // SDF bevel -> curved lens normal. Artistically exaggerated optical
+    // thickness and RGB IORs make dispersion readable at mobile UI sizes.
+    float bezel = clamp(min(shape.z,shape.w)*0.42, 12.0, 34.0);
+    float edge = 1.0 - smoothstep(0.0, bezel, max(-distance,0.0));
+    float slope = edge * 0.98;
+    vec3 surfaceNormal = vec3(direction*slope, sqrt(max(1.0-slope*slope,0.001)));
+    vec3 incident = vec3(0.0,0.0,-1.0);
+    vec3 rayR = refract(incident, surfaceNormal, 1.0/1.42);
+    vec3 rayG = refract(incident, surfaceNormal, 1.0/1.52);
+    vec3 rayB = refract(incident, surfaceNormal, 1.0/1.66);
+    float thickness = clamp(min(shape.z,shape.w)*0.90, 22.0, 56.0);
+    vec2 magnify = -p*0.028*(1.0-edge);
+    vec2 bendR = rayR.xy / max(abs(rayR.z),0.25) * thickness;
+    vec2 bendG = rayG.xy / max(abs(rayG.z),0.25) * thickness;
+    vec2 bendB = rayB.xy / max(abs(rayB.z),0.25) * thickness;
+    vec2 uvR = (pixel+magnify+bendR)/resolution;
+    vec2 uvG = (pixel+magnify+bendG)/resolution;
+    vec2 uvB = (pixel+magnify+bendB)/resolution;
+    vec3 spectral = vec3(GlassScene(uvR).r, GlassScene(uvG).g, GlassScene(uvB).b);
+    // Clear lip preserves colour fringes; frost is concentrated in the core.
+    vec2 spread = vec2(mix(clamp(min(shape.z,shape.w)*0.065,2.0,5.0),0.45,edge))/resolution;
+    vec3 frost = (GlassScene(uvG+spread)+GlassScene(uvG-spread)+
+        GlassScene(uvG+vec2(spread.x,-spread.y))+GlassScene(uvG+vec2(-spread.x,spread.y)))*0.25;
+    vec3 blurred = mix(spectral,frost,0.48*(1.0-edge));
+    float lens = edge;
+    float saturation = max(tint.r,max(tint.g,tint.b))-min(tint.r,min(tint.g,tint.b));
+    vec3 color = mix(blurred, tint.rgb, 0.055 + 0.16*saturation);
+    color = mix(color, vec3(0.86,0.92,1.0), 0.035);
+    float rim = exp(-abs(distance) / 1.8);
+    float light = 0.35 + 0.65*max(dot(direction, normalize(vec2(-0.55,-0.83))),0.0);
+    float innerRim = exp(-abs(distance + bezel*0.25)/2.2);
+    color += vec3(0.75,0.84,1.0) * rim * light * 0.78;
+    color += vec3(0.24,0.32,0.44) * innerRim * (1.0-light)*0.25;
+    color += vec3(0.10,0.13,0.17) * lens * light;
+    float coverage = 1.0 - smoothstep(-max(fwidth(distance),0.6),0.0,distance);
+    return vec4(clamp(color,0.0,1.0), tint.a * coverage);
+}
+void main() {
+    vec2 pixel = vec2(gl_FragCoord.x, overlayResolution.y - gl_FragCoord.y);
+    outColor = ShadeGlass(pixel, glassShape, glassRadius, overlayColor, overlayResolution);
 }
 )";
 
@@ -544,7 +596,7 @@ void main()
 )";
 
 const char* const kTextFragmentSource = R"(#version 300 es
-precision mediump float;
+precision highp float;
 
 uniform sampler2D textAtlas;
 in vec2 fragUV;
@@ -556,16 +608,46 @@ float median(float r, float g, float b) {
     return max(min(r, g), min(max(r, g), b));
 }
 
+uniform vec2 textResolution;
+uniform sampler2D titleBackground;
+vec3 TitleScene(vec2 uv) {
+    return texture(titleBackground,clamp(vec2(uv.x,1.0-uv.y),vec2(0.0),vec2(1.0))).rgb;
+}
+// The SDF gradient supplies the curved glyph edge normal in window pixels.
+vec3 GlassTitle(vec2 pixel, vec2 gradient, float insidePx, vec2 resolution)
+{
+    vec2 direction = gradient / max(length(gradient),0.00001);
+    float bevel = 1.0 - smoothstep(0.0,3.2,max(insidePx,0.0));
+    float slope = bevel*0.94;
+    vec3 normal = vec3(-direction*slope,sqrt(max(1.0-slope*slope,0.001)));
+    vec3 rayR = refract(vec3(0.0,0.0,-1.0),normal,1.0/1.42);
+    vec3 rayG = refract(vec3(0.0,0.0,-1.0),normal,1.0/1.52);
+    vec3 rayB = refract(vec3(0.0,0.0,-1.0),normal,1.0/1.66);
+    vec2 offsetR = rayR.xy/max(abs(rayR.z),0.25)*11.0;
+    vec2 offsetG = rayG.xy/max(abs(rayG.z),0.25)*11.0;
+    vec2 offsetB = rayB.xy/max(abs(rayB.z),0.25)*11.0;
+    vec3 through = vec3(TitleScene((pixel+offsetR)/resolution).r,
+        TitleScene((pixel+offsetG)/resolution).g,TitleScene((pixel+offsetB)/resolution).b);
+    float rim = exp(-abs(insidePx)/1.15);
+    float highlight = 0.25 + 0.75*max(dot(-direction,normalize(vec2(-0.55,-0.83))),0.0);
+    vec3 color = mix(through,vec3(0.78,0.87,0.98),0.38);
+    color += vec3(0.65,0.76,0.90)*rim*highlight*0.70;
+    return clamp(color,0.0,1.0);
+}
 void main() {
     vec4 sample4 = texture(textAtlas, fragUV);
     float sd = median(sample4.r, sample4.g, sample4.b);
-    float effectiveRange = max(fragScreenPxRange, 1.0);
+    float effectiveRange = max(abs(fragScreenPxRange), 1.0);
     float preciseAlpha = clamp(effectiveRange * (sd - 0.5) + 0.5, 0.0, 1.0);
     float w = fwidth(sd);
     float fallback = smoothstep(0.5 - w, 0.5 + w, sd);
-    float k = smoothstep(0.5, 1.5, fragScreenPxRange);
+    float k = smoothstep(0.5, 1.5, abs(fragScreenPxRange));
     float alpha = mix(fallback, preciseAlpha, k);
-    outColor = vec4(fragColor.rgb, fragColor.a * alpha);
+    vec3 color = fragColor.rgb;
+    if (fragScreenPxRange < 0.0) color = GlassTitle(
+        vec2(gl_FragCoord.x,textResolution.y-gl_FragCoord.y),vec2(dFdx(sd),-dFdy(sd)),
+        abs(fragScreenPxRange)*(sd-0.5),textResolution);
+    outColor = vec4(color, fragColor.a * alpha);
 }
 )";
 
@@ -2210,6 +2292,11 @@ public:
         if (overlayProgram_ != 0) {
             overlayResolutionLocation_ = glGetUniformLocation(overlayProgram_, "overlayResolution");
             overlayColorLocation_ = glGetUniformLocation(overlayProgram_, "overlayColor");
+            glassShapeLocation_ = glGetUniformLocation(overlayProgram_, "glassShape");
+            glassRadiusLocation_ = glGetUniformLocation(overlayProgram_, "glassRadius");
+            glUseProgram(overlayProgram_);
+            glUniform1i(glGetUniformLocation(overlayProgram_, "glassBackground"), 7);
+            glUseProgram(0);
             glGenBuffers(1, &overlayVbo_);
             glGenVertexArrays(1, &overlayVao_);
             glBindVertexArray(overlayVao_);
@@ -2300,6 +2387,9 @@ public:
         textResolutionLocation_ = glGetUniformLocation(textProgram_, "textResolution");
         textPxRangeLocation_ = glGetUniformLocation(textProgram_, "textScreenPxRange");
         textSamplerLocation_ = glGetUniformLocation(textProgram_, "textAtlas");
+        glUseProgram(textProgram_);
+        glUniform1i(glGetUniformLocation(textProgram_,"titleBackground"),7);
+        glUseProgram(0);
 
         void* encoded = nullptr;
         size_t encodedSize = 0;
@@ -2346,8 +2436,19 @@ public:
 
     // Re-uploads one triangle-fan circle in window pixels (y down, matching
     // the overlay vertex shader's clip mapping).
+    void SetGlassShape(float cx, float cy, float hw, float hh, float radius)
+    {
+        glUniform4f(glassShapeLocation_, cx, cy, hw, hh);
+        glUniform1f(glassRadiusLocation_, std::min(radius, std::min(hw,hh)));
+        // Sample the completed LDR scene, never the active window attachment.
+        glActiveTexture(GL_TEXTURE7);
+        glBindTexture(GL_TEXTURE_2D, tonemapTex_);
+        glActiveTexture(GL_TEXTURE0);
+    }
+
     void UploadCircleFan(float centerX, float centerY, float radius)
     {
+        SetGlassShape(centerX, centerY, radius, radius, radius);
         float vertices[(kOverlaySegments + 2) * 2];
         vertices[0] = centerX;
         vertices[1] = centerY;
@@ -2690,6 +2791,7 @@ public:
 
     void UploadRoundedRect(const MenuButtonPos& b)
     {
+        SetGlassShape(b.cx, b.cy, b.hw, b.hh, b.r);
         const float x0 = b.cx - b.hw;
         const float x1 = b.cx + b.hw;
         const float y0 = b.cy - b.hh;
@@ -2909,9 +3011,9 @@ public:
         // below add only a light wash so the animated environment remains visible.
 
         if (uiScreen_ == rhi::UiScreen::MainMenu) {
-            DrawTextCentered("MIKAN", w * 0.5f, h * 0.20f, mn * 0.105f, white);
-            DrawTextCentered("SDL3 鸿蒙运行时", w * 0.5f, h * 0.30f,
-                mn * 0.030f, white);
+            DrawTextCentered("MikanEngine", w * 0.5f, h * 0.20f, mn * 0.105f, white, false);
+            DrawTextCentered("基于自研游戏引擎的鸿蒙系统客户端实例", w * 0.5f, h * 0.30f,
+                mn * 0.026f, white);
             const MenuButtonPos start = MenuButtonLayout(0);
             DrawMenuRect(start, accent);
             DrawTextCentered("开始游戏", start.cx, start.cy,
@@ -2953,19 +3055,19 @@ public:
             const float slotColor[4] = {0.72f, 0.82f, 0.90f, 0.78f};
             const float emptyColor[4] = {0.96f, 0.98f, 1.0f, 0.30f};
             const float activeColor[4] = {0.20f, 0.48f, 0.66f, 0.94f};
-            const float ink[4] = {0.08f, 0.14f, 0.20f, 0.98f};
+            const float ink[4] = {1.0f, 1.0f, 1.0f, 0.98f};
             const float secondaryInk[4] = {0.18f, 0.26f, 0.34f, 0.98f};
             const float labelX = w * 0.5f - mn * 0.40f;
             DrawMenuRect(dim, dimColor);
             DrawMenuRect(sheet, sheetColor);
-            DrawTextLeftAligned("背包", labelX, h * 0.175f, mn * 0.050f, ink, false);
+            DrawTextLeftAligned("背包", labelX, h * 0.175f, mn * 0.050f, ink, true);
             DrawTextLeftAligned("装备", w * 0.5f - mn * 0.335f - mn * 0.068f,
                 h * 0.245f, mn * 0.032f, secondaryInk, false);
             DrawTextLeftAligned("物品", w * 0.5f - mn * 0.135f,
                 h * 0.245f, mn * 0.032f, secondaryInk, false);
             const MenuButtonPos close = MenuButtonLayout(0);
             DrawMenuRect(close, slotColor);
-            DrawTextCentered("X", close.cx, close.cy, close.hh * 0.90f, ink, false);
+            DrawTextCentered("X", close.cx, close.cy, close.hh * 0.90f, ink, true);
 
             static const char* const kSlotNames[3] = {"武器", "头盔", "护甲"};
             for (int slot = 1; slot <= 3; ++slot) {
@@ -2978,7 +3080,7 @@ public:
                         mn * 0.030f, mn * 0.030f, mn * 0.008f};
                     DrawMenuRect(icon, def->color);
                     DrawTextCentered(def->name, slotPos.cx, slotPos.cy + mn * 0.040f,
-                        mn * 0.024f, ink, false);
+                        mn * 0.024f, ink, true);
                 } else {
                     DrawTextCentered("空", slotPos.cx, slotPos.cy, mn * 0.030f,
                         secondaryInk, false);
@@ -2996,7 +3098,7 @@ public:
                         mn * 0.020f, mn * 0.020f, mn * 0.006f};
                     DrawMenuRect(icon, def->color);
                     DrawTextCentered(def->name, cellPos.cx, cellPos.cy + mn * 0.022f,
-                        mn * 0.019f, ink, false);
+                        mn * 0.019f, ink, true);
                     if (inventory::kItemDefs[inventory_.bag[cell].defId].maxCount > 1) {
                         char countLabel[8];
                         snprintf(countLabel, sizeof(countLabel), "x%d",
@@ -3025,15 +3127,15 @@ public:
             const float controlColor[4] = {0.72f, 0.82f, 0.90f, 0.78f};
             const float activeColor[4] = {0.20f, 0.48f, 0.66f, 0.94f};
             const float dividerColor[4] = {0.22f, 0.34f, 0.44f, 0.28f};
-            const float labelColor[4] = {0.12f, 0.19f, 0.27f, 0.98f};
-            const float ink[4] = {0.08f, 0.14f, 0.20f, 0.98f};
+            const float labelColor[4] = {0.95f, 0.97f, 1.0f, 0.98f};
+            const float ink[4] = {1.0f, 1.0f, 1.0f, 0.98f};
             const float labelX = w * 0.5f - mn * 0.27f;
             DrawMenuRect(dim, dimColor);
             DrawMenuRect(sheet, sheetColor);
-            DrawTextLeftAligned("显示设置", labelX, h * 0.275f, mn * 0.050f, ink, false);
+            DrawTextLeftAligned("显示设置", labelX, h * 0.275f, mn * 0.050f, ink, true);
             const MenuButtonPos close = MenuButtonLayout(0);
             DrawMenuRect(close, controlColor);
-            DrawTextCentered("X", close.cx, close.cy, close.hh * 0.90f, ink, false);
+            DrawTextCentered("X", close.cx, close.cy, close.hh * 0.90f, ink, true);
 
             const float dividerY[5] = {0.31f, 0.41f, 0.51f, 0.61f, 0.71f};
             for (float rowY : dividerY) {
@@ -3046,32 +3148,32 @@ public:
             const float* fpsInk = settingFps_ ? white : ink;
             DrawMenuRect(fps, fpsColor);
             DrawTextCentered(settingFps_ ? "开" : "关", fps.cx, fps.cy,
-                fps.hh * 0.85f, fpsInk, false);
-            DrawTextLeftAligned("调试面板", labelX, fps.cy, mn * 0.030f, labelColor, false);
+                fps.hh * 0.85f, fpsInk, true);
+            DrawTextLeftAligned("调试面板", labelX, fps.cy, mn * 0.030f, labelColor, true);
 
             const MenuButtonPos bloom = MenuButtonLayout(2);
             const float* bloomColor = bloomEnabled_ ? activeColor : controlColor;
             const float* bloomInk = bloomEnabled_ ? white : ink;
             DrawMenuRect(bloom, bloomColor);
             DrawTextCentered(bloomEnabled_ ? "开" : "关", bloom.cx, bloom.cy,
-                bloom.hh * 0.85f, bloomInk, false);
-            DrawTextLeftAligned("泛光", labelX, bloom.cy, mn * 0.030f, labelColor, false);
+                bloom.hh * 0.85f, bloomInk, true);
+            DrawTextLeftAligned("泛光", labelX, bloom.cy, mn * 0.030f, labelColor, true);
 
             const MenuButtonPos res = MenuButtonLayout(3);
             DrawMenuRect(res, controlColor);
             char resLabel[8];
             snprintf(resLabel, sizeof(resLabel), "x%.2f", renderScale_);
-            DrawTextCentered(resLabel, res.cx, res.cy, res.hh * 0.85f, ink, false);
-            DrawTextLeftAligned("渲染分辨率", labelX, res.cy, mn * 0.030f, labelColor, false);
+            DrawTextCentered(resLabel, res.cx, res.cy, res.hh * 0.85f, ink, true);
+            DrawTextLeftAligned("渲染分辨率", labelX, res.cy, mn * 0.030f, labelColor, true);
 
             const MenuButtonPos opacity = MenuButtonLayout(4);
             DrawMenuRect(opacity, controlColor);
             char opacityLabel[8];
             snprintf(opacityLabel, sizeof(opacityLabel), "%.0f%%", uiOpacity_ * 100.0f);
             DrawTextCentered(opacityLabel, opacity.cx, opacity.cy,
-                opacity.hh * 0.85f, ink, false);
+                opacity.hh * 0.85f, ink, true);
             DrawTextLeftAligned("UI透明度", labelX, opacity.cy, mn * 0.030f,
-                labelColor, false);
+                labelColor, true);
 
             const MenuButtonPos title = MenuButtonLayout(5);
             DrawMenuRect(title, accent);
@@ -3088,7 +3190,7 @@ public:
         const float rowColor[4] = {0.96f, 0.98f, 1.0f, 0.30f};
         const float controlColor[4] = {0.72f, 0.82f, 0.90f, 0.78f};
         const float activeColor[4] = {0.20f, 0.48f, 0.66f, 0.94f};
-        const float ink[4] = {0.08f, 0.14f, 0.20f, 0.98f};
+        const float ink[4] = {1.0f, 1.0f, 1.0f, 0.98f};
         const float secondaryInk[4] = {0.18f, 0.26f, 0.34f, 0.98f};
         const float dividerColor[4] = {0.22f, 0.34f, 0.44f, 0.28f};
         const float leftX = w * 0.5f - mn * 0.35f;
@@ -3096,10 +3198,10 @@ public:
             settingsBackground);
         DrawMenuRect({w * 0.5f, h * 0.5f, mn * 0.43f, mn * 0.39f, mn * 0.020f},
             settingsSheet);
-        DrawTextLeftAligned("设置", leftX, h * 0.22f, mn * 0.050f, ink, false);
+        DrawTextLeftAligned("设置", leftX, h * 0.22f, mn * 0.050f, ink, true);
         const MenuButtonPos back = MenuButtonLayout(5);
         DrawMenuRect(back, rowColor);
-        DrawTextCentered("X", back.cx, back.cy, back.hh * 0.82f, ink, false);
+        DrawTextCentered("X", back.cx, back.cy, back.hh * 0.82f, ink, true);
         DrawMenuRect({w * 0.5f, h * 0.30f, mn * 0.37f, mn * 0.001f, 0.0f},
             dividerColor);
 
@@ -3131,7 +3233,7 @@ public:
                 snprintf(value, sizeof(value), "%.0f%%", uiOpacity_ * 100.0f);
             }
             DrawTextCentered(value, control.cx, control.cy, control.hh * 0.84f,
-                valueInk, false);
+                valueInk, true);
         }
         glEnable(GL_DEPTH_TEST);
         glDisable(GL_BLEND);
@@ -3256,7 +3358,11 @@ public:
         glUseProgram(textProgram_);
         glUniform2f(textResolutionLocation_, static_cast<float>(width_),
             static_cast<float>(height_));
-        glUniform1f(textPxRangeLocation_, rhi::kSdfPxRange * scale);
+        // A negative range selects glass only for the main title; magnitude is AA range.
+        glUniform1f(textPxRangeLocation_, rhi::kSdfPxRange * scale *
+            (std::strcmp(text,"MikanEngine") == 0 ? -1.0f : 1.0f));
+        glActiveTexture(GL_TEXTURE7);
+        glBindTexture(GL_TEXTURE_2D, tonemapTex_);
         glActiveTexture(GL_TEXTURE0);
         glUniform1i(textSamplerLocation_, 0);
         glBindTexture(GL_TEXTURE_2D, textAtlasTexture_);
@@ -6553,6 +6659,8 @@ private:
     GLuint overlayVbo_ = 0;
     GLint overlayResolutionLocation_ = -1;
     GLint overlayColorLocation_ = -1;
+    GLint glassShapeLocation_ = -1;
+    GLint glassRadiusLocation_ = -1;
     static constexpr int kOverlaySegments = 48;
     int rectIndexCount_ = 0;  // vertices of the last UploadRoundedRect
     static constexpr int kOverlayFanCount = kOverlaySegments + 2;

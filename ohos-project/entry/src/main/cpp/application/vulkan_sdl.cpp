@@ -510,6 +510,7 @@ struct OverlayVertex {
     float g;
     float b;
     float a;
+    float cx = 0, cy = 0, hw = 0, hh = 0, radius = 0;
 };
 
 struct IconVertex {
@@ -535,7 +536,7 @@ struct TextVertex {
     float screenPxRange;
 };
 
-static_assert(sizeof(OverlayVertex) == sizeof(float) * 6, "overlay vertex must stay tightly packed");
+static_assert(sizeof(OverlayVertex) == sizeof(float) * 11, "overlay vertex must stay tightly packed");
 static_assert(sizeof(IconVertex) == sizeof(float) * 8, "icon vertex must stay tightly packed");
 static_assert(sizeof(TextVertex) == sizeof(float) * 9, "text vertex must stay tightly packed");
 
@@ -543,9 +544,9 @@ static_assert(sizeof(TextVertex) == sizeof(float) * 9, "text vertex must stay ti
 // so each swapchain image owns one reusable UI upload buffer.  The text region
 // is aligned well beyond the Vulkan vertex-offset requirement and leaves ample
 // room for the menu, HUD and touch controls.
-constexpr VkDeviceSize kUiIconOffset = 64 * 1024;
-constexpr VkDeviceSize kUiTextOffset = 128 * 1024;
-constexpr VkDeviceSize kUiVertexBufferSize = 512 * 1024;
+constexpr VkDeviceSize kUiIconOffset = 512 * 1024;
+constexpr VkDeviceSize kUiTextOffset = 576 * 1024;
+constexpr VkDeviceSize kUiVertexBufferSize = 1024 * 1024;
 constexpr int kOverlaySegments = 48;
 
 struct UiPushConstants {
@@ -4225,7 +4226,9 @@ private:
                 vertexBinding.stride = sizeof(OverlayVertex);
                 vertexAttributes[0] = {0, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(OverlayVertex, x)};
                 vertexAttributes[1] = {1, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(OverlayVertex, r)};
-                vertexAttributeCount = 2;
+                vertexAttributes[2] = {2, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(OverlayVertex, cx)};
+                vertexAttributes[3] = {3, 0, VK_FORMAT_R32_SFLOAT, offsetof(OverlayVertex, radius)};
+                vertexAttributeCount = 4;
                 break;
             case VertexLayout::kIcon:
                 vertexBinding.stride = sizeof(IconVertex);
@@ -5153,6 +5156,7 @@ private:
         // triangle and then interprets the remaining perimeter points as
         // unrelated triangles; on the device that made the touch circles
         // look like faint arcs or disappear completely.
+        const size_t first = vertices.size();
         const float alpha = color[3] * uiOpacity_;
         for (int i = 0; i < kOverlaySegments; ++i) {
             const float angle0 = static_cast<float>(i) /
@@ -5165,11 +5169,19 @@ private:
             vertices.push_back({cx + std::cos(angle1) * radius,
                 cy + std::sin(angle1) * radius, color[0], color[1], color[2], alpha});
         }
+        for (size_t i=first; i<vertices.size(); ++i) {
+            vertices[i].cx = cx;
+            vertices[i].cy = cy;
+            vertices[i].hw = radius;
+            vertices[i].hh = radius;
+            vertices[i].radius = radius;
+        }
     }
 
     void AppendRoundedRect(std::vector<OverlayVertex>& vertices, const MenuButtonPos& button,
         const float color[4]) const
     {
+        const size_t first = vertices.size();
         const float alpha = color[3] * uiOpacity_;
         const float x0 = button.cx - button.hw;
         const float x1 = button.cx + button.hw;
@@ -5202,6 +5214,13 @@ private:
         pushCorner(x1 - radius, y0 + radius, 4.71238898f, 6.28318531f);
         pushCorner(x1 - radius, y1 - radius, 0.0f, 1.57079633f);
         pushCorner(x0 + radius, y1 - radius, 1.57079633f, 3.14159265f);
+        for (size_t i=first; i<vertices.size(); ++i) {
+            vertices[i].cx = button.cx;
+            vertices[i].cy = button.cy;
+            vertices[i].hw = button.hw;
+            vertices[i].hh = button.hh;
+            vertices[i].radius = radius;
+        }
     }
 
     void AppendIconQuad(std::vector<IconVertex>& vertices, float centerX, float centerY,
@@ -5246,7 +5265,9 @@ private:
             const float v0 = (static_cast<float>(glyph->cellY) + pad) / atlasH;
             const float u1 = (static_cast<float>(glyph->cellX) + pad + glyph->w) / atlasW;
             const float v1 = (static_cast<float>(glyph->cellY) + pad + glyph->h) / atlasH;
-            const float range = rhi::kSdfPxRange * scale;
+            // Negative range opts this title into glass shading without changing the vertex ABI.
+            const float range = rhi::kSdfPxRange * scale *
+                (std::strcmp(text,"MikanEngine") == 0 ? -1.0f : 1.0f);
             const float alpha = color[3] * uiOpacity_;
             const auto push = [&](float px, float py, float u, float v) {
                 vertices.push_back({px, py, u, v, color[0], color[1], color[2], alpha, range});
@@ -5403,8 +5424,8 @@ private:
         const float panel[4] = {0.30f, 0.32f, 0.36f, 0.55f};
         const float accent[4] = {0.20f, 0.48f, 0.66f, 1.0f};
         if (uiScreen_ == rhi::UiScreen::MainMenu) {
-            AppendTextCentered(text, "MIKAN", w * 0.5f, h * 0.20f, mn * 0.105f, white);
-            AppendTextCentered(text, "SDL3 鸿蒙运行时", w * 0.5f, h * 0.30f, mn * 0.030f, white);
+            AppendTextCentered(text, "MikanEngine", w * 0.5f, h * 0.20f, mn * 0.105f, white, false);
+            AppendTextCentered(text, "基于自研游戏引擎的鸿蒙系统客户端实例", w * 0.5f, h * 0.30f, mn * 0.026f, white);
             const MenuButtonPos start = MenuButtonLayout(0);
             AppendRoundedRect(overlay, start, accent);
             AppendTextCentered(text, "开始游戏", start.cx, start.cy, start.hh * 0.92f, white);
@@ -5419,7 +5440,7 @@ private:
             const float rowColor[4] = {0.96f, 0.98f, 1.0f, 0.30f};
             const float controlColor[4] = {0.72f, 0.82f, 0.90f, 0.78f};
             const float activeColor[4] = {0.20f, 0.48f, 0.66f, 0.94f};
-            const float ink[4] = {0.08f, 0.14f, 0.20f, 0.98f};
+            const float ink[4] = {1.0f, 1.0f, 1.0f, 0.98f};
             const float secondaryInk[4] = {0.18f, 0.26f, 0.34f, 0.98f};
             const float dividerColor[4] = {0.22f, 0.34f, 0.44f, 0.28f};
             const float leftX = w * 0.5f - mn * 0.35f;
@@ -5429,10 +5450,10 @@ private:
             AppendRoundedRect(overlay,
                 {w * 0.5f, h * 0.5f, mn * 0.43f, mn * 0.39f, mn * 0.020f},
                 settingsSheet);
-            AppendTextLeftAligned(text, "设置", leftX, h * 0.22f, mn * 0.050f, ink, false);
+            AppendTextLeftAligned(text, "设置", leftX, h * 0.22f, mn * 0.050f, ink, true);
             const MenuButtonPos back = MenuButtonLayout(5);
             AppendRoundedRect(overlay, back, rowColor);
-            AppendTextCentered(text, "X", back.cx, back.cy, back.hh * 0.82f, ink, false);
+            AppendTextCentered(text, "X", back.cx, back.cy, back.hh * 0.82f, ink, true);
             AppendRoundedRect(overlay,
                 {w * 0.5f, h * 0.30f, mn * 0.37f, mn * 0.001f, 0.0f},
                 dividerColor);
@@ -5465,7 +5486,7 @@ private:
                     std::snprintf(value, sizeof(value), "%.0f%%", uiOpacity_ * 100.0f);
                 }
                 AppendTextCentered(text, value, control.cx, control.cy,
-                    control.hh * 0.84f, valueInk, false);
+                    control.hh * 0.84f, valueInk, true);
             }
             return;
         }
@@ -5494,15 +5515,15 @@ private:
             const float controlColor[4] = {0.72f, 0.82f, 0.90f, 0.78f};
             const float activeColor[4] = {0.20f, 0.48f, 0.66f, 0.94f};
             const float dividerColor[4] = {0.22f, 0.34f, 0.44f, 0.28f};
-            const float labelColor[4] = {0.12f, 0.19f, 0.27f, 0.98f};
-            const float ink[4] = {0.08f, 0.14f, 0.20f, 0.98f};
+            const float labelColor[4] = {0.95f, 0.97f, 1.0f, 0.98f};
+            const float ink[4] = {1.0f, 1.0f, 1.0f, 0.98f};
             const float labelX = w * 0.5f - mn * 0.27f;
             AppendRoundedRect(overlay, dim, dimColor);
             AppendRoundedRect(overlay, sheet, sheetColor);
-            AppendTextLeftAligned(text, "显示设置", labelX, h * 0.275f, mn * 0.050f, ink, false);
+            AppendTextLeftAligned(text, "显示设置", labelX, h * 0.275f, mn * 0.050f, ink, true);
             const MenuButtonPos close = MenuButtonLayout(0);
             AppendRoundedRect(overlay, close, controlColor);
-            AppendTextCentered(text, "X", close.cx, close.cy, close.hh * 0.90f, ink, false);
+            AppendTextCentered(text, "X", close.cx, close.cy, close.hh * 0.90f, ink, true);
             const float dividerY[5] = {0.31f, 0.41f, 0.51f, 0.61f, 0.71f};
             for (float rowY : dividerY) {
                 AppendRoundedRect(overlay,
@@ -5514,34 +5535,34 @@ private:
             const float* fpsInk = settingFps_ ? white : ink;
             AppendRoundedRect(overlay, fps, fpsColor);
             AppendTextCentered(text, settingFps_ ? "开" : "关", fps.cx, fps.cy,
-                fps.hh * 0.85f, fpsInk, false);
+                fps.hh * 0.85f, fpsInk, true);
             AppendTextLeftAligned(text, "调试面板", labelX, fps.cy, mn * 0.030f,
-                labelColor, false);
+                labelColor, true);
             const MenuButtonPos bloom = MenuButtonLayout(2);
             const float* bloomColor = bloomEnabled_ ? activeColor : controlColor;
             const float* bloomInk = bloomEnabled_ ? white : ink;
             AppendRoundedRect(overlay, bloom, bloomColor);
             AppendTextCentered(text, bloomEnabled_ ? "开" : "关", bloom.cx, bloom.cy,
-                bloom.hh * 0.85f, bloomInk, false);
+                bloom.hh * 0.85f, bloomInk, true);
             AppendTextLeftAligned(text, "泛光", labelX, bloom.cy, mn * 0.030f,
-                labelColor, false);
+                labelColor, true);
             const MenuButtonPos res = MenuButtonLayout(3);
             AppendRoundedRect(overlay, res, controlColor);
             char displayScaleLabel[8]{};
             std::snprintf(displayScaleLabel, sizeof(displayScaleLabel), "x%.2f", renderScale_);
             AppendTextCentered(text, displayScaleLabel, res.cx, res.cy,
-                res.hh * 0.85f, ink, false);
+                res.hh * 0.85f, ink, true);
             AppendTextLeftAligned(text, "渲染分辨率", labelX, res.cy, mn * 0.030f,
-                labelColor, false);
+                labelColor, true);
             const MenuButtonPos opacity = MenuButtonLayout(4);
             AppendRoundedRect(overlay, opacity, controlColor);
             char opacityLabel[8]{};
             std::snprintf(opacityLabel, sizeof(opacityLabel), "%.0f%%",
                 uiOpacity_ * 100.0f);
             AppendTextCentered(text, opacityLabel, opacity.cx, opacity.cy,
-                opacity.hh * 0.85f, ink, false);
+                opacity.hh * 0.85f, ink, true);
             AppendTextLeftAligned(text, "UI透明度", labelX, opacity.cy, mn * 0.030f,
-                labelColor, false);
+                labelColor, true);
             const MenuButtonPos title = MenuButtonLayout(5);
             AppendRoundedRect(overlay, title, accent);
             AppendTextCentered(text, "返回游戏标题", title.cx, title.cy, mn * 0.032f, white);
@@ -5560,19 +5581,19 @@ private:
             const float slotColor[4] = {0.72f, 0.82f, 0.90f, 0.78f};
             const float emptyColor[4] = {0.96f, 0.98f, 1.0f, 0.30f};
             const float activeColor[4] = {0.20f, 0.48f, 0.66f, 0.94f};
-            const float ink[4] = {0.08f, 0.14f, 0.20f, 0.98f};
+            const float ink[4] = {1.0f, 1.0f, 1.0f, 0.98f};
             const float secondaryInk[4] = {0.18f, 0.26f, 0.34f, 0.98f};
             const float labelX = w * 0.5f - mn * 0.40f;
             AppendRoundedRect(overlay, dim, dimColor);
             AppendRoundedRect(overlay, sheet, sheetColor);
-            AppendTextLeftAligned(text, "背包", labelX, h * 0.175f, mn * 0.050f, ink, false);
+            AppendTextLeftAligned(text, "背包", labelX, h * 0.175f, mn * 0.050f, ink, true);
             AppendTextLeftAligned(text, "装备", w * 0.5f - mn * 0.335f - mn * 0.068f,
                 h * 0.245f, mn * 0.032f, secondaryInk, false);
             AppendTextLeftAligned(text, "物品", w * 0.5f - mn * 0.135f,
                 h * 0.245f, mn * 0.032f, secondaryInk, false);
             const MenuButtonPos close = MenuButtonLayout(0);
             AppendRoundedRect(overlay, close, slotColor);
-            AppendTextCentered(text, "X", close.cx, close.cy, close.hh * 0.90f, ink, false);
+            AppendTextCentered(text, "X", close.cx, close.cy, close.hh * 0.90f, ink, true);
 
             static const char* const kSlotNames[3] = {"武器", "头盔", "护甲"};
             for (int slot = 1; slot <= 3; ++slot) {
@@ -5585,7 +5606,7 @@ private:
                         mn * 0.030f, mn * 0.030f, mn * 0.008f};
                     AppendRoundedRect(overlay, icon, def->color);
                     AppendTextCentered(text, def->name, slotPos.cx,
-                        slotPos.cy + mn * 0.040f, mn * 0.024f, ink, false);
+                        slotPos.cy + mn * 0.040f, mn * 0.024f, ink, true);
                 } else {
                     AppendTextCentered(text, "空", slotPos.cx, slotPos.cy,
                         mn * 0.030f, secondaryInk, false);
@@ -5603,7 +5624,7 @@ private:
                         mn * 0.020f, mn * 0.020f, mn * 0.006f};
                     AppendRoundedRect(overlay, icon, def->color);
                     AppendTextCentered(text, def->name, cellPos.cx,
-                        cellPos.cy + mn * 0.022f, mn * 0.019f, ink, false);
+                        cellPos.cy + mn * 0.022f, mn * 0.019f, ink, true);
                     if (inventory::kItemDefs[inventory_.bag[cell].defId].maxCount > 1) {
                         char countLabel[8]{};
                         std::snprintf(countLabel, sizeof(countLabel), "x%d",
@@ -6072,7 +6093,7 @@ private:
         vkCmdDraw(commandBuffer, 3, 1, 0, 0);
 
         const UiPushConstants pushConstants = {static_cast<float>(swapchainExtent_.width),
-            static_cast<float>(swapchainExtent_.height), 0.0f, 0.0f};
+            static_cast<float>(swapchainExtent_.height), bloomEnabled_ ? 0.1f : 0.0f, 0.0f};
         const VkDeviceSize overlayOffset = 0;
         if (overlayCount > 0) {
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, overlayPipeline_);

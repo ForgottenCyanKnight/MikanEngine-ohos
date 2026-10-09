@@ -15,6 +15,8 @@ layout(location = 3) in float inScreenPxRange;
 layout(location = 0) out vec2 vTexCoord;
 layout(location = 1) out vec4 vColor;
 layout(location = 2) out float vScreenPxRange;
+layout(location = 3) out vec2 vPixel;
+layout(location = 4) out flat vec3 vScreen;
 
 void main()
 {
@@ -26,4 +28,6 @@ void main()
     vTexCoord = inTexCoord;
     vColor = inColor;
     vScreenPxRange = inScreenPxRange;
+    vPixel = inPosition;
+    vScreen = vec3(ui.resolution,ui.unusedPxRange);
 }

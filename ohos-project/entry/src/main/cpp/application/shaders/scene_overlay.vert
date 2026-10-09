@@ -13,7 +13,13 @@ layout(push_constant) uniform UiPushConstants
 layout(location = 0) in vec2 inPosition;
 layout(location = 1) in vec4 inColor;
 
+layout(location = 2) in vec4 inShape;
+layout(location = 3) in float inRadius;
 layout(location = 0) out vec4 vColor;
+layout(location = 1) out vec2 vPixel;
+layout(location = 2) out flat vec4 vShape;
+layout(location = 3) out flat float vRadius;
+layout(location = 4) out flat vec3 vScreen;
 
 void main()
 {
@@ -24,4 +30,8 @@ void main()
                      inPosition.y / ui.resolution.y * 2.0 - 1.0);
     gl_Position = vec4(clip, 0.0, 1.0);
     vColor = inColor;
+    vPixel = inPosition;
+    vShape = inShape;
+    vRadius = inRadius;
+    vScreen = vec3(ui.resolution, ui.unusedPxRange);
 }
