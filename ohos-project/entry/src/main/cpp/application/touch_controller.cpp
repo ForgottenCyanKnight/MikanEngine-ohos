@@ -1,4 +1,5 @@
 #include "touch_controller.h"
+#include "weapon_gameplay.h"
 
 #include "rhi/rhi.h"
 
@@ -231,6 +232,11 @@ void TouchController::HandleEvent(const SDL_Event& event, float width, float hei
         }
 
         if (event.type == SDL_EVENT_FINGER_DOWN) {
+            if (menuBtnFinger_ == static_cast<SDL_FingerID>(-1) &&
+                gameplay::HitPistolButton(x,y,width_,height_,weaponEquipped_) >= 0) {
+                menuBtnFinger_=finger;
+                return;
+            }
             // The gameplay HUD right-edge buttons (SET at 0.93w,0.26h and
             // BAG at 0.93w,0.42h, radius 0.055*mn) claim their finger before
             // everything else: a press there must never drag the camera or
@@ -364,7 +370,7 @@ void TouchController::HandleEvent(const SDL_Event& event, float width, float hei
             if (finger == menuBtnFinger_) {
                 menuBtnFinger_ = static_cast<SDL_FingerID>(-1);
                 // Report at the lift position (same convention as menus).
-                tapPending_ = true;
+                tapPending_ = event.type != SDL_EVENT_FINGER_CANCELED;
                 tapX_ = x;
                 tapY_ = y;
                 return;
@@ -409,6 +415,9 @@ void TouchController::HandleEvent(const SDL_Event& event, float width, float hei
         return;
     }
     if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT) {
+        if (gameplay::HitPistolButton(event.button.x,event.button.y,width_,height_,weaponEquipped_)>=0) {
+            tapPending_=true;tapX_=event.button.x;tapY_=event.button.y;return;
+        }
         mouseLooking_ = true;
         lookLastX_ = static_cast<float>(event.button.x);
         lookLastY_ = static_cast<float>(event.button.y);

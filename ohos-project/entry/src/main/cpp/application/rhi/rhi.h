@@ -132,6 +132,7 @@ public:
 
     // Stable identifier, used in logs to tell which backend actually came up.
     virtual const char* Name() const = 0;
+    virtual bool WeaponEquipped() const { return false; }
 
     // Called once at start-up and then every frame with the current drawable
     // size.  Implementations must be idempotent and cheap when nothing changed.

@@ -50,6 +50,7 @@ struct Vertex {
 // One skeleton node.  Parents always precede children in Model::nodes order,
 // so global transforms can be computed with a single forward pass.
 struct Node {
+    std::string name;
     std::int32_t parent = -1;
     // Default local TRS (glTF node data; a matrix-only node is decomposed at
     // load).  Animation channels override individual components per frame.

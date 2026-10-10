@@ -6,7 +6,7 @@
 namespace rhi {
 
 constexpr int kSdfAtlasWidth = 640;
-constexpr int kSdfAtlasHeight = 1520;
+constexpr int kSdfAtlasHeight = 1600;
 constexpr int kSdfCellSize = 80;
 constexpr int kSdfFontEm = 64;
 constexpr float kSdfPxRange = 8.0f;
@@ -173,8 +173,16 @@ inline constexpr SdfGlyph kSdfGlyphs[] = {
     {0x7AEF, 0.00f, 2.00f, 64.00f, 60.00f, 64.00f, 240, 1440},
     {0x5B9E, 0.00f, 2.00f, 64.00f, 60.00f, 64.00f, 320, 1440},
     {0x4F8B, 0.00f, 3.00f, 64.00f, 58.00f, 64.00f, 400, 1440},
+    {0x67AA, 0.00f, 2.00f, 64.00f, 59.00f, 64.00f, 480, 1440},
+    {0x68B0, 0.00f, 2.00f, 64.00f, 59.00f, 64.00f, 560, 1440},
+    {0x7784, 0.00f, 3.00f, 64.00f, 59.00f, 64.00f, 0, 1520},
+    {0x51C6, 0.00f, 2.00f, 64.00f, 59.00f, 64.00f, 80, 1520},
+    {0x5C04, 0.00f, 2.00f, 64.00f, 60.00f, 64.00f, 160, 1520},
+    {0x51FB, 0.00f, 4.00f, 64.00f, 57.00f, 64.00f, 240, 1520},
+    {0x6536, 0.00f, 2.00f, 64.00f, 60.00f, 64.00f, 320, 1520},
+    {0x8D77, 0.00f, 2.00f, 64.00f, 59.00f, 64.00f, 400, 1520},
 };
-inline constexpr int kSdfGlyphCount = 150;
+inline constexpr int kSdfGlyphCount = 158;
 
 // Decodes one UTF-8 sequence at *text and advances it past the sequence.
 // Invalid or truncated bytes decode to U+FFFD, which misses every glyph,

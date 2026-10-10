@@ -1,9 +1,37 @@
 {
   "app": {
-    "signingConfigs": [],
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "C:\\Users\\z\\.ohos\\config\\default_ohos-project_hMoB2iLYOuV3_194jvATqTFY-eHohvXyDJnZIDlNopw=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001B1E1CF1677614F9F1AFA3114F925F50E57CC697E0162B1610830BD00D241EF8CA7559E415D3A9D0",
+          "profile": "C:\\Users\\z\\.ohos\\config\\default_ohos-project_hMoB2iLYOuV3_194jvATqTFY-eHohvXyDJnZIDlNopw=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "C:\\Users\\z\\.ohos\\config\\default_ohos-project_hMoB2iLYOuV3_194jvATqTFY-eHohvXyDJnZIDlNopw=.p12",
+          "storePassword": "0000001B860E98727A228F67EF8401BA214366C1267C29112B715E8887A18F0F55C1B39D12BC900030C40B"
+        }
+      },
+      {
+        "name": "mikanengine",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "C:\\Users\\z\\.ohos\\config\\mikanengine_ohos-project_hMoB2iLYOuV3_194jvATqTFY-eHohvXyDJnZIDlNopw=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001BD37A3E5B59C2C66F55DFFBB8A204B927A8E3163C5E021E0BA79F2C58E0BB60645872D5B4EBF2C5",
+          "profile": "C:\\Users\\z\\.ohos\\config\\mikanengine_ohos-project_hMoB2iLYOuV3_194jvATqTFY-eHohvXyDJnZIDlNopw=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "C:\\Users\\z\\.ohos\\config\\mikanengine_ohos-project_hMoB2iLYOuV3_194jvATqTFY-eHohvXyDJnZIDlNopw=.p12",
+          "storePassword": "0000001B973DB6E5943E007F6BA748D823E98D6C1B1C200FCC88C401C01FAF7590F35E71497ED3CED46EAE"
+        }
+      }
+    ],
     "products": [
       {
         "name": "default",
+        "signingConfig": "default",
         "targetSdkVersion": "6.0.0(20)",
         "compatibleSdkVersion": "6.0.0(20)",
         "runtimeOS": "HarmonyOS",

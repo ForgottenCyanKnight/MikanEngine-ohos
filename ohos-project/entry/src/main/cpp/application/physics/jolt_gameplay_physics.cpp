@@ -10,6 +10,8 @@
 #include <Jolt/Core/JobSystemSingleThreaded.h>
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Physics/PhysicsSystem.h>
+#include <Jolt/Physics/Collision/RayCast.h>
+#include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/BodyInterface.h>
 #include <Jolt/Physics/Body/MotionType.h>
@@ -154,6 +156,7 @@ struct JoltGameplayPhysics::Impl {
     JPH::CharacterVsCharacterCollisionSimple characterCollision;
     scene::Definition waterScene;
     bool playerSwimming = false;
+    bool enemyCollisionEnabled = true;
 
     ~Impl()
     {
@@ -167,7 +170,7 @@ struct JoltGameplayPhysics::Impl {
         if (player != nullptr) {
             characterCollision.Remove(player.get());
         }
-        if (enemy != nullptr) {
+        if (enemy != nullptr && enemyCollisionEnabled) {
             characterCollision.Remove(enemy.get());
         }
         player.reset();
@@ -321,6 +324,7 @@ struct JoltGameplayPhysics::Impl {
         enemy->SetCharacterVsCharacterCollision(&characterCollision);
         characterCollision.Add(player.get());
         characterCollision.Add(enemy.get());
+        enemyCollisionEnabled = true;
 
         ready = true;
         SDL_Log("Jolt: gameplay physics initialized (floor + player/enemy virtual characters)");
@@ -400,6 +404,10 @@ struct JoltGameplayPhysics::Impl {
             return;
         }
 
+        if (!enemyCollisionEnabled) {
+            characterCollision.Add(enemy.get());
+            enemyCollisionEnabled = true;
+        }
         playerSwimming = false;
         player->SetPosition(JPH::RVec3(playerX, playerY, playerZ));
         enemy->SetPosition(JPH::RVec3(enemyX, enemyY, enemyZ));
@@ -583,13 +591,34 @@ void JoltGameplayPhysics::MovePlayer(float desiredVelocityX, float desiredVeloci
     }
 }
 
+void JoltGameplayPhysics::SetEnemyCollisionEnabled(bool enabled)
+{
+    if (impl_ == nullptr || !impl_->ready || impl_->enemy == nullptr ||
+        impl_->enemyCollisionEnabled == enabled) return;
+    if (enabled) impl_->characterCollision.Add(impl_->enemy.get());
+    else {
+        impl_->characterCollision.Remove(impl_->enemy.get());
+        impl_->enemy->SetLinearVelocity(JPH::Vec3::sZero());
+    }
+    impl_->enemyCollisionEnabled = enabled;
+}
+
 void JoltGameplayPhysics::MoveEnemy(float desiredVelocityX, float desiredVelocityZ,
                                     float deltaSeconds)
 {
-    if (impl_ != nullptr) {
+    if (impl_ != nullptr && impl_->enemyCollisionEnabled) {
         impl_->MoveCharacter(impl_->enemy.get(), desiredVelocityX, desiredVelocityZ,
                              deltaSeconds, false);
     }
+}
+
+float JoltGameplayPhysics::RaycastWorld(float x,float y,float z,float dx,float dy,float dz,float distance) const
+{
+    if (!IsReady() || !(distance>0)) return distance;
+    JPH::RRayCast ray(JPH::RVec3(x,y,z),JPH::Vec3(dx,dy,dz)*distance);
+    JPH::RayCastResult hit;
+    if (impl_->physicsSystem->GetNarrowPhaseQuery().CastRay(ray,hit)) return distance*hit.mFraction;
+    return distance;
 }
 
 CharacterState JoltGameplayPhysics::GetPlayerState() const

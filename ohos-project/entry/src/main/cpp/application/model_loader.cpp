@@ -348,7 +348,8 @@ bool LoadModelFromRawFile(const char* gltfPath, Model& model, std::string& error
                 emissiveTex.texture->image - data->images);
         }
         for (int c = 0; c < 3; ++c) {
-            material.emissiveFactor[c] = source.emissive_factor[c];
+            material.emissiveFactor[c] = source.emissive_factor[c] *
+                (source.has_emissive_strength ? source.emissive_strength.emissive_strength : 1.0f);
         }
     }
 
@@ -386,6 +387,7 @@ bool LoadModelFromRawFile(const char* gltfPath, Model& model, std::string& error
             stack.pop_back();
             const std::uint32_t index = static_cast<std::uint32_t>(model.nodes.size());
             Node entry;
+            entry.name = node->name != nullptr ? node->name : "";
             entry.parent = parent;
             if (node->has_translation) {
                 for (int c = 0; c < 3; ++c) {

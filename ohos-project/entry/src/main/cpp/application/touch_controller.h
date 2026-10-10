@@ -41,6 +41,7 @@ public:
     // happens to run Relayout, so at launch it draws away from its home
     // position with a stale radius.
     void SetViewport(float width, float height);
+    void SetWeaponEquipped(bool equipped) { weaponEquipped_ = equipped; }
 
     // Sets the screen the renderer currently shows.  Outside gameplay this
     // layer stops driving stick/look/buttons and only reports tap edges.
@@ -124,6 +125,7 @@ private:
     SDL_FingerID actionBtnFinger_[rhi::CameraInput::kActionButtonCount] = {};
     int actionBtnPressedMask_ = 0;
 
+    bool weaponEquipped_ = false;
     bool sawFinger_ = false;  // disables the mouse fallback forever once set
     bool mouseLooking_ = false;
 

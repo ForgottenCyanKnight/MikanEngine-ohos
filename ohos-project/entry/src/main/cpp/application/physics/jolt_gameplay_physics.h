@@ -81,8 +81,13 @@ public:
 
     void MovePlayer(float desiredVelocityX, float desiredVelocityZ,
                     float deltaSeconds, bool jumpPressed);
+    // Dead enemies keep their visual pose but stop blocking characters.
+    void SetEnemyCollisionEnabled(bool enabled);
+
     void MoveEnemy(float desiredVelocityX, float desiredVelocityZ,
                    float deltaSeconds);
+
+    float RaycastWorld(float x,float y,float z,float dx,float dy,float dz,float distance) const;
 
     CharacterState GetPlayerState() const;
     CharacterState GetEnemyState() const;

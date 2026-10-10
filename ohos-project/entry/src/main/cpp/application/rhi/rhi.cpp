@@ -51,7 +51,7 @@ Backend SelectBackend()
     // arm64 real-device baseline: keep the finished GLES route active while
     // Vulkan is brought up to screenshot parity.  Set MIKAN_RHI=vulkan for an
     // explicit Vulkan A/B run without changing the production baseline.
-    return ResolveBackend("arm64_vulkan_default", Backend::kVulkan);
+    return ResolveBackend("arm64_gles_default", Backend::kGles);
 #endif
 }
 

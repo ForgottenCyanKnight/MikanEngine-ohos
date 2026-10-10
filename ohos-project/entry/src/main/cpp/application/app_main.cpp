@@ -231,6 +231,7 @@ int main()
         // a tap misrouted across a screen switch lands on a same-family
         // layout and costs nothing.
         touch.SetScreen(session.renderer->CurrentScreen());
+        touch.SetWeaponEquipped(session.renderer->WeaponEquipped());
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {
                 running = false;

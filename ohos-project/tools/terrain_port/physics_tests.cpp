@@ -63,6 +63,26 @@ int main(int argc, char **argv)
     Check(state.y < -4 && state.velocityY < -8, "outside platform falls below old global plane");
     for (int i = 0; i < 60; ++i) world.MoveEnemy(0, 0, 1.0f / 60);
     Check(world.GetEnemyState().y < -4, "enemy also follows gravity outside platform");
+    world.Reset(0, -0.94f, 0, 1.5f, -0.94f, 0);
+    for (int i=0; i<120; ++i) {
+        world.MoveEnemy(0, 0, 1.0f/60);
+        world.MovePlayer(2, 0, 1.0f/60, false);
+    }
+    Check(world.GetPlayerState().x < 1.0f, "living enemy capsule blocks player");
+    world.SetEnemyCollisionEnabled(false);
+    world.SetEnemyCollisionEnabled(false); // Repeated death notifications are safe.
+    for (int i=0; i<120; ++i) world.MovePlayer(2, 0, 1.0f/60, false);
+    Check(world.GetPlayerState().x > 3.0f, "dead enemy capsule no longer blocks player");
+    auto deadEnemy = world.GetEnemyState();
+    world.MoveEnemy(10, 0, 1.0f);
+    Check(std::fabs(world.GetEnemyState().x - deadEnemy.x) < 0.001f,
+          "disabled enemy physics preserves death pose");
+    world.Reset(0, -0.94f, 0, 1.5f, -0.94f, 0);
+    for (int i=0; i<120; ++i) {
+        world.MoveEnemy(0, 0, 1.0f/60);
+        world.MovePlayer(2, 0, 1.0f/60, false);
+    }
+    Check(world.GetPlayerState().x < 1.0f, "scene reset restores enemy collision");
     scene::Definition definition;
     std::string error;
     Check(scene::LoadMikanSceneRawFile("scenes/main.json", definition, error), "load packaged default scene");
