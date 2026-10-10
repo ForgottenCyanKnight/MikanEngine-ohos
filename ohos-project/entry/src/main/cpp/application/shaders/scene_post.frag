@@ -1,4 +1,6 @@
 #version 450
+precision highp float;
+precision highp int;
 
 // Final GLES-equivalent resolve: the Vulkan bloom chain renders the six
 // downsample and five upsample targets before this pass, then this pass

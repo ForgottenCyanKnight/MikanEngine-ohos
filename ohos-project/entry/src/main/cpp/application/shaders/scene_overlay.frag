@@ -1,4 +1,6 @@
 #version 450
+precision highp float;
+precision highp int;
 layout(set = 2, binding = 0) uniform sampler2D sceneTexture;
 layout(set = 2, binding = 1) uniform sampler2D bloomTexture;
 layout(location = 0) in vec4 vColor;
@@ -102,12 +104,19 @@ vec4 ShadeGlass(vec2 pixel, vec4 shape, float radius, vec4 tint, vec2 resolution
     float saturation = max(tint.r,max(tint.g,tint.b))-min(tint.r,min(tint.g,tint.b));
     vec3 color = mix(blurred, tint.rgb, 0.055 + 0.16*saturation);
     color = mix(color, vec3(0.86,0.92,1.0), 0.035);
-    float rim = exp(-abs(distance) / 1.8);
-    float light = 0.35 + 0.65*max(dot(direction, normalize(vec2(-0.55,-0.83))),0.0);
+    // White specular lip stays legible against both sea and bright sky.
+    // Pixel widths use derivative AA, so the fine edge does not shimmer.
+    float aa = max(fwidth(distance), 0.6);
+    float rim = exp(-abs(distance + 1.15) / max(1.1, aa));
+    float light = max(dot(direction, normalize(vec2(-0.55,-0.83))),0.0);
+    float counterLight = max(dot(direction, normalize(vec2(0.70,0.71))),0.0);
+    float shoulder = exp(-abs(distance + 3.8) / 3.2);
     float innerRim = exp(-abs(distance + bezel*0.25)/2.2);
-    color += vec3(0.75,0.84,1.0) * rim * light * 0.78;
-    color += vec3(0.24,0.32,0.44) * innerRim * (1.0-light)*0.25;
-    color += vec3(0.10,0.13,0.17) * lens * light;
+    float specular = rim * (0.46 + 0.40*light + 0.18*counterLight);
+    color = mix(color, vec3(1.0), clamp(specular, 0.0, 0.94));
+    color += vec3(0.80,0.89,1.0) * shoulder * (0.06 + 0.16*light);
+    color += vec3(0.36,0.48,0.64) * innerRim * counterLight * 0.32;
+    color += vec3(0.10,0.13,0.17) * lens * (0.35 + 0.65*light);
     float coverage = 1.0 - smoothstep(-max(fwidth(distance),0.6),0.0,distance);
     return vec4(clamp(color,0.0,1.0), tint.a * coverage);
 }

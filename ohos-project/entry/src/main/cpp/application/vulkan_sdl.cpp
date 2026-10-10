@@ -19,6 +19,9 @@
 #include "SDL3/SDL_vulkan.h"
 
 #include "inventory.h"
+#include "gameplay_lights.h"
+#include "enemy_activity.h"
+#include "weapon_gameplay.h"
 #include "audio/audio_manager.h"
 #include "model_loader.h"
 #include "physics/jolt_gameplay_physics.h"
@@ -305,15 +308,15 @@ Mat4 Mat4Perspective(float fieldOfViewRadians, float aspect, float nearPlane, fl
 // One stable directional-light camera shared by the Vulkan scene shadow pass
 // and its receiver.  The light points down toward the scene from above and
 // slightly toward +X/+Z, matching the direct-light vector in scene_model.frag.
-Mat4 Mat4ShadowView()
+// The center follows the player (see SnapShadowCenter), mirroring the GLES
+// path, so shadow quality no longer collapses outside the original fixed
+// 12 m window around the world origin.
+Mat4 Mat4ShadowView(float centerX, float centerY, float centerZ)
 {
     constexpr float kLightX = 0.45f;
     constexpr float kLightY = 1.0f;
     constexpr float kLightZ = 0.55f;
     constexpr float kLightDistance = 20.0f;
-    constexpr float kCenterX = 0.0f;
-    constexpr float kCenterY = -0.2f;
-    constexpr float kCenterZ = 0.0f;
     const float lightLength = std::sqrt(kLightX * kLightX + kLightY * kLightY + kLightZ * kLightZ);
     const float lx = kLightX / lightLength;
     const float ly = kLightY / lightLength;
@@ -331,9 +334,9 @@ Mat4 Mat4ShadowView()
     const float ux = ry * fz;
     const float uy = -rx * fz;
     const float uz = rx * fy - ry * fx;
-    const float eyeX = kCenterX + lx * kLightDistance;
-    const float eyeY = kCenterY + ly * kLightDistance;
-    const float eyeZ = kCenterZ + lz * kLightDistance;
+    const float eyeX = centerX + lx * kLightDistance;
+    const float eyeY = centerY + ly * kLightDistance;
+    const float eyeZ = centerZ + lz * kLightDistance;
     Mat4 result = Mat4Identity();
     result.value[0] = rx;
     result.value[4] = ry;
@@ -347,6 +350,43 @@ Mat4 Mat4ShadowView()
     result.value[6] = -fy;
     result.value[10] = -fz;
     result.value[14] = fx * eyeX + fy * eyeY + fz * eyeZ;
+    return result;
+}
+
+// Light-space texel snapping for the player-following shadow frustum.  Must
+// stay in lockstep with Mat4ShadowView's basis; 2048 and 12 m mirror
+// kShadowMapSize and Mat4ShadowProjection's half extent.
+Mat4 SnapShadowCenter(float playerX, float playerY, float playerZ)
+{
+    constexpr float kLightX = 0.45f;
+    constexpr float kLightY = 1.0f;
+    constexpr float kLightZ = 0.55f;
+    constexpr float kShadowHalfExtent = 12.0f;
+    constexpr float kShadowMapSize = 2048.0f;
+    const float lightLength = std::sqrt(kLightX * kLightX + kLightY * kLightY + kLightZ * kLightZ);
+    const float lx = kLightX / lightLength;
+    const float ly = kLightY / lightLength;
+    const float lz = kLightZ / lightLength;
+    const float fx = -lx;
+    const float fy = -ly;
+    const float fz = -lz;
+    float rx = fy;
+    float ry = -fx;
+    const float rightLength = std::sqrt(rx * rx + ry * ry);
+    rx /= rightLength;
+    ry /= rightLength;
+    const float ux = ry * fz;
+    const float uy = -rx * fz;
+    const float uz = rx * fy - ry * fx;
+    const float texel = 2.0f * kShadowHalfExtent / kShadowMapSize;
+    const float alongR = playerX * rx + playerY * ry;
+    const float alongU = playerX * ux + playerY * uy + playerZ * uz;
+    const float deltaR = std::round(alongR / texel) * texel - alongR;
+    const float deltaU = std::round(alongU / texel) * texel - alongU;
+    Mat4 result = Mat4Identity();
+    result.value[12] = playerX + rx * deltaR + ux * deltaU;
+    result.value[13] = playerY + ry * deltaR + uy * deltaU;
+    result.value[14] = playerZ + uz * deltaU;
     return result;
 }
 
@@ -869,6 +909,8 @@ public:
         return true;
     }
 
+    bool WeaponEquipped() const override { return pistol_.equipped; }
+
     rhi::UiScreen CurrentScreen() const override
     {
         return uiScreen_;
@@ -1144,9 +1186,11 @@ public:
     // both Jolt characters, animation cursors and the third-person camera.
     void ResetGameplayScene()
     {
-        playerX_ = 0.0f;
+        pistol_.Reset();
+        pistolPoseReady_ = false;
+        playerX_ = gameplay::kPlayerSpawnX;
         playerY_ = 0.0f;
-        playerZ_ = 0.0f;
+        playerZ_ = gameplay::kPlayerSpawnZ;
         playerYaw_ = 0.0f;
         playerMoving_ = false;
         playerSprinting_ = false;
@@ -1160,15 +1204,16 @@ public:
         playerHitFlashTimer_ = 0.0f;
         playerAttackAcceptedThisFrame_ = false;
 
-        enemyX_ = 1.35f;
+        enemyX_ = gameplay::kEnemySpawnX;
         enemyY_ = 0.0f;
-        enemyZ_ = -0.65f;
+        enemyZ_ = gameplay::kEnemySpawnZ;
         enemyYaw_ = 0.0f;
         enemyHealth_ = enemyMaxHealth_;
         enemyAttackCooldown_ = 0.0f;
         enemyHitInvulnerability_ = 0.0f;
         enemyHitLockTimer_ = 0.0f;
         enemyAlive_ = true;
+        enemyReturningHome_ = false;
         enemyVisible_ = true;
         enemyDeathPlaying_ = false;
         enemyDeathTime_ = 0.0f;
@@ -1379,6 +1424,7 @@ private:
         };
         destroyAsset(playerAsset_);
         destroyAsset(enemyAsset_);
+        destroyAsset(pistolAsset_);
         destroyAsset(helmetAsset_);
         destroyAsset(groundAsset_);
         destroyAsset(terrainAsset_);
@@ -3210,7 +3256,7 @@ private:
     {
         const std::size_t staticCubeCount = sceneDefinition_ != nullptr
             ? sceneDefinition_->StaticCubeCount() : 0;
-        modelInstanceData_.assign(5 + staticCubeCount, CharacterInstanceData{});
+        modelInstanceData_.assign(6 + staticCubeCount, CharacterInstanceData{});
         return CreateBuffer(sizeof(CharacterInstanceData) * modelInstanceData_.size(),
             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
@@ -3391,8 +3437,8 @@ private:
     // reading.
     bool CreateModelDescriptorSets()
     {
-        const std::array<ModelGpuAsset*, 5> assets = {
-            &playerAsset_, &enemyAsset_, &helmetAsset_, &groundAsset_, &terrainAsset_};
+        const std::array<ModelGpuAsset*, 6> assets = {
+            &playerAsset_, &enemyAsset_, &helmetAsset_, &groundAsset_, &terrainAsset_, &pistolAsset_};
         size_t totalSets = 0;
         for (const ModelGpuAsset* asset : assets) {
             if (asset->loaded) {
@@ -3490,7 +3536,7 @@ private:
                 setImageInfo(aoInfos[slot], resolveTextureView(*asset,
                     materialInfo.aoTexture, neutralAoTexture_));
                 setImageInfo(emissiveInfos[slot], resolveTextureView(*asset,
-                    materialInfo.emissiveTexture, blackTexture_));
+                    materialInfo.emissiveTexture, whiteTexture_));
                 setImageInfo(irradianceInfos[slot], irradianceTexture_.view != VK_NULL_HANDLE
                     ? irradianceTexture_.view : skyboxTexture_.view);
                 setImageInfo(prefilteredInfos[slot], prefilteredTexture_.view != VK_NULL_HANDLE
@@ -4108,6 +4154,7 @@ private:
     {
         (void)LoadModelAsset(kModelPath, playerAsset_, true);
         (void)LoadModelAsset(kModelPath, enemyAsset_, true);
+        (void)LoadModelAsset("models/Pistol/pistol.glb",pistolAsset_,false);
         (void)LoadModelAsset(kHelmetPath, helmetAsset_, false);
         (void)LoadModelAsset(kCubePath, groundAsset_, false);
         if (sceneDefinition_ != nullptr) {
@@ -4201,7 +4248,8 @@ private:
         VkRenderPass targetRenderPass = VK_NULL_HANDLE,
         VkPipelineLayout layoutOverride = VK_NULL_HANDLE,
         VkBool32 hasColorAttachment = VK_TRUE,
-        VkBool32 depthBiasEnable = VK_FALSE)
+        VkBool32 depthBiasEnable = VK_FALSE,
+        VkFrontFace frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE)
     {
         VkPipelineShaderStageCreateInfo vertexStage{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
         vertexStage.stage = VK_SHADER_STAGE_VERTEX_BIT;
@@ -4303,12 +4351,12 @@ private:
         VkPipelineRasterizationStateCreateInfo rasterizer{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
         rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
         rasterizer.cullMode = cullMode;
-        // The positive-height Vulkan viewport maps the projected Y axis in
-        // the opposite screen direction to GLES.  Treat clockwise triangles
-        // as front-facing so VK_CULL_MODE_BACK_BIT removes the same back
-        // faces as GL's CCW + GL_BACK configuration.
-        rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+        // Main camera projection negates Y: glTF CCW faces require CCW
+        // here. The unflipped shadow projection explicitly requests CW.
+        rasterizer.frontFace = frontFace;
         rasterizer.depthBiasEnable = depthBiasEnable;
+        // Original compact factors; with highp shadow coordinates the larger
+        // doubled values caused visible shadow floating on the real device.
         rasterizer.depthBiasConstantFactor = depthBiasEnable ? 1.25f : 0.0f;
         rasterizer.depthBiasSlopeFactor = depthBiasEnable ? 2.0f : 0.0f;
         rasterizer.lineWidth = 1.0f;
@@ -4456,12 +4504,13 @@ private:
             skyboxPipeline_ = CreatePipeline(skyboxVertex, skyboxFragment, VK_CULL_MODE_NONE, VK_FALSE, VK_FALSE,
                 VertexLayout::kNone);
             // Match GLES model rendering: closed meshes render only their
-            // front faces, while the shared frontFace state accounts for the
-            // Vulkan positive-height viewport.
+            // front faces. The main projection flips Y; the shadow projection
+            // does not, so these passes require opposite front-face states.
             modelPipeline_ = CreatePipeline(modelVertex, modelFragment, VK_CULL_MODE_BACK_BIT, VK_TRUE, VK_TRUE,
                 VertexLayout::kModel);
             shadowPipeline_ = CreatePipeline(shadowVertex, shadowFragment, VK_CULL_MODE_BACK_BIT, VK_TRUE, VK_TRUE,
-                VertexLayout::kModel, VK_FALSE, shadowRenderPass_, pipelineLayout_, VK_FALSE, VK_TRUE);
+                VertexLayout::kModel, VK_FALSE, shadowRenderPass_, pipelineLayout_, VK_FALSE, VK_TRUE,
+                VK_FRONT_FACE_CLOCKWISE);
             overlayPipeline_ = CreatePipeline(overlayVertex, overlayFragment, VK_CULL_MODE_NONE, VK_FALSE, VK_FALSE,
                 VertexLayout::kOverlay, VK_TRUE);
             iconPipeline_ = CreatePipeline(iconVertex, iconFragment, VK_CULL_MODE_NONE, VK_FALSE, VK_FALSE,
@@ -4615,6 +4664,13 @@ private:
             OH_LOG_ERROR(LOG_APP, "NATIVE_VULKAN stage=depth_format_missing");
             return false;
         }
+        // Mirror the GLES gbuffer_ready depth= log so device A/B comparisons
+        // can confirm the deferred depth attachment precision from hilog.
+        const char* depthFormatName = depthFormat_ == VK_FORMAT_D32_SFLOAT ? "D32F"
+            : depthFormat_ == VK_FORMAT_D24_UNORM_S8_UINT ? "D24S8"
+            : depthFormat_ == VK_FORMAT_D16_UNORM ? "D16" : "other";
+        OH_LOG_INFO(LOG_APP, "NATIVE_VULKAN stage=depth_format_selected format=%s",
+            depthFormatName);
         if (!CreateImage(SceneExtent().width, SceneExtent().height, 1, depthFormat_,
             VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, 0, depthImage_, depthMemory_)) {
             return false;
@@ -4981,6 +5037,9 @@ private:
             return;
         }
         if (uiScreen_ == rhi::UiScreen::Gameplay) {
+            const int weaponButton = gameplay::HitPistolButton(x,y,
+                static_cast<float>(width_),static_cast<float>(height_),pistol_.equipped);
+            if (weaponButton>=0) { pistol_.Button(weaponButton); return; }
             if (HitRect(uiX, uiY, MenuButtonLayout(0))) {
                 uiScreen_ = rhi::UiScreen::GameplaySettings;
                 SDL_Log("SDL3_VULKAN stage=gameplay_settings_open");
@@ -5364,7 +5423,7 @@ private:
             AppendRoundedRect(overlay, fill, fillColor);
         }
         char label[32]{};
-        std::snprintf(label, sizeof(label), "血量 %.0f/%.0f", playerHealth_, playerMaxHealth_);
+        std::snprintf(label, sizeof(label), "血量 %.0f", playerHealth_);
         AppendTextCentered(text, label, barCenterX, barCenterY, mn * 0.030f, white);
     }
 
@@ -5407,7 +5466,7 @@ private:
             AppendRoundedRect(overlay, fill, healthRed);
         }
         char label[32]{};
-        std::snprintf(label, sizeof(label), "敌人 %.0f/%.0f", enemyHealth_, enemyMaxHealth_);
+        std::snprintf(label, sizeof(label), "敌人 %.0f", enemyHealth_);
         AppendTextCentered(text, label, centerX, barCenterY - mn * 0.022f, mn * 0.020f, white);
     }
 
@@ -5441,7 +5500,7 @@ private:
             const float controlColor[4] = {0.72f, 0.82f, 0.90f, 0.78f};
             const float activeColor[4] = {0.20f, 0.48f, 0.66f, 0.94f};
             const float ink[4] = {1.0f, 1.0f, 1.0f, 0.98f};
-            const float secondaryInk[4] = {0.18f, 0.26f, 0.34f, 0.98f};
+            const float secondaryInk[4] = {0.95f, 0.97f, 1.0f, 0.98f};
             const float dividerColor[4] = {0.22f, 0.34f, 0.44f, 0.28f};
             const float leftX = w * 0.5f - mn * 0.35f;
             AppendRoundedRect(overlay,
@@ -5471,7 +5530,7 @@ private:
                 const float* valueInk = isToggle && enabled ? white : ink;
                 AppendRoundedRect(overlay, control, valueColor);
                 AppendTextLeftAligned(text, kLabels[settingIndex], leftX, control.cy,
-                    mn * 0.032f, secondaryInk, false);
+                    mn * 0.032f, secondaryInk, true);
 
                 char value[16]{};
                 if (settingIndex == 0) {
@@ -5582,15 +5641,15 @@ private:
             const float emptyColor[4] = {0.96f, 0.98f, 1.0f, 0.30f};
             const float activeColor[4] = {0.20f, 0.48f, 0.66f, 0.94f};
             const float ink[4] = {1.0f, 1.0f, 1.0f, 0.98f};
-            const float secondaryInk[4] = {0.18f, 0.26f, 0.34f, 0.98f};
+            const float secondaryInk[4] = {0.95f, 0.97f, 1.0f, 0.98f};
             const float labelX = w * 0.5f - mn * 0.40f;
             AppendRoundedRect(overlay, dim, dimColor);
             AppendRoundedRect(overlay, sheet, sheetColor);
             AppendTextLeftAligned(text, "背包", labelX, h * 0.175f, mn * 0.050f, ink, true);
             AppendTextLeftAligned(text, "装备", w * 0.5f - mn * 0.335f - mn * 0.068f,
-                h * 0.245f, mn * 0.032f, secondaryInk, false);
+                h * 0.245f, mn * 0.032f, secondaryInk, true);
             AppendTextLeftAligned(text, "物品", w * 0.5f - mn * 0.135f,
-                h * 0.245f, mn * 0.032f, secondaryInk, false);
+                h * 0.245f, mn * 0.032f, secondaryInk, true);
             const MenuButtonPos close = MenuButtonLayout(0);
             AppendRoundedRect(overlay, close, slotColor);
             AppendTextCentered(text, "X", close.cx, close.cy, close.hh * 0.90f, ink, true);
@@ -5609,10 +5668,10 @@ private:
                         slotPos.cy + mn * 0.040f, mn * 0.024f, ink, true);
                 } else {
                     AppendTextCentered(text, "空", slotPos.cx, slotPos.cy,
-                        mn * 0.030f, secondaryInk, false);
+                        mn * 0.030f, secondaryInk, true);
                 }
                 AppendTextCentered(text, kSlotNames[slot - 1], slotPos.cx,
-                    slotPos.cy + mn * 0.095f, mn * 0.026f, secondaryInk, false);
+                    slotPos.cy + mn * 0.095f, mn * 0.026f, secondaryInk, true);
             }
 
             for (int cell = 0; cell < inventory::kBagCapacity; ++cell) {
@@ -5630,15 +5689,28 @@ private:
                         std::snprintf(countLabel, sizeof(countLabel), "x%d",
                             inventory_.bag[cell].count);
                         AppendTextCentered(text, countLabel, cellPos.cx + mn * 0.024f,
-                            cellPos.cy + mn * 0.036f, mn * 0.016f, secondaryInk, false);
+                            cellPos.cy + mn * 0.036f, mn * 0.016f, secondaryInk, true);
                     }
                 }
             }
             AppendTextCentered(text, "轻点物品装备 轻点装备栏卸下", w * 0.5f, h * 0.82f,
-                mn * 0.026f, secondaryInk, false);
+                mn * 0.026f, secondaryInk, true);
             return;
         }
 
+        for(int i=0;i<(pistol_.equipped?3:1);++i) {
+            auto b=gameplay::PistolButton(i,w,h);
+            const float active[4]={.22f,.48f,.68f,.75f};
+            const bool selected=(i==0&&pistol_.equipped)||(i==1&&pistol_.aiming);
+            AppendRoundedRect(overlay,{b.x,b.y,b.r,b.r,b.r},selected?active:panel);
+            const char* label=i==0?(pistol_.equipped?"收起":"枪械"):(i==1?"瞄准":"射击");
+            AppendTextCentered(text,label,b.x,b.y,b.r*.55f,white,true);
+        }
+        if(pistol_.equipped && !playerSwimming_) {
+            const float hit[4]={1.f,.25f,.15f,1.f};
+            AppendTextCentered(text,pistol_.hitFlash>0?"×":"+",w*.5f,h*.5f,
+                mn*(pistol_.shotAge<.10f?.050f:.036f),pistol_.hitFlash>0?hit:white,true);
+        }
         AppendPlayerHealthBar(overlay, text);
         AppendEnemyHealthBar(overlay, text);
         AppendHitFlash(overlay, w, h);
@@ -5807,6 +5879,7 @@ private:
         instances[2].skinIndex = 0;
         instances[3].model = groundTransform;
         instances[3].skinIndex = 0;
+        instances[modelInstanceData_.size() - 2].model = pistolMatrix_;
         instances[modelInstanceData_.size() - 1].model = Mat4Identity();
         std::size_t nextStaticInstance = 4;
         if (sceneDefinition_ != nullptr) {
@@ -5877,6 +5950,9 @@ private:
                     ++staticInstance;
                 }
             }
+            if(pistolAsset_.loaded && pistol_.equipped && pistolPoseReady_ && !playerSwimming_ && playerHealth_>0)
+                RecordShadowDraw(commandBuffer,static_cast<uint32_t>(index),pistolAsset_,
+                    shadowMatrix_,sizeof(CharacterInstanceData)*(modelInstanceData_.size()-2),1);
             if (terrainAsset_.loaded) {
                 RecordShadowDraw(commandBuffer, static_cast<uint32_t>(index), terrainAsset_,
                     shadowMatrix_, sizeof(CharacterInstanceData) * (modelInstanceData_.size() - 1), 1);
@@ -5918,6 +5994,9 @@ private:
                         RecordModelDraw(commandBuffer, static_cast<uint32_t>(index), playerAsset_,
                             viewProj_, 0, characterInstanceCount, enemyDissolveAmount_);
                     }
+                    if(pistolAsset_.loaded && pistol_.equipped && pistolPoseReady_ && !playerSwimming_ && playerHealth_>0)
+                        RecordModelDraw(commandBuffer,static_cast<uint32_t>(index),pistolAsset_,
+                            viewProj_,sizeof(CharacterInstanceData)*(modelInstanceData_.size()-2),1);
                     if (helmetAsset_.loaded) {
                         RecordModelDraw(commandBuffer, static_cast<uint32_t>(index), helmetAsset_,
                             viewProj_, sizeof(CharacterInstanceData) * 2, 1);
@@ -5975,7 +6054,7 @@ private:
         const bool inverseReady = water::InverseViewProjection(viewProj_.value, waterPush.inverseViewProjection.value);
         const scene::WaterSurface waterSettings = sceneDefinition_ != nullptr ? sceneDefinition_->water : scene::WaterSurface{};
         waterPush.camera[0] = camPosX_; waterPush.camera[1] = camPosY_; waterPush.camera[2] = camPosZ_;
-        waterPush.camera[3] = renderGameplayScene && waterSettings.enabled && inverseReady ? 1.0f : 0.0f;
+        waterPush.camera[3] = renderGameplayScene && inverseReady ? (waterSettings.enabled ? 1.0f : 2.0f) : 0.0f;
         waterPush.params[0] = waterSettings.height; waterPush.params[1] = waterSettings.size * 0.5f;
         waterPush.params[2] = waterSettings.roughness;
         waterPush.params[3] = static_cast<float>(SDL_GetTicks() % 3600000U) * 0.001f;
@@ -6666,6 +6745,20 @@ private:
             }
         }
 
+        if (pistol_.equipped && !playerSwimming_ && playerHealth_>0 && playerHitLockTimer_<=0) {
+            const auto* gunClip=gameplay::PistolClip(asset.animationClips,pistol_,camPitch_);
+            if(gunClip)for(const auto& channel:gunClip->channels) {
+                if(channel.nodeIndex>=nodeCount || !gameplay::WeaponUpperBody(asset.animationNodes,channel.nodeIndex))continue;
+                const float time=pistol_.shotAge<.30f?std::min(pistol_.shotAge,gunClip->duration):0.f;
+                SampleAnimationChannel(channel,time,sampled);
+                gameplay::BlendPistolAim(asset.animationClips,pistol_,camPitch_,channel,
+                    [this](const ohos_model::AnimationChannel& c,float t,float* v){SampleAnimationChannel(c,t,v);},sampled);
+                if(channel.path==0)std::memcpy(&translations[channel.nodeIndex*3],sampled,sizeof(float)*3);
+                else if(channel.path==1)std::memcpy(&rotations[channel.nodeIndex*4],sampled,sizeof(float)*4);
+                else std::memcpy(&scales[channel.nodeIndex*3],sampled,sizeof(float)*3);
+            }
+        }
+
         std::vector<Mat4> globals(nodeCount, Mat4Identity());
         for (size_t nodeIndex = 0; nodeIndex < nodeCount; ++nodeIndex) {
             const ohos_model::Node& node = asset.animationNodes[nodeIndex];
@@ -6678,6 +6771,11 @@ private:
             }
         }
 
+        pistolPoseReady_=false;
+        for(size_t i=0;i<nodeCount;++i)if(asset.animationNodes[i].name=="DEF-hand.R") {
+            gameplay::PistolMount(playerMatrix_.value,asset.animationNormalise.value,globals[i].value,pistolMatrix_.value);
+            pistolPoseReady_=true;break;
+        }
         asset.jointMatrices.assign(kMaxJoints, Mat4Identity());
         const size_t jointCount = std::min(asset.animationSkin.JointCount(), kMaxJoints);
         for (size_t joint = 0; joint < jointCount; ++joint) {
@@ -6946,7 +7044,7 @@ private:
         // Keep attack cadence tied to the clip while enforcing a floor for
         // reduced or malformed assets.  The accepted edge drives both the
         // animation and the damage query below.
-        if ((pressed & 1) != 0 && playerAttackCooldown_ <= 0.0f &&
+        if (!pistol_.equipped && (pressed & 1) != 0 && playerAttackCooldown_ <= 0.0f &&
             playerHitLockTimer_ <= 0.0f && playerHealth_ > 0.0f) {
             const float clipDuration = AnimationClipDurationOr(
                 playerAsset_, playerAsset_.attackClip, 0.87f);
@@ -6955,16 +7053,40 @@ private:
             playerAttackAcceptedThisFrame_ = true;
         }
 
+        pistol_.Tick(dt,playerHealth_>0 && !playerSwimming_ && playerHitLockTimer_<=0);
+        bool pistolHit = false;
+        if (pistol_.fired) {
+            const float dx=std::sin(camYaw_)*std::cos(camPitch_);
+            const float dy=-std::sin(camPitch_);
+            const float dz=-std::cos(camYaw_)*std::cos(camPitch_);
+            const float ox=camPanX_+std::cos(camYaw_)*(pistol_.aiming?.55f:0.f)-dx*camDistance_;
+            const float oy=camPanY_+(pistol_.aiming?.25f:0.f)-dy*camDistance_, oz=camPanZ_+std::sin(camYaw_)*(pistol_.aiming?.55f:0.f)-dz*camDistance_;
+            const float target=gameplay::RayEnemy(ox,oy,oz,dx,dy,dz,enemyX_,enemyY_,enemyZ_);
+            const bool physicsReady=physicsWorld_!=nullptr && physicsWorld_->IsReady();
+            const float wall=physicsReady?physicsWorld_->RaycastWorld(ox,oy,oz,dx,dy,dz,60.f):0.f;
+            pistolHit=enemyAlive_ && target<60.f && target<wall;
+            if (pistolHit && pistolPoseReady_) {
+                const float mx=pistolMatrix_.value[12],my=pistolMatrix_.value[13],mz=pistolMatrix_.value[14];
+                const float tx=ox+dx*target-mx,ty=oy+dy*target-my,tz=oz+dz*target-mz;
+                const float length=std::sqrt(tx*tx+ty*ty+tz*tz);
+                if(length>.001f && physicsWorld_->RaycastWorld(mx,my,mz,tx/length,ty/length,tz/length,length)<length-.01f)
+                    pistolHit=false;
+            }
+            pistol_.hit=pistolHit;
+            if(pistolHit)pistol_.hitFlash=.18f;
+            SDL_Log("PISTOL shot hit=%d",pistolHit?1:0);
+        }
         float toEnemyX = enemyX_ - playerX_;
         float toEnemyZ = enemyZ_ - playerZ_;
         float distance = std::sqrt(toEnemyX * toEnemyX + toEnemyZ * toEnemyZ);
-        if (playerAttackAcceptedThisFrame_ && enemyAlive_ && distance <= 1.75f &&
-            enemyHitInvulnerability_ <= 0.0f) {
+        if (((playerAttackAcceptedThisFrame_ && distance <= 1.75f) || pistolHit) && enemyAlive_ &&
+            (pistolHit || enemyHitInvulnerability_ <= 0.0f)) {
             enemyHealth_ = std::max(0.0f, enemyHealth_ - 25.0f);
             AudioManager::GetInstance().PlayAudio("hit", 0.55f);
             enemyHitInvulnerability_ = kHitInvulnerability;
             if (enemyHealth_ <= 0.0f) {
                 enemyAlive_ = false;
+                if (physicsWorld_ != nullptr) physicsWorld_->SetEnemyCollisionEnabled(false);
                 enemyMoving_ = false;
                 enemyAttackRequested_ = false;
                 enemyDeathPlaying_ = true;
@@ -6986,18 +7108,22 @@ private:
             return;
         }
 
-        toEnemyX = playerX_ - enemyX_;
-        toEnemyZ = playerZ_ - enemyZ_;
-        distance = std::sqrt(toEnemyX * toEnemyX + toEnemyZ * toEnemyZ);
+        const gameplay::EnemyGoal goal = gameplay::EnemyActivityGoal(
+            enemyX_, enemyZ_, playerX_, playerZ_, enemyReturningHome_);
+        toEnemyX = goal.dx;
+        toEnemyZ = goal.dz;
+        distance = goal.distance;
         if (distance > 1.0e-4f) {
             enemyYaw_ = std::atan2(toEnemyX, toEnemyZ);
         }
         enemyMoving_ = false;
-        if (distance > 1.45f) {
+        if (distance > (goal.chase ? 1.45f : 0.25f)) {
             const float invDistance = 1.0f / std::max(distance, 1.0e-4f);
             constexpr float kEnemySpeed = 0.55f;
             enemyDesiredVelocityX_ = toEnemyX * invDistance * kEnemySpeed;
             enemyDesiredVelocityZ_ = toEnemyZ * invDistance * kEnemySpeed;
+            gameplay::LimitEnemyStep(enemyX_, enemyZ_, dt,
+                enemyDesiredVelocityX_, enemyDesiredVelocityZ_);
             if (physicsWorld_ == nullptr || !physicsWorld_->IsReady()) {
                 enemyX_ += enemyDesiredVelocityX_ * dt;
                 enemyZ_ += enemyDesiredVelocityZ_ * dt;
@@ -7006,7 +7132,7 @@ private:
                 enemyZ_ = std::max(-kGroundBound, std::min(kGroundBound, enemyZ_));
             }
             enemyMoving_ = true;
-        } else if (enemyAttackCooldown_ <= 0.0f) {
+        } else if (goal.chase && enemyAttackCooldown_ <= 0.0f) {
             enemyAttackCooldown_ = 1.15f;
             enemyAttackRequested_ = true;
             if (playerAttackInvulnerability_ <= 0.0f &&
@@ -7053,6 +7179,7 @@ private:
             nearPlane = sceneDefinition_->mainCamera.nearPlane;
             farPlane = sceneDefinition_->mainCamera.farPlane;
         }
+        if(pistol_.equipped && pistol_.aiming)fieldOfViewDegrees=45.0f;
         const Mat4 projection = Mat4Perspective(
             fieldOfViewDegrees * 3.14159265358979323846f / 180.0f,
             aspect, nearPlane, farPlane);
@@ -7157,6 +7284,10 @@ private:
         // the same edge is used here for an in-range enemy hit.
         if (gameplayInput) {
             UpdateEnemyAi(dt, cameraInput_.actionButtonPressedMask);
+            if (uiScreen_ == rhi::UiScreen::Gameplay) {
+                playerHealth_ = gameplay::HealNearLight(playerHealth_, playerMaxHealth_,
+                    playerX_, playerY_, playerZ_, dt);
+            }
             if (uiScreen_ == rhi::UiScreen::Gameplay && physicsReady) {
                 physicsWorld_->MoveEnemy(enemyDesiredVelocityX_, enemyDesiredVelocityZ_, dt);
                 const physics::CharacterState state = physicsWorld_->GetEnemyState();
@@ -7174,23 +7305,34 @@ private:
             camPanZ_ += (playerZ_ - camPanZ_) * followLerp;
         }
 
+        const float aimOffset=(pistol_.equipped && pistol_.aiming)?.55f:0.f;
+        const float focusX=camPanX_+camToWorld.value[0]*aimOffset;
+        const float focusY=camPanY_+((pistol_.equipped && pistol_.aiming)?.25f:0.f);
+        const float focusZ=camPanZ_+camToWorld.value[2]*aimOffset;
         const Mat4 view = Mat4Multiply(Mat4Translation(0.0f, 0.0f, -camDistance_),
             Mat4Multiply(Mat4RotationX(camPitch_),
                 Mat4Multiply(Mat4RotationY(camYaw_),
-                    Mat4Translation(-camPanX_, -camPanY_, -camPanZ_))));
+                    Mat4Translation(-focusX, -focusY, -focusZ))));
         // Keep the lighting camera in the same world space as GLES.  The
         // view matrix is target-relative, so recover the eye from the inverse
         // orbit rotation rather than approximating it from the target.
-        camPosX_ = camPanX_ + camToWorld.value[8] * camDistance_ + camToWorld.value[12];
-        camPosY_ = camPanY_ + camToWorld.value[9] * camDistance_ + camToWorld.value[13];
-        camPosZ_ = camPanZ_ + camToWorld.value[10] * camDistance_ + camToWorld.value[14];
+        camPosX_ = focusX + camToWorld.value[8] * camDistance_ + camToWorld.value[12];
+        camPosY_ = focusY + camToWorld.value[9] * camDistance_ + camToWorld.value[13];
+        camPosZ_ = focusZ + camToWorld.value[10] * camDistance_ + camToWorld.value[14];
         viewProj_ = Mat4Multiply(projection, view);
+        if (pistol_.equipped && pistol_.aiming && !playerSwimming_) playerYaw_ = std::atan2(std::sin(camYaw_),-std::cos(camYaw_));
         playerMatrix_ = Mat4Multiply(Mat4Translation(playerX_, playerY_, playerZ_),
             Mat4RotationY(playerYaw_));
         playerMvp_ = Mat4Multiply(viewProj_, playerMatrix_);
         enemyMatrix_ = Mat4Multiply(Mat4Translation(enemyX_, enemyY_, enemyZ_),
             Mat4RotationY(enemyYaw_));
-        shadowMatrix_ = Mat4Multiply(Mat4ShadowProjection(), Mat4ShadowView());
+        // Shadow frustum follows the player, snapped to the light-space texel
+        // grid so walking does not make shadow edges shimmer.  The -0.2 y bias
+        // is inherited from the original fixed window.
+        const Mat4 shadowCenter = SnapShadowCenter(playerX_, playerY_ - 0.2f, playerZ_);
+        shadowMatrix_ = Mat4Multiply(Mat4ShadowProjection(),
+            Mat4ShadowView(shadowCenter.value[12], shadowCenter.value[13],
+                shadowCenter.value[14]));
         SceneUniforms uniforms{};
         uniforms.cubeMvp = playerMvp_;
         uniforms.skyMvp = projection;
@@ -7855,6 +7997,7 @@ private:
     VkPipeline modelPipeline_ = VK_NULL_HANDLE;
     ModelGpuAsset playerAsset_;
     ModelGpuAsset enemyAsset_;
+    ModelGpuAsset pistolAsset_;
     ModelGpuAsset helmetAsset_;
     ModelGpuAsset groundAsset_;
     ModelGpuAsset terrainAsset_;
@@ -7882,9 +8025,12 @@ private:
     float camPosX_ = 0.0f;
     float camPosY_ = 0.0f;
     float camPosZ_ = 2.8f;
-    float playerX_ = 0.0f;
+    gameplay::PistolState pistol_;
+    Mat4 pistolMatrix_ = Mat4Identity();
+    bool pistolPoseReady_ = false;
+    float playerX_ = gameplay::kPlayerSpawnX;
     float playerY_ = 0.0f;
-    float playerZ_ = 0.0f;
+    float playerZ_ = gameplay::kPlayerSpawnZ;
     float playerYaw_ = 0.0f;
     float playerMaxHealth_ = 100.0f;
     float playerHealth_ = 100.0f;
@@ -7895,9 +8041,9 @@ private:
     float playerHitLockTimer_ = 0.0f;
     float playerHitFlashTimer_ = 0.0f;
     bool playerAttackAcceptedThisFrame_ = false;
-    float enemyX_ = 1.35f;
+    float enemyX_ = gameplay::kEnemySpawnX;
     float enemyY_ = 0.0f;
-    float enemyZ_ = -0.65f;
+    float enemyZ_ = gameplay::kEnemySpawnZ;
     float enemyYaw_ = 0.0f;
     float enemyMaxHealth_ = 100.0f;
     float enemyHealth_ = 100.0f;
@@ -7906,6 +8052,7 @@ private:
     // Mikan PuppetEnemyScript hit-stun: AI cannot override the Hit one-shot.
     float enemyHitLockTimer_ = 0.0f;
     bool enemyAlive_ = true;
+    bool enemyReturningHome_ = false;
     bool enemyVisible_ = true;
     bool enemyDeathPlaying_ = false;
     float enemyDeathTime_ = 0.0f;

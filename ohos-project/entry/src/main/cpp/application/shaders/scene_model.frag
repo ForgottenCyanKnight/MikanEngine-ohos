@@ -1,4 +1,6 @@
 #version 450
+precision highp float;
+precision highp int;
 
 // Forward material pass matching the GLES deferred lighting equations.  The
 // sampled albedo remains source material data; every exposure, gamma and
@@ -78,8 +80,9 @@ float ShadowVisibility(vec3 worldPosition, vec3 N, vec3 L)
         shadowUv.y >= 1.0 || receiverDepth <= 0.0 || receiverDepth >= 1.0) {
         return 1.0;
     }
-    // Keep this in lockstep with the GLES deferred-lighting shader.  The
-    // larger slope-scaled receiver bias complements the shadow-pass offset.
+    // Keep this in lockstep with the GLES deferred-lighting shader.
+    // Original compact values: highp shadow coordinates removed the need
+    // for the enlarged offsets that lifted shadows off contact points.
     float bias = max(0.008 * (1.0 - max(dot(N, L), 0.0)), 0.0015);
     vec2 texel = 1.0 / vec2(textureSize(shadowMap, 0));
     float visible = 0.0;
@@ -272,19 +275,14 @@ void main()
         vec3(1.0, 0.97, 0.92) * 3.0 * NoL *
         ShadowVisibility(vWorldPosition, N, L);
 
-    vec3 Lf = normalize(vec3(0.0, 0.35, 1.0));
-    vec3 Hf = normalize(V + Lf);
-    float NoLf = max(dot(N, Lf), 0.0);
-    vec3 Ff = F_Schlick(F0, max(dot(V, Hf), 0.0));
-    vec3 fill = ((1.0 - Ff) * (1.0 - metallic) * albedo / PI +
-        D_GGX(max(dot(N, Hf), 0.0), roughness) *
-        V_SmithGGXCorrelated(NoV, max(NoLf, 1e-4), roughness) * Ff) *
-        vec3(0.55, 0.62, 0.75) * 1.1 * NoLf;
+    // Only the shadow-casting sun contributes directional lighting.
 
     vec3 pointLights =
-        PointLight(vec3(-1.3, 0.4, 1.1), vec3(1.0, 0.12, 0.10) * 8.0,
+        PointLight(vec3(12.0, -0.64, -12.0), vec3(1.0, 0.12, 0.10) * 8.0,
             N, V, NoV, albedo, metallic, roughness, F0, vWorldPosition) +
-        PointLight(vec3(1.3, 0.4, 1.1), vec3(0.10, 0.25, 1.0) * 8.0,
+        PointLight(vec3(0.0, -0.64, 0.0), vec3(0.10, 0.25, 1.0) * 8.0,
+            N, V, NoV, albedo, metallic, roughness, F0, vWorldPosition) +
+        PointLight(vec3(-5.0, -0.64, 5.0), vec3(0.10, 1.0, 0.18) * 8.0,
             N, V, NoV, albedo, metallic, roughness, F0, vWorldPosition);
 
     // Match GLES' full IBL contract: irradiance is a cosine-convolved cube,
@@ -306,7 +304,7 @@ void main()
     vec3 specularIbl = prefiltered * SpecOcclusion(NoV, ao, roughness) * envBrdf;
     vec3 emissive = sRGBToLinear(texture(emissiveTexture, materialUv).rgb) *
         vMaterialParams1.xyz;
-    vec3 color = direct + fill + pointLights + diffuseIbl * ao + specularIbl + emissive;
+    vec3 color = direct + pointLights + diffuseIbl * ao + specularIbl + emissive;
     if (vDissolve > 0.0) {
         float n = DissolveNoise(vWorldPosition * 5.0);
         float cut = vDissolve * 1.18 - 0.09;

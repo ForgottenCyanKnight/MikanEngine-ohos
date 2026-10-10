@@ -1,4 +1,6 @@
 #version 450
+precision highp float;
+precision highp int;
 
 // The cube is transformed on the GPU: the model-view-projection matrix is
 // uploaded once per frame through the UBO, and the vertex buffer holds

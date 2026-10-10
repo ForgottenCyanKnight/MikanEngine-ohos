@@ -1,4 +1,6 @@
 #version 450
+precision highp float;
+precision highp int;
 
 // Full-screen triangle for the Vulkan post-processing resolve.  The positive
 // height viewport uses NDC y=-1 at the top, so the interpolated texture

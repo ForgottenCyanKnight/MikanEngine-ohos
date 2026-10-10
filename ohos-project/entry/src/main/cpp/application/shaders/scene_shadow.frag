@@ -1,4 +1,6 @@
 #version 450
+precision highp float;
+precision highp int;
 
 layout(location = 0) in vec3 vShadowWorldPos;
 layout(location = 1) in flat float vDissolve;

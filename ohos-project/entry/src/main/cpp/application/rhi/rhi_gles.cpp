@@ -26,6 +26,9 @@
 #include "rhi.h"
 #include "../audio/audio_manager.h"
 #include "../inventory.h"
+#include "../gameplay_lights.h"
+#include "../enemy_activity.h"
+#include "../weapon_gameplay.h"
 #include "../physics/jolt_gameplay_physics.h"
 #include "../terrain/frustum_culling.h"
 #include "../scene/scene_definition.h"
@@ -142,17 +145,17 @@ Mat4 Mat4PerspectiveGl(float fieldOfViewRadians, float aspect, float nearPlane, 
 }
 
 // Stable directional-light camera shared with the Vulkan shadow path. The
-// center, extent and light direction are intentionally kept identical in both
-// RHI implementations so shadow silhouettes remain comparable.
-Mat4 Mat4ShadowView()
+// light direction, extent and depth range are intentionally kept identical in
+// both RHI implementations so shadow silhouettes remain comparable.  The
+// center follows the player (see SnapShadowCenter) instead of pinning to the
+// world origin: with the old fixed window, every shadow beyond 12 m of the
+// origin simply vanished, which read as precision collapsing with distance.
+Mat4 Mat4ShadowView(float centerX, float centerY, float centerZ)
 {
     constexpr float kLightX = 0.45f;
     constexpr float kLightY = 1.0f;
     constexpr float kLightZ = 0.55f;
     constexpr float kLightDistance = 20.0f;
-    constexpr float kCenterX = 0.0f;
-    constexpr float kCenterY = -0.2f;
-    constexpr float kCenterZ = 0.0f;
     const float lightLength = std::sqrt(kLightX * kLightX + kLightY * kLightY + kLightZ * kLightZ);
     const float lx = kLightX / lightLength;
     const float ly = kLightY / lightLength;
@@ -168,9 +171,9 @@ Mat4 Mat4ShadowView()
     const float ux = ry * fz;
     const float uy = -rx * fz;
     const float uz = rx * fy - ry * fx;
-    const float eyeX = kCenterX + lx * kLightDistance;
-    const float eyeY = kCenterY + ly * kLightDistance;
-    const float eyeZ = kCenterZ + lz * kLightDistance;
+    const float eyeX = centerX + lx * kLightDistance;
+    const float eyeY = centerY + ly * kLightDistance;
+    const float eyeZ = centerZ + lz * kLightDistance;
     Mat4 result = Mat4Identity();
     result.value[0] = rx;
     result.value[4] = ry;
@@ -184,6 +187,45 @@ Mat4 Mat4ShadowView()
     result.value[6] = -fy;
     result.value[10] = -fz;
     result.value[14] = fx * eyeX + fy * eyeY + fz * eyeZ;
+    return result;
+}
+
+// Snaps the shadow-frustum center to the shadow-map texel grid in light
+// space.  Without this, a player-following shadow camera would make every
+// shadow edge crawl by up to one texel per frame while walking.  The basis
+// here must stay in lockstep with Mat4ShadowView; 2048 and 12 m mirror
+// kShadowMapSize and Mat4ShadowProjection's half extent.
+Mat4 SnapShadowCenter(float playerX, float playerY, float playerZ)
+{
+    constexpr float kLightX = 0.45f;
+    constexpr float kLightY = 1.0f;
+    constexpr float kLightZ = 0.55f;
+    constexpr float kShadowHalfExtent = 12.0f;
+    constexpr float kShadowMapSize = 2048.0f;
+    const float lightLength = std::sqrt(kLightX * kLightX + kLightY * kLightY + kLightZ * kLightZ);
+    const float lx = kLightX / lightLength;
+    const float ly = kLightY / lightLength;
+    const float lz = kLightZ / lightLength;
+    const float fx = -lx;
+    const float fy = -ly;
+    const float fz = -lz;
+    float rx = fy;
+    float ry = -fx;
+    const float rightLength = std::sqrt(rx * rx + ry * ry);
+    rx /= rightLength;
+    ry /= rightLength;
+    const float ux = ry * fz;
+    const float uy = -rx * fz;
+    const float uz = rx * fy - ry * fx;
+    const float texel = 2.0f * kShadowHalfExtent / kShadowMapSize;
+    const float alongR = playerX * rx + playerY * ry;
+    const float alongU = playerX * ux + playerY * uy + playerZ * uz;
+    const float deltaR = std::round(alongR / texel) * texel - alongR;
+    const float deltaU = std::round(alongU / texel) * texel - alongU;
+    Mat4 result = Mat4Identity();
+    result.value[12] = playerX + rx * deltaR + ux * deltaU;
+    result.value[13] = playerY + ry * deltaR + uy * deltaU;
+    result.value[14] = playerZ + uz * deltaU;
     return result;
 }
 
@@ -400,6 +442,10 @@ void SlerpQuat(const float a[4], const float b[4], float f, float out[4])
 // Full-screen triangle for the deferred lighting pass.  UVs reconstruct the
 // G-buffer sample position; geometry comes from gl_VertexID, no buffers.
 const char* const kFullscreenVertexSource = R"(#version 300 es
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp samplerCube;
 out vec2 vUV;
 
 void main()
@@ -425,6 +471,10 @@ void main()
 // Directions below follow the GL spec cube-map selection table exactly
 // (u, v = NDC within the face viewport).
 const char* const kConvolutionVertexSource = R"(#version 300 es
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp samplerCube;
 out vec3 vDirection;
 uniform int cubeFace;
 
@@ -460,6 +510,10 @@ void main()
 // On-screen joystick overlay: a tiny flat-shader pair drawing window-pixel
 // circles for the movement stick (position fed by the touch layer each frame).
 const char* const kOverlayVertexSource = R"(#version 300 es
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp samplerCube;
 layout(location = 0) in vec2 aPos;
 uniform vec2 overlayResolution;
 
@@ -473,6 +527,9 @@ void main()
 
 const char* const kOverlayFragmentSource = R"(#version 300 es
 precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp samplerCube;
 uniform vec4 overlayColor;
 uniform vec2 overlayResolution;
 uniform vec4 glassShape;
@@ -520,12 +577,19 @@ vec4 ShadeGlass(vec2 pixel, vec4 shape, float radius, vec4 tint, vec2 resolution
     float saturation = max(tint.r,max(tint.g,tint.b))-min(tint.r,min(tint.g,tint.b));
     vec3 color = mix(blurred, tint.rgb, 0.055 + 0.16*saturation);
     color = mix(color, vec3(0.86,0.92,1.0), 0.035);
-    float rim = exp(-abs(distance) / 1.8);
-    float light = 0.35 + 0.65*max(dot(direction, normalize(vec2(-0.55,-0.83))),0.0);
+    // White specular lip stays legible against both sea and bright sky.
+    // Pixel widths use derivative AA, so the fine edge does not shimmer.
+    float aa = max(fwidth(distance), 0.6);
+    float rim = exp(-abs(distance + 1.15) / max(1.1, aa));
+    float light = max(dot(direction, normalize(vec2(-0.55,-0.83))),0.0);
+    float counterLight = max(dot(direction, normalize(vec2(0.70,0.71))),0.0);
+    float shoulder = exp(-abs(distance + 3.8) / 3.2);
     float innerRim = exp(-abs(distance + bezel*0.25)/2.2);
-    color += vec3(0.75,0.84,1.0) * rim * light * 0.78;
-    color += vec3(0.24,0.32,0.44) * innerRim * (1.0-light)*0.25;
-    color += vec3(0.10,0.13,0.17) * lens * light;
+    float specular = rim * (0.46 + 0.40*light + 0.18*counterLight);
+    color = mix(color, vec3(1.0), clamp(specular, 0.0, 0.94));
+    color += vec3(0.80,0.89,1.0) * shoulder * (0.06 + 0.16*light);
+    color += vec3(0.36,0.48,0.64) * innerRim * counterLight * 0.32;
+    color += vec3(0.10,0.13,0.17) * lens * (0.35 + 0.65*light);
     float coverage = 1.0 - smoothstep(-max(fwidth(distance),0.6),0.0,distance);
     return vec4(clamp(color,0.0,1.0), tint.a * coverage);
 }
@@ -540,6 +604,10 @@ void main() {
 // same source artwork works on GLES and Vulkan without baking button colours
 // into the asset.
 const char* const kIconVertexSource = R"(#version 300 es
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp samplerCube;
 layout(location = 0) in vec2 aPos;
 layout(location = 1) in vec2 aUV;
 uniform vec2 iconResolution;
@@ -555,7 +623,10 @@ void main()
 )";
 
 const char* const kIconFragmentSource = R"(#version 300 es
-precision mediump float;
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp samplerCube;
 
 uniform sampler2D iconTexture;
 uniform vec4 iconColor;
@@ -575,6 +646,10 @@ void main()
 // the engine's dual mode: the precise 1-screen-pixel edge when screenPxRange
 // >= 1, an fwidth-adaptive fallback for tiny text, blended in between.
 const char* const kTextVertexSource = R"(#version 300 es
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp samplerCube;
 layout(location = 0) in vec2 aPos;
 layout(location = 1) in vec2 aUV;
 layout(location = 2) in vec4 aColor;
@@ -597,6 +672,9 @@ void main()
 
 const char* const kTextFragmentSource = R"(#version 300 es
 precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp samplerCube;
 
 uniform sampler2D textAtlas;
 in vec2 fragUV;
@@ -664,11 +742,14 @@ const float kDisplayExposure = 1.8f;
 // follows the orbit camera implicitly through invViewProj.
 const char* const kLightingFragmentSource = R"(#version 300 es
 precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp samplerCube;
 
 uniform sampler2D albedoTexture;     // attachment 0: albedo (sRGB bytes)
 uniform sampler2D normalTexture;     // attachment 1: octahedral normal xy
 uniform sampler2D materialTexture;   // attachment 2: metallic/roughness/ao
-uniform sampler2D emissiveTexture;   // attachment 3: emissive (sRGB bytes)
+uniform sampler2D emissiveTexture;   // attachment 3: linear HDR emission (RGBE)
 uniform sampler2D depthTexture;
 uniform samplerCube irradianceTexture;
 uniform samplerCube envTexture;
@@ -679,7 +760,7 @@ uniform float skyboxMaxLod;
 uniform mat4 invViewProj;
 uniform mat4 shadowMatrix;
 uniform vec3 cameraPosition;
-uniform vec3 emissiveFactor;
+// Emission factor is applied per material in the geometry pass.
 uniform int envPrefiltered;
 uniform int useBrdfLut;
 uniform int useShadowMap;
@@ -730,9 +811,11 @@ float ShadowVisibility(vec3 worldPosition, vec3 N, vec3 L)
         shadowUv.y >= 1.0 || receiverDepth <= 0.0 || receiverDepth >= 1.0) {
         return 1.0;
     }
-    // Use a larger slope-scaled receiver bias for this single shadow map.
-    // The raster pass also applies polygon offset; keeping both terms here
-    // suppresses acne without relying on a driver-specific depth precision.
+    // Slope-scaled receiver bias for this single shadow map.  The ortho depth
+    // range is 40 m; with highp shadow coordinates the compact values no
+    // longer lift shadows off their contact points.  The raster pass also
+    // applies polygon offset; keeping both terms here suppresses acne
+    // without relying on driver-specific depth precision.
     float bias = max(0.008 * (1.0 - max(dot(N, L), 0.0)), 0.0015);
     vec2 texel = 1.0 / vec2(textureSize(shadowMap, 0));
     float visible = 0.0;
@@ -854,7 +937,8 @@ void main()
     float metallic = clamp(mat.x, 0.0, 1.0);
     float roughness = clamp(mat.y, 0.045, 1.0);
     float ao = mat.z;
-    vec3 emissive = sRGBToLinear(texture(emissiveTexture, vUV).rgb) * emissiveFactor;
+    vec4 encodedEmission = texture(emissiveTexture, vUV);
+    vec3 emissive = encodedEmission.rgb * exp2(encodedEmission.a * 255.0 - 128.0);
     vec3 N = OctahedronDecode(texture(normalTexture, vUV).xy * 2.0 - 1.0);
 
     if (mat.w > 0.5) {
@@ -893,25 +977,14 @@ void main()
     vec3 direct = (kD * albedo / PI + specular) * lightColor * NoL *
         ShadowVisibility(worldPos, N, L);
 
-    // Fill light, anchored to the camera (three-point turntable fill).
-    vec3 Lf = normalize(vec3(0.0, 0.35, 1.0));
-    vec3 Hf = normalize(V + Lf);
-    vec3 fillColor = vec3(0.55, 0.62, 0.75) * 1.1;
-    float NoLf = max(dot(N, Lf), 0.0);
-    float NoHf = max(dot(N, Hf), 0.0);
-    float VoHf = max(dot(V, Hf), 0.0);
-    float distributionF = D_GGX(NoHf, roughness);
-    float visibilityF = V_SmithGGXCorrelated(NoV, max(NoLf, 1e-4), roughness);
-    vec3 FF = F_Schlick(F0, VoHf);
-    vec3 specularF = distributionF * visibilityF * FF;
-    vec3 kDF = (1.0 - FF) * (1.0 - metallic);
-    vec3 fill = (kDF * albedo / PI + specularF) * fillColor * NoLf;
+    // Only the shadow-casting sun contributes directional lighting.
 
-    // Rim accent pair: red portside, blue starboard.
     vec3 pointLights =
-        PointLight(vec3(-1.3, 0.4, 1.1), vec3(1.0, 0.12, 0.10) * 8.0,
+        PointLight(vec3(12.0, -0.64, -12.0), vec3(1.0, 0.12, 0.10) * 8.0,
             N, V, NoV, albedo, metallic, roughness, F0, worldPos)
-      + PointLight(vec3(1.3, 0.4, 1.1), vec3(0.10, 0.25, 1.0) * 8.0,
+      + PointLight(vec3(0.0, -0.64, 0.0), vec3(0.10, 0.25, 1.0) * 8.0,
+            N, V, NoV, albedo, metallic, roughness, F0, worldPos) +
+        PointLight(vec3(-5.0, -0.64, 5.0), vec3(0.10, 1.0, 0.18) * 8.0,
             N, V, NoV, albedo, metallic, roughness, F0, worldPos);
 
     // IBL ambient (MikanEngine full-tier composition).
@@ -940,7 +1013,7 @@ void main()
     // ao belongs to diffuse only (double occlusion was the ao^2 bug).
     vec3 ambient = diffuseIBL * ao + specularIBL;
 
-    vec3 color = direct + fill + pointLights + ambient + emissive;
+    vec3 color = direct + pointLights + ambient + emissive;
     if (hdrOutput == 1) {
         // Linear HDR straight to the float-capable post target; exposure and
         // the AgX curve are applied by the tonemap pass (engine chain order).
@@ -975,6 +1048,8 @@ constexpr GLenum kHdrFormats[] = {GL_R11F_G11F_B10F, GL_RGBA16F};
 const char* const kWaterFragmentSource = R"(#version 300 es
 precision highp float;
 precision highp int;
+precision highp sampler2D;
+precision highp samplerCube;
 uniform sampler2D opaqueColor;
 uniform highp sampler2D opaqueDepth;
 uniform samplerCube waterSky;
@@ -1050,6 +1125,48 @@ vec3 ReconstructWorld(vec2 uv, float depth)
     return h.xyz / h.w;
 }
 
+// Analytic camera-facing billboard discs, composited in linear HDR before
+// bloom. Positions/colors match scene lights; emission has its own gain.
+vec3 LightBillboard(vec3 camera, vec3 ray, float sceneDistance,
+    vec3 center, vec3 radiance)
+{
+    vec3 toCenter = center - camera;
+    float centerDistance = length(toCenter);
+    if (centerDistance < 0.001) return vec3(0.0);
+    vec3 facing = toCenter / centerDistance;
+    float denominator = dot(ray, facing);
+    if (denominator <= 0.0001) return vec3(0.0);
+    float t = centerDistance / denominator;
+    if (t >= sceneDistance - 0.001) return vec3(0.0);
+    const float radius = 0.12; // world metres, perspective scales naturally
+    float radial = length(camera + ray*t - center) / radius;
+    // Solid emissive disc: no translucent rim, Gaussian tail or fake halo.
+    // All light outside the disc is generated by the downstream bloom pass.
+    if (radial > 1.0) return vec3(0.0);
+    return radiance * 16.6;
+}
+
+vec3 SceneLightBillboards(vec3 camera, vec3 ray, float sceneDistance)
+{
+    return LightBillboard(camera, ray, sceneDistance,
+        vec3(12.0,-0.64,-12.0), vec3(1.0,0.12,0.10)*8.0) +
+        LightBillboard(camera, ray, sceneDistance,
+        vec3(0.0,-0.64,0.0), vec3(0.10,0.25,1.0)*8.0) +
+        LightBillboard(camera, ray, sceneDistance,
+        vec3(-5.0,-0.64,5.0), vec3(0.10,1.0,0.18)*8.0);
+}
+
+vec4 FinishScene(vec3 color, vec3 camera, vec3 ray, float sceneDistance)
+{
+    vec3 emitter = SceneLightBillboards(camera, ray, sceneDistance);
+    if (max(max(emitter.r, emitter.g), emitter.b) > 0.0) color = emitter;
+    if (WATER_LDR) {
+        color *= 1.8;
+        color = pow(max(color / (color + vec3(1.0)), vec3(0.0)), vec3(1.0 / 2.2));
+    }
+    return vec4(color, 1.0);
+}
+
 void main()
 {
     vec2 uv = WATER_UV;
@@ -1070,10 +1187,12 @@ void main()
     float surfaceDistance = abs(ray.y) > 0.00001 ? (WATER_PARAMS.x - camera.y) / ray.y : -1.0;
     vec3 surface = camera + ray * max(surfaceDistance, 0.0);
     bool insideSea = abs(surface.x) <= WATER_PARAMS.y && abs(surface.z) <= WATER_PARAMS.y;
-    bool hitsWater = insideSea && surfaceDistance > 0.0 && surfaceDistance < bottomDistance - 0.001;
-    bool underwater = camera.y < WATER_PARAMS.x && abs(camera.x) <= WATER_PARAMS.y && abs(camera.z) <= WATER_PARAMS.y;
+    bool hitsWater = WATER_CAMERA.w < 1.5 && insideSea && surfaceDistance > 0.0 && surfaceDistance < bottomDistance - 0.001;
+    bool underwater = WATER_CAMERA.w < 1.5 && camera.y < WATER_PARAMS.x && abs(camera.x) <= WATER_PARAMS.y && abs(camera.z) <= WATER_PARAMS.y;
     vec3 waveNormal = WaterNormal(surface, WATER_PARAMS.w);
-    if (!hitsWater && !underwater) { outColor = vec4(source, 1.0); return; }
+    if (!hitsWater && !underwater) {
+        outColor = FinishScene(background, camera, ray, bottomDistance); return;
+    }
 
     // Retained opaque depth gives the submerged optical path in world units.
     float pathLength = underwater ? (hitsWater ? surfaceDistance : bottomDistance) : bottomDistance - surfaceDistance;
@@ -1093,11 +1212,9 @@ void main()
                                  vec3(0.0)), vec3(2.2));
         color = mix(throughWater, reflected, fresnel);
     }
-    if (WATER_LDR) {
-        color *= 1.8;
-        color = pow(max(color / (color + vec3(1.0)), vec3(0.0)), vec3(1.0 / 2.2));
-    }
-    outColor = vec4(color, 1.0);
+    // A visible water surface also occludes submerged light markers.
+    float visibleDistance = hitsWater ? min(surfaceDistance, bottomDistance) : bottomDistance;
+    outColor = FinishScene(color, camera, ray, visibleDistance);
 }
 )";
 
@@ -1114,6 +1231,9 @@ constexpr float kBloomStrength = 0.1f;   // engine default 0.2, halved on reques
 // FXAA in LDR space so HDR values cannot skew the edge weights.
 const char* const kFxaaFragmentSource = R"(#version 300 es
 precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp samplerCube;
 
 uniform sampler2D colorTex;
 
@@ -1302,6 +1422,9 @@ void main() {
 // the LDR fallback image; both are fed through uBloomParams from C++.
 const char* const kBloomThresholdFragmentSource = R"(#version 300 es
 precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp samplerCube;
 
 uniform sampler2D inputTex;
 uniform vec2 uBloomParams;   // x = threshold, y = knee
@@ -1340,6 +1463,9 @@ void main() {
 // effective radius ~2 texels for a wide spread.
 const char* const kBloomDownFragmentSource = R"(#version 300 es
 precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp samplerCube;
 
 uniform sampler2D inputTex;
 
@@ -1361,6 +1487,9 @@ void main() {
 // level's downsampled detail (full weight) + previous up level (coarser).
 const char* const kBloomUpFragmentSource = R"(#version 300 es
 precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp samplerCube;
 
 uniform sampler2D inputTex;   // current level ds image (this output's size)
 uniform sampler2D prevTex;    // previous up level (half size)
@@ -1401,6 +1530,9 @@ void main() {
 // gamma already applied by the lighting pass) and only adds the bloom glow.
 const char* const kTonemapFragmentSource = R"(#version 300 es
 precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp samplerCube;
 
 uniform sampler2D bloomTex;    // composite (linear HDR when hdrMode == 1)
 uniform sampler2D inputTex;    // bloom up-chain final (0.5x image)
@@ -1489,7 +1621,10 @@ void main() {
 // 32x32 per face is plenty and keeps the convolution to a one-shot ~12M
 // texture samples.
 const char* const kIrradianceFragmentSource = R"(#version 300 es
-precision mediump float;
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp samplerCube;
 
 uniform samplerCube skyboxTexture;
 
@@ -1530,6 +1665,9 @@ void main()
 // convolves the skybox with real GGX importance sampling per mip level.
 const char* const kPrefilterFragmentSource = R"(#version 300 es
 precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp samplerCube;
 
 uniform samplerCube skyboxTexture;
 uniform float roughness;
@@ -1593,6 +1731,10 @@ void main()
 )";
 
 const char* const kModelVertexSource = R"(#version 300 es
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp samplerCube;
 layout(std140) uniform SceneUniforms
 {
     mat4 cubeMvp;
@@ -1703,6 +1845,10 @@ void main()
 // model vertex layout and SkinUniforms contract with the G-buffer pass so
 // animated and static meshes cast from the same displayed geometry.
 const char* const kShadowVertexSource = R"(#version 300 es
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp samplerCube;
 layout(std140) uniform SkinUniforms
 {
     mat4 jointMats[256];
@@ -1765,6 +1911,9 @@ void main()
 
 const char* const kShadowFragmentSource = R"(#version 300 es
 precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp samplerCube;
 
 flat in float vDissolve;
 in vec3 vShadowWorldPos;
@@ -1811,17 +1960,21 @@ void main()
 //     SNORM renderable guarantee -- 8-bit octahedral keeps the full signed
 //     direction with no z-reconstruction ambiguity.
 //   attachment 2: material (metallic, roughness, ao) -- engine material layout
-//   attachment 3: emissive sRGB texel.  The engine's attachment 3 is the TAA
+//   attachment 3: per-material linear HDR emission encoded as RGBE.  The engine's attachment 3 is the TAA
 //     motion vector, skipped per current scope; emissive sits here so unlit
 //     emission stays unlit instead of being lit through albedo.
 const char* const kGBufferFragmentSource = R"(#version 300 es
 precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp samplerCube;
 
 uniform sampler2D baseColorTexture;
 uniform sampler2D metallicRoughnessTexture;
 uniform sampler2D normalTexture;
 uniform sampler2D aoTexture;
 uniform sampler2D emissiveTexture;
+uniform vec3 materialEmissiveFactor;
 
 uniform vec3 cameraPosition;
 // x = metallic, y = roughness, z = normal scale, w = water flag.
@@ -2014,10 +2167,16 @@ void main()
     outAlbedo = vec4(albedo, 1.0);
     outNormal = vec4(OctahedronEncode(N) * 0.5 + 0.5, 0.0, 1.0);
     outMaterial = vec4(metallic, roughness, ao, isWater ? 1.0 : 0.0);
-    // Raw emissive texel; the emissive factor multiplies in the lighting pass
-    // so factors above 1 are not clamped by the 8-bit attachment.  The
-    // dissolve ember rides the same channel.
-    outEmissive = vec4(texture(emissiveTexture, materialUv).rgb + emberGlow, 1.0);
+    // Bake each material's linear emission into RGBE, retaining HDR in RGBA8.
+    // A missing emissive texture resolves to white, allowing factor-only glow.
+    vec3 srgbEmission = texture(emissiveTexture, materialUv).rgb;
+    vec3 linearEmission = mix(srgbEmission / 12.92,
+        pow((srgbEmission + vec3(0.055)) / 1.055, vec3(2.4)),
+        step(vec3(0.04045), srgbEmission));
+    vec3 emission = max(linearEmission * materialEmissiveFactor + emberGlow, vec3(0.0));
+    float peak = max(max(emission.r, emission.g), emission.b);
+    float exponent = clamp(ceil(log2(max(peak, 1e-30))), -127.0, 127.0);
+    outEmissive = vec4(emission / exp2(exponent), (exponent + 128.0) / 255.0);
 }
 )";
 
@@ -2202,6 +2361,8 @@ public:
         }
         return true;
     }
+
+    bool WeaponEquipped() const override { return pistol_.equipped; }
 
     rhi::UiScreen CurrentScreen() const override
     {
@@ -2603,6 +2764,9 @@ public:
             return;
         }
         if (uiScreen_ == rhi::UiScreen::Gameplay) {
+            const int weaponButton = gameplay::HitPistolButton(x,y,
+                static_cast<float>(width_),static_cast<float>(height_),pistol_.equipped);
+            if (weaponButton>=0) { pistol_.Button(weaponButton); return; }
             // Gameplay exposes one larger SET button plus the BAG shortcut.
             // Returning to the title is intentionally handled inside the
             // settings sheet.
@@ -2932,7 +3096,7 @@ public:
             DrawMenuRect(fill, fillColor);
         }
         char label[32];
-        std::snprintf(label, sizeof(label), "血量 %.0f/%.0f", playerHealth_, playerMaxHealth_);
+        std::snprintf(label, sizeof(label), "血量 %.0f", playerHealth_);
         DrawTextCentered(label, barCenterX, barCenterY, mn * 0.030f, white);
         glEnable(GL_DEPTH_TEST);
         glDisable(GL_BLEND);
@@ -2984,7 +3148,7 @@ public:
             DrawMenuRect(fill, healthRed);
         }
         char label[32];
-        std::snprintf(label, sizeof(label), "敌人 %.0f/%.0f", enemyHealth_, enemyMaxHealth_);
+        std::snprintf(label, sizeof(label), "敌人 %.0f", enemyHealth_);
         DrawTextCentered(label, centerX, barCenterY - mn * 0.022f, mn * 0.020f, white);
         glEnable(GL_DEPTH_TEST);
         glDisable(GL_BLEND);
@@ -3056,15 +3220,15 @@ public:
             const float emptyColor[4] = {0.96f, 0.98f, 1.0f, 0.30f};
             const float activeColor[4] = {0.20f, 0.48f, 0.66f, 0.94f};
             const float ink[4] = {1.0f, 1.0f, 1.0f, 0.98f};
-            const float secondaryInk[4] = {0.18f, 0.26f, 0.34f, 0.98f};
+            const float secondaryInk[4] = {0.95f, 0.97f, 1.0f, 0.98f};
             const float labelX = w * 0.5f - mn * 0.40f;
             DrawMenuRect(dim, dimColor);
             DrawMenuRect(sheet, sheetColor);
             DrawTextLeftAligned("背包", labelX, h * 0.175f, mn * 0.050f, ink, true);
             DrawTextLeftAligned("装备", w * 0.5f - mn * 0.335f - mn * 0.068f,
-                h * 0.245f, mn * 0.032f, secondaryInk, false);
+                h * 0.245f, mn * 0.032f, secondaryInk, true);
             DrawTextLeftAligned("物品", w * 0.5f - mn * 0.135f,
-                h * 0.245f, mn * 0.032f, secondaryInk, false);
+                h * 0.245f, mn * 0.032f, secondaryInk, true);
             const MenuButtonPos close = MenuButtonLayout(0);
             DrawMenuRect(close, slotColor);
             DrawTextCentered("X", close.cx, close.cy, close.hh * 0.90f, ink, true);
@@ -3083,10 +3247,10 @@ public:
                         mn * 0.024f, ink, true);
                 } else {
                     DrawTextCentered("空", slotPos.cx, slotPos.cy, mn * 0.030f,
-                        secondaryInk, false);
+                        secondaryInk, true);
                 }
                 DrawTextCentered(kSlotNames[slot - 1], slotPos.cx,
-                    slotPos.cy + mn * 0.095f, mn * 0.026f, secondaryInk, false);
+                    slotPos.cy + mn * 0.095f, mn * 0.026f, secondaryInk, true);
             }
 
             for (int cell = 0; cell < inventory::kBagCapacity; ++cell) {
@@ -3104,12 +3268,12 @@ public:
                         snprintf(countLabel, sizeof(countLabel), "x%d",
                             inventory_.bag[cell].count);
                         DrawTextCentered(countLabel, cellPos.cx + mn * 0.024f,
-                            cellPos.cy + mn * 0.036f, mn * 0.016f, secondaryInk, false);
+                            cellPos.cy + mn * 0.036f, mn * 0.016f, secondaryInk, true);
                     }
                 }
             }
             DrawTextCentered("轻点物品装备 轻点装备栏卸下", w * 0.5f, h * 0.82f,
-                mn * 0.026f, secondaryInk, false);
+                mn * 0.026f, secondaryInk, true);
             glEnable(GL_DEPTH_TEST);
             glDisable(GL_BLEND);
             return;
@@ -3191,7 +3355,7 @@ public:
         const float controlColor[4] = {0.72f, 0.82f, 0.90f, 0.78f};
         const float activeColor[4] = {0.20f, 0.48f, 0.66f, 0.94f};
         const float ink[4] = {1.0f, 1.0f, 1.0f, 0.98f};
-        const float secondaryInk[4] = {0.18f, 0.26f, 0.34f, 0.98f};
+        const float secondaryInk[4] = {0.95f, 0.97f, 1.0f, 0.98f};
         const float dividerColor[4] = {0.22f, 0.34f, 0.44f, 0.28f};
         const float leftX = w * 0.5f - mn * 0.35f;
         DrawMenuRect({w * 0.5f, h * 0.5f, w * 0.5f, h * 0.5f, 0.0f},
@@ -3218,7 +3382,7 @@ public:
             const float* valueInk = isToggle && enabled ? white : ink;
             DrawMenuRect(control, valueColor);
             DrawTextLeftAligned(kLabels[index], leftX, control.cy, mn * 0.032f,
-                secondaryInk, false);
+                secondaryInk, true);
 
             char value[16]{};
             if (index == 0) {
@@ -3449,6 +3613,8 @@ public:
             if (!meshes_.empty()) {
                 DrawShadowCharacterBatch(meshes_, characterInstanceCount);
             }
+            if(pistol_.equipped && pistolPoseReady_ && !playerSwimming_ && playerHealth_>0)
+                DrawShadowMeshList(pistolMeshes_,false,pistolMatrix_);
             if (!helmetMeshes_.empty()) {
                 const float helmetAngle = static_cast<float>(SDL_GetTicks() % 600000U)
                     * 0.001f * 0.8f + 0.5f;
@@ -3544,6 +3710,8 @@ public:
                         Mat4Scale(physics::kHelmetCollider.renderScale)));
                 DrawStaticMeshList(helmetMeshes_, helmetTextures_, helmetMaterials_, helmetSpin);
             }
+            if(pistol_.equipped && pistolPoseReady_ && !playerSwimming_ && playerHealth_>0)
+                DrawStaticMeshList(pistolMeshes_,pistolTextures_,pistolMaterials_,pistolMatrix_);
             DrawStaticMeshList(terrainMeshes_, terrainTextures_, terrainMaterials_, Mat4Identity());
             if (!groundMeshes_.empty()) {
                 // Ground: the Base Model cube stretched into a slab.  Top
@@ -3586,8 +3754,7 @@ public:
         glUseProgram(lightingProgram_);
         glUniformMatrix4fv(lightingInvViewProjLocation_, 1, GL_FALSE, invViewProj_.value);
         glUniform3f(lightingCameraPositionLocation_, camPosX_, camPosY_, camPosZ_);
-        glUniform3f(lightingEmissiveFactorLocation_, lightingEmissive_[0], lightingEmissive_[1],
-            lightingEmissive_[2]);
+
         glUniform1f(lightingMaxLodLocation_, skyboxMaxLod_);
         glUniform1i(lightingEnvPrefilteredLocation_, prefilteredTexture_ != 0 ? 1 : 0);
         glUniform1i(lightingUseBrdfLutLocation_, brdfLutTexture_ != 0 ? 1 : 0);
@@ -3638,7 +3805,7 @@ public:
 
         // Separate source/output targets: no attachment feedback. Keep the
         // opaque scene and depth intact until transmission has been resolved.
-        if (renderGameplayScene && sceneDefinition_ != nullptr && sceneDefinition_->water.enabled) {
+        if (renderGameplayScene && sceneDefinition_ != nullptr) {
             const auto& water = sceneDefinition_->water;
             glBindFramebuffer(GL_FRAMEBUFFER, waterFbo_);
             glViewport(0, 0, static_cast<GLsizei>(postWidth_), static_cast<GLsizei>(postHeight_));
@@ -3646,7 +3813,7 @@ public:
             glDepthMask(GL_FALSE);
             glUseProgram(waterProgram_);
             glUniformMatrix4fv(waterInverseLocation_, 1, GL_FALSE, invViewProj_.value);
-            glUniform4f(waterCameraLocation_, camPosX_, camPosY_, camPosZ_, 1.0f);
+            glUniform4f(waterCameraLocation_, camPosX_, camPosY_, camPosZ_, water.enabled ? 1.0f : 2.0f);
             glUniform4f(waterParamsLocation_, water.height, water.size * 0.5f, water.roughness,
                 static_cast<float>(SDL_GetTicks() % 3600000U) * 0.001f);
             glUniform4f(waterColorLocation_, water.color.x, water.color.y, water.color.z, 1.0f);
@@ -3777,6 +3944,19 @@ public:
             const float mnF = static_cast<float>(width_ < height_ ? width_ : height_);
             const float panelF[4] = {0.30f, 0.32f, 0.36f, 0.55f};
             const float whiteF[4] = {1.0f, 1.0f, 1.0f, 0.92f};
+            for(int i=0;i<(pistol_.equipped?3:1);++i) {
+                auto b=gameplay::PistolButton(i,static_cast<float>(width_),static_cast<float>(height_));
+                const float active[4]={.22f,.48f,.68f,.75f};
+                const bool selected=(i==0&&pistol_.equipped)||(i==1&&pistol_.aiming);
+                DrawMenuRect({b.x,b.y,b.r,b.r,b.r},selected?active:panelF);
+                const char* label=i==0?(pistol_.equipped?"收起":"枪械"):(i==1?"瞄准":"射击");
+                DrawTextCentered(label,b.x,b.y,b.r*.55f,whiteF);
+            }
+            if(pistol_.equipped && !playerSwimming_) {
+                const float hit[4]={1.f,.25f,.15f,1.f};
+                DrawTextCentered(pistol_.hitFlash>0?"×":"+",width_*.5f,height_*.5f,
+                    mnF*(pistol_.shotAge<.10f?.050f:.036f),pistol_.hitFlash>0?hit:whiteF);
+            }
             const MenuButtonPos setBtn = MenuButtonLayout(0);
             DrawMenuRect(setBtn, panelF);
             DrawTextCentered("设置", setBtn.cx, setBtn.cy, setBtn.hh * 0.58f,
@@ -3845,6 +4025,14 @@ public:
             }
         }
         helmetMeshes_.clear();
+        for(const auto& mesh:pistolMeshes_) {
+            if(mesh.vao)glDeleteVertexArrays(1,&mesh.vao);
+            if(mesh.vertexBuffer)glDeleteBuffers(1,&mesh.vertexBuffer);
+            if(mesh.indexBuffer)glDeleteBuffers(1,&mesh.indexBuffer);
+        }
+        pistolMeshes_.clear();
+        if(!pistolTextures_.empty())glDeleteTextures(static_cast<GLsizei>(pistolTextures_.size()),pistolTextures_.data());
+        pistolTextures_.clear();pistolMaterials_.clear();
         if (!groundTextures_.empty()) {
             glDeleteTextures(static_cast<GLsizei>(groundTextures_.size()), groundTextures_.data());
             groundTextures_.clear();
@@ -4014,9 +4202,11 @@ public:
     // gives Vulkan the same reset contract below.
     void ResetGameplayScene()
     {
-        playerX_ = 0.0f;
+        pistol_.Reset();
+        pistolPoseReady_ = false;
+        playerX_ = gameplay::kPlayerSpawnX;
         playerY_ = 0.0f;
-        playerZ_ = 0.0f;
+        playerZ_ = gameplay::kPlayerSpawnZ;
         playerYaw_ = 0.0f;
         playerMoving_ = false;
         playerSprinting_ = false;
@@ -4030,15 +4220,16 @@ public:
         playerHitFlashTimer_ = 0.0f;
         playerAttackAcceptedThisFrame_ = false;
 
-        enemyX_ = 1.35f;
+        enemyX_ = gameplay::kEnemySpawnX;
         enemyY_ = 0.0f;
-        enemyZ_ = -0.65f;
+        enemyZ_ = gameplay::kEnemySpawnZ;
         enemyYaw_ = 0.0f;
         enemyHealth_ = enemyMaxHealth_;
         enemyAttackCooldown_ = 0.0f;
         enemyHitInvulnerability_ = 0.0f;
         enemyHitLockTimer_ = 0.0f;
         enemyAlive_ = true;
+        enemyReturningHome_ = false;
         enemyVisible_ = true;
         enemyDeathPlaying_ = false;
         enemyDeathTime_ = 0.0f;
@@ -4175,7 +4366,7 @@ private:
         lightingInvViewProjLocation_ = glGetUniformLocation(lightingProgram_, "invViewProj");
         lightingShadowMatrixLocation_ = glGetUniformLocation(lightingProgram_, "shadowMatrix");
         lightingCameraPositionLocation_ = glGetUniformLocation(lightingProgram_, "cameraPosition");
-        lightingEmissiveFactorLocation_ = glGetUniformLocation(lightingProgram_, "emissiveFactor");
+        modelEmissiveFactorLocation_ = glGetUniformLocation(gbufferProgram_, "materialEmissiveFactor");
         lightingMaxLodLocation_ = glGetUniformLocation(lightingProgram_, "skyboxMaxLod");
         lightingEnvPrefilteredLocation_ = glGetUniformLocation(lightingProgram_, "envPrefiltered");
         lightingUseBrdfLutLocation_ = glGetUniformLocation(lightingProgram_, "useBrdfLut");
@@ -4286,7 +4477,7 @@ private:
 
     // MRT G-buffer, attachment layout following MikanEngine's RenderTarget:
     //   0 albedo (RGBA8), 1 octahedral normal (RGBA8), 2 material (RGBA8),
-    //   3 emissive (RGBA8; engine slot 3 is the TAA motion vector, skipped).
+    //   3 RGBE emission (RGBA8; engine slot 3 is the TAA motion vector, skipped).
     // RGBA8 everywhere because the DGLES bridge gives no float/SNORM renderable
     // guarantee -- same Adreno-compat pragmatism as the engine's format chain.
     void DestroyGBufferTarget()
@@ -4337,8 +4528,6 @@ private:
 
         glGenTextures(1, &gbufferDepthTex_);
         glBindTexture(GL_TEXTURE_2D, gbufferDepthTex_);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, w, h, 0, GL_DEPTH_COMPONENT,
-            GL_UNSIGNED_INT, nullptr);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -4354,24 +4543,46 @@ private:
             gbufferMaterialTex_, 0);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT3, GL_TEXTURE_2D,
             gbufferEmissiveTex_, 0);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D,
-            gbufferDepthTex_, 0);
         // Draw-buffers state is per framebuffer object in ES 3.0, so this sticks
         // to the G-buffer target and never touches the default framebuffer.
         const GLenum drawBuffers[4] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1,
             GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3};
         glDrawBuffers(4, drawBuffers);
 
-        bool complete = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
-        if (!complete) {
-            // DEPTH_COMPONENT24 not renderable on this driver: fall back to a
-            // packed depth+stencil attachment.
+        // The deferred lighting pass reconstructs world positions from this
+        // depth attachment, so its precision sets the far-field quality of
+        // every derived term (shadow UVs, PBR angles).  With the camera's
+        // near=0.1 / far=600 frustum, a 24-bit fixed-point depth already wobbles
+        // by centimetres at mid-range distances, and some mobile drivers
+        // sample D24 textures at reduced internal precision.  Prefer 32-bit
+        // floating point (ES 3.0 core) and only fall back when a driver
+        // refuses to make it renderable.  The chosen format is logged so
+        // device A/B comparisons read it straight from hilog.
+        const char* depthFormatName = "unknown";
+        auto probeDepthFormat = [&](GLenum internalFormat, GLenum format,
+            GLenum type, GLenum attachment, const char* name) {
             glBindTexture(GL_TEXTURE_2D, gbufferDepthTex_);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH24_STENCIL8, w, h, 0, GL_DEPTH_STENCIL,
-                GL_UNSIGNED_INT_24_8, nullptr);
-            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D,
+            glTexImage2D(GL_TEXTURE_2D, 0, static_cast<GLint>(internalFormat), w, h, 0,
+                format, type, nullptr);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, attachment, GL_TEXTURE_2D,
                 gbufferDepthTex_, 0);
-            complete = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+            const bool ok = glCheckFramebufferStatus(GL_FRAMEBUFFER) ==
+                GL_FRAMEBUFFER_COMPLETE;
+            if (ok) {
+                depthFormatName = name;
+            }
+            return ok;
+        };
+        bool complete = probeDepthFormat(GL_DEPTH_COMPONENT32F, GL_DEPTH_COMPONENT,
+            GL_FLOAT, GL_DEPTH_ATTACHMENT, "D32F");
+        if (!complete) {
+            complete = probeDepthFormat(GL_DEPTH_COMPONENT24, GL_DEPTH_COMPONENT,
+                GL_UNSIGNED_INT, GL_DEPTH_ATTACHMENT, "D24");
+        }
+        if (!complete) {
+            // Last resort on this driver: a packed depth+stencil attachment.
+            complete = probeDepthFormat(GL_DEPTH24_STENCIL8, GL_DEPTH_STENCIL,
+                GL_UNSIGNED_INT_24_8, GL_DEPTH_STENCIL_ATTACHMENT, "D24S8");
         }
         if (!complete) {
             SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "SDL3_GLES stage=gbuffer_incomplete");
@@ -4385,7 +4596,8 @@ private:
         gbufferWidth_ = static_cast<uint32_t>(w);
         gbufferHeight_ = static_cast<uint32_t>(h);
         LogGlErrors("create_gbuffer");
-        SDL_Log("SDL3_GLES stage=gbuffer_ready size=%dx%d attachments=4", w, h);
+        SDL_Log("SDL3_GLES stage=gbuffer_ready size=%dx%d attachments=4 depth=%s",
+            w, h, depthFormatName);
         return true;
     }
 
@@ -5020,6 +5232,7 @@ private:
                 skin_.JointCount(), clips_.size(), clipName, clipDuration);
         }
 
+        LoadPistolModel();
         LoadHelmetModel();
         LoadGroundModel();
         if (sceneDefinition_ != nullptr) {
@@ -5071,6 +5284,17 @@ private:
     // Static prop: the DamagedHelmet glTF next to the skinned character.  Goes
     // through the same loader (its static path bakes node transforms and the
     // normalisation into the vertices) but owns independent meshes/textures.
+    void LoadPistolModel()
+    {
+        ohos_model::Model model;std::string error;
+        if(!ohos_model::LoadModelFromRawFile("models/Pistol/pistol.glb",model,error)) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"pistol_load_failed %s",error.c_str());return;
+        }
+        pistolMaterials_=model.materials;
+        LoadStaticTextures(model,pistolTextures_);
+        BuildStaticMeshes(model,pistolMeshes_);
+    }
+
     void LoadHelmetModel()
     {
         ohos_model::Model model;
@@ -5516,6 +5740,20 @@ private:
             }
         }
 
+        if (pistol_.equipped && !playerSwimming_ && playerHealth_>0 && playerHitLockTimer_<=0) {
+            const auto* gunClip=gameplay::PistolClip(clips_,pistol_,camPitch_);
+            if (gunClip) for(const auto& channel:gunClip->channels) {
+                if(channel.nodeIndex>=nodeCount || !gameplay::WeaponUpperBody(animNodes_,channel.nodeIndex))continue;
+                const float time=pistol_.shotAge<.30f?std::min(pistol_.shotAge,gunClip->duration):0.f;
+                SampleChannel(channel,time,sampled);
+                gameplay::BlendPistolAim(clips_,pistol_,camPitch_,channel,
+                    [this](const ohos_model::AnimationChannel& c,float t,float* v){SampleChannel(c,t,v);},sampled);
+                const size_t base=channel.nodeIndex*(channel.path==1?4u:3u);
+                float* target=channel.path==0?&nodeTranslation_[base]:(channel.path==1?&nodeRotation_[base]:&nodeScale_[base]);
+                std::memcpy(target,sampled,sizeof(float)*(channel.path==1?4:3));
+            }
+        }
+
         // 2) locals -> globals.  Parents precede children in animNodes_ order,
         // so a single forward pass suffices (glTF node graphs are trees).
         nodeGlobals_.assign(nodeCount * 16, 0.0f);
@@ -5534,6 +5772,12 @@ private:
                 Mat4Multiply16(&nodeGlobals_[static_cast<std::size_t>(parent) * 16],
                     local.data(), global);
             }
+        }
+
+        pistolPoseReady_=false;
+        for(size_t i=0;i<nodeCount;++i) if(animNodes_[i].name=="DEF-hand.R") {
+            gameplay::PistolMount(playerMatrix_.value,modelNormalise_.value,&nodeGlobals_[i*16],pistolMatrix_.value);
+            pistolPoseReady_=true;break;
         }
 
         // 3) skin matrices in normalised model space.
@@ -5907,15 +6151,14 @@ private:
             glBindTexture(GL_TEXTURE_2D,
                 TextureForImageIn(modelTextures_, material->emissiveImage));
 
+            glUniform3fv(modelEmissiveFactorLocation_, 1, material->emissiveFactor);
             glUniform4fv(materialBaseColorFactorLocation_, 1, material->baseColorFactor);
             const float materialParams[4] = {material->metallicFactor,
                 material->roughnessFactor, material->normalScale, material->worldSpaceUv ? 2.0f : (material->waterSurface ? 1.0f : 0.0f)};
             glUniform4fv(materialParamsLocation_, 1, materialParams);
             glUniform1f(waterTimeLocation_, static_cast<float>(SDL_GetTicks() % 3600000U) * 0.001f);
             glUniform1i(hasNormalMapLocation_, material->normalImage >= 0 ? 1 : 0);
-            lightingEmissive_[0] = material->emissiveFactor[0];
-            lightingEmissive_[1] = material->emissiveFactor[1];
-            lightingEmissive_[2] = material->emissiveFactor[2];
+
 
             glBindVertexArray(mesh.vao);
             SetCharacterInstanceOffset(base);
@@ -5997,6 +6240,7 @@ private:
             glBindTexture(GL_TEXTURE_2D,
                 TextureForImageIn(textures, material->emissiveImage));
 
+            glUniform3fv(modelEmissiveFactorLocation_, 1, material->emissiveFactor);
             glUniform4fv(materialBaseColorFactorLocation_, 1, material->baseColorFactor);
             const float materialParams[4] = {material->metallicFactor,
                 material->roughnessFactor, material->normalScale, material->worldSpaceUv ? 2.0f : (material->waterSurface ? 1.0f : 0.0f)};
@@ -6053,7 +6297,7 @@ private:
         // The attack animation and the damage query share one admission edge.
         // The minimum also prevents a reduced/malformed asset from making the
         // player attack faster than the intended gameplay cadence.
-        if ((pressed & 1) != 0 && playerAttackCooldown_ <= 0.0f &&
+        if (!pistol_.equipped && (pressed & 1) != 0 && playerAttackCooldown_ <= 0.0f &&
             playerHitLockTimer_ <= 0.0f && playerHealth_ > 0.0f) {
             const float clipDuration = ClipDurationOr(attackClip_, 0.87f);
             playerAttackCooldown_ = std::max(kMinimumPlayerAttackCooldown, clipDuration);
@@ -6061,16 +6305,40 @@ private:
             playerAttackAcceptedThisFrame_ = true;
         }
 
+        pistol_.Tick(dt,playerHealth_>0 && !playerSwimming_ && playerHitLockTimer_<=0);
+        bool pistolHit = false;
+        if (pistol_.fired) {
+            const float dx=std::sin(camYaw_)*std::cos(camPitch_);
+            const float dy=-std::sin(camPitch_);
+            const float dz=-std::cos(camYaw_)*std::cos(camPitch_);
+            const float ox=camPanX_+std::cos(camYaw_)*(pistol_.aiming?.55f:0.f)-dx*camDistance_;
+            const float oy=camPanY_+(pistol_.aiming?.25f:0.f)-dy*camDistance_, oz=camPanZ_+std::sin(camYaw_)*(pistol_.aiming?.55f:0.f)-dz*camDistance_;
+            const float target=gameplay::RayEnemy(ox,oy,oz,dx,dy,dz,enemyX_,enemyY_,enemyZ_);
+            const bool physicsReady=physicsWorld_!=nullptr && physicsWorld_->IsReady();
+            const float wall=physicsReady?physicsWorld_->RaycastWorld(ox,oy,oz,dx,dy,dz,60.f):0.f;
+            pistolHit=enemyAlive_ && target<60.f && target<wall;
+            if (pistolHit && pistolPoseReady_) {
+                const float mx=pistolMatrix_.value[12],my=pistolMatrix_.value[13],mz=pistolMatrix_.value[14];
+                const float tx=ox+dx*target-mx,ty=oy+dy*target-my,tz=oz+dz*target-mz;
+                const float length=std::sqrt(tx*tx+ty*ty+tz*tz);
+                if(length>.001f && physicsWorld_->RaycastWorld(mx,my,mz,tx/length,ty/length,tz/length,length)<length-.01f)
+                    pistolHit=false;
+            }
+            pistol_.hit=pistolHit;
+            if(pistolHit)pistol_.hitFlash=.18f;
+            SDL_Log("PISTOL shot hit=%d",pistolHit?1:0);
+        }
         float toEnemyX = enemyX_ - playerX_;
         float toEnemyZ = enemyZ_ - playerZ_;
         float distance = std::sqrt(toEnemyX * toEnemyX + toEnemyZ * toEnemyZ);
-        if (playerAttackAcceptedThisFrame_ && enemyAlive_ && distance <= 1.75f &&
-            enemyHitInvulnerability_ <= 0.0f) {
+        if (((playerAttackAcceptedThisFrame_ && distance <= 1.75f) || pistolHit) && enemyAlive_ &&
+            (pistolHit || enemyHitInvulnerability_ <= 0.0f)) {
             enemyHealth_ = std::max(0.0f, enemyHealth_ - 25.0f);
             AudioManager::GetInstance().PlayAudio("hit", 0.55f);
             enemyHitInvulnerability_ = kHitInvulnerability;
             if (enemyHealth_ <= 0.0f) {
                 enemyAlive_ = false;
+                if (physicsWorld_ != nullptr) physicsWorld_->SetEnemyCollisionEnabled(false);
                 enemyMoving_ = false;
                 enemyAttackRequested_ = false;
                 enemyDeathPlaying_ = true;
@@ -6092,18 +6360,22 @@ private:
             return;
         }
 
-        toEnemyX = playerX_ - enemyX_;
-        toEnemyZ = playerZ_ - enemyZ_;
-        distance = std::sqrt(toEnemyX * toEnemyX + toEnemyZ * toEnemyZ);
+        const gameplay::EnemyGoal goal = gameplay::EnemyActivityGoal(
+            enemyX_, enemyZ_, playerX_, playerZ_, enemyReturningHome_);
+        toEnemyX = goal.dx;
+        toEnemyZ = goal.dz;
+        distance = goal.distance;
         if (distance > 1.0e-4f) {
             enemyYaw_ = std::atan2(toEnemyX, toEnemyZ);
         }
         enemyMoving_ = false;
-        if (distance > 1.45f) {
+        if (distance > (goal.chase ? 1.45f : 0.25f)) {
             const float invDistance = 1.0f / std::max(distance, 1.0e-4f);
             constexpr float kEnemySpeed = 0.55f;
             enemyDesiredVelocityX_ = toEnemyX * invDistance * kEnemySpeed;
             enemyDesiredVelocityZ_ = toEnemyZ * invDistance * kEnemySpeed;
+            gameplay::LimitEnemyStep(enemyX_, enemyZ_, dt,
+                enemyDesiredVelocityX_, enemyDesiredVelocityZ_);
             if (physicsWorld_ == nullptr || !physicsWorld_->IsReady()) {
                 enemyX_ += enemyDesiredVelocityX_ * dt;
                 enemyZ_ += enemyDesiredVelocityZ_ * dt;
@@ -6112,7 +6384,7 @@ private:
                 enemyZ_ = std::max(-kGroundBound, std::min(kGroundBound, enemyZ_));
             }
             enemyMoving_ = true;
-        } else if (enemyAttackCooldown_ <= 0.0f) {
+        } else if (goal.chase && enemyAttackCooldown_ <= 0.0f) {
             constexpr float kEnemyAttackCooldown = 1.15f;
             enemyAttackCooldown_ = kEnemyAttackCooldown;
             enemyAttackRequested_ = true;
@@ -6158,6 +6430,7 @@ private:
             nearPlane = sceneDefinition_->mainCamera.nearPlane;
             farPlane = sceneDefinition_->mainCamera.farPlane;
         }
+        if(pistol_.equipped && pistol_.aiming)fieldOfViewDegrees=45.0f;
         const Mat4 projection = Mat4PerspectiveGl(
             fieldOfViewDegrees * 3.14159265358979323846f / 180.0f,
             aspect, nearPlane, farPlane);
@@ -6307,6 +6580,10 @@ private:
         // machine, so both render paths observe the same attack edge.
         if (gameplayInput) {
             UpdateEnemyAi(dt, cameraInput_.actionButtonPressedMask);
+            if (uiScreen_ == rhi::UiScreen::Gameplay) {
+                playerHealth_ = gameplay::HealNearLight(playerHealth_, playerMaxHealth_,
+                    playerX_, playerY_, playerZ_, dt);
+            }
             if (uiScreen_ == rhi::UiScreen::Gameplay && physicsReady) {
                 physicsWorld_->MoveEnemy(enemyDesiredVelocityX_, enemyDesiredVelocityZ_, dt);
                 const physics::CharacterState state = physicsWorld_->GetEnemyState();
@@ -6320,6 +6597,8 @@ private:
             }
         }
 
+        if (pistol_.equipped && pistol_.aiming && !playerSwimming_) playerYaw_ = std::atan2(std::sin(camYaw_),-std::cos(camYaw_));
+
         // Camera soft-follows the player in all axes so jumps move the orbit
         // target too (exponential, frame-rate independent).
         if (gameplayInput) {
@@ -6329,15 +6608,19 @@ private:
             camPanZ_ += (playerZ_ - camPanZ_) * followLerp;
         }
 
+        const float aimOffset=(pistol_.equipped && pistol_.aiming)?.55f:0.f;
+        const float focusX=camPanX_+camToWorld.value[0]*aimOffset;
+        const float focusY=camPanY_+((pistol_.equipped && pistol_.aiming)?.25f:0.f);
+        const float focusZ=camPanZ_+camToWorld.value[2]*aimOffset;
         const Mat4 view = Mat4Multiply(Mat4Translation(0.0f, 0.0f, -camDistance_),
             Mat4Multiply(Mat4RotationX(camPitch_),
                 Mat4Multiply(Mat4RotationY(camYaw_),
-                    Mat4Translation(-camPanX_, -camPanY_, -camPanZ_))));
+                    Mat4Translation(-focusX, -focusY, -focusZ))));
         // World-space camera position = pan + camToWorld * (0, 0, distance);
         // column-major columns 2 and 3 are the z basis and translation.
-        camPosX_ = camPanX_ + camToWorld.value[8] * camDistance_ + camToWorld.value[12];
-        camPosY_ = camPanY_ + camToWorld.value[9] * camDistance_ + camToWorld.value[13];
-        camPosZ_ = camPanZ_ + camToWorld.value[10] * camDistance_ + camToWorld.value[14];
+        camPosX_ = focusX + camToWorld.value[8] * camDistance_ + camToWorld.value[12];
+        camPosY_ = focusY + camToWorld.value[9] * camDistance_ + camToWorld.value[13];
+        camPosZ_ = focusZ + camToWorld.value[10] * camDistance_ + camToWorld.value[14];
         // Player world transform: stand on the ground line at the moved
         // position, facing the last movement direction.
         const Mat4 modelFacing = Mat4Multiply(
@@ -6345,7 +6628,13 @@ private:
         playerMatrix_ = modelFacing;
         enemyMatrix_ = Mat4Multiply(Mat4Translation(enemyX_, enemyY_, enemyZ_),
             Mat4RotationY(enemyYaw_));
-        shadowMatrix_ = Mat4Multiply(Mat4ShadowProjection(), Mat4ShadowView());
+        // Shadow frustum follows the player, snapped to the light-space texel
+        // grid so walking does not make shadow edges shimmer.  The -0.2 y bias
+        // is inherited from the original fixed window.
+        const Mat4 shadowCenter = SnapShadowCenter(playerX_, playerY_ - 0.2f, playerZ_);
+        shadowMatrix_ = Mat4Multiply(Mat4ShadowProjection(),
+            Mat4ShadowView(shadowCenter.value[12], shadowCenter.value[13],
+                shadowCenter.value[14]));
 
         SceneUniforms uniforms{};
         uniforms.skyMvp = projection;
@@ -6452,8 +6741,7 @@ private:
     Mat4 playerMatrix_;
     Mat4 enemyMatrix_;
     Mat4 shadowMatrix_;
-    // Emissive factor captured from the geometry pass materials.
-    float lightingEmissive_[3] = {1.0f, 1.0f, 1.0f};
+    // Linear HDR emission is stored per pixel as RGBE in attachment 3.
     // Vertex array for the lighting full-screen triangle.
     GLuint fullscreenVao_ = 0;
     GLint lightingAlbedoSampler_ = -1;
@@ -6469,7 +6757,7 @@ private:
     GLint lightingInvViewProjLocation_ = -1;
     GLint lightingShadowMatrixLocation_ = -1;
     GLint lightingCameraPositionLocation_ = -1;
-    GLint lightingEmissiveFactorLocation_ = -1;
+    GLint modelEmissiveFactorLocation_ = -1;
     GLint lightingMaxLodLocation_ = -1;
     GLint lightingEnvPrefilteredLocation_ = -1;
     GLint lightingUseBrdfLutLocation_ = -1;
@@ -6584,9 +6872,12 @@ private:
     float camPanZ_ = 0.0f;
     // Third-person player state: ground position, facing yaw and the move
     // flag the animation state machine reads (see UpdateSceneUniforms).
-    float playerX_ = 0.0f;
+    gameplay::PistolState pistol_;
+    Mat4 pistolMatrix_ = Mat4Identity();
+    bool pistolPoseReady_ = false;
+    float playerX_ = gameplay::kPlayerSpawnX;
     float playerY_ = 0.0f;
-    float playerZ_ = 0.0f;
+    float playerZ_ = gameplay::kPlayerSpawnZ;
     float playerYaw_ = 0.0f;
     bool playerMoving_ = false;
     float playerMaxHealth_ = 100.0f;
@@ -6598,9 +6889,9 @@ private:
     float playerHitLockTimer_ = 0.0f;
     float playerHitFlashTimer_ = 0.0f;
     bool playerAttackAcceptedThisFrame_ = false;
-    float enemyX_ = 1.35f;
+    float enemyX_ = gameplay::kEnemySpawnX;
     float enemyY_ = 0.0f;
-    float enemyZ_ = -0.65f;
+    float enemyZ_ = gameplay::kEnemySpawnZ;
     float enemyYaw_ = 0.0f;
     float enemyMaxHealth_ = 100.0f;
     float enemyHealth_ = 100.0f;
@@ -6609,6 +6900,7 @@ private:
     // Mikan PuppetEnemyScript hit-stun: AI cannot override the Hit one-shot.
     float enemyHitLockTimer_ = 0.0f;
     bool enemyAlive_ = true;
+    bool enemyReturningHome_ = false;
     bool enemyVisible_ = true;
     bool enemyDeathPlaying_ = false;
     float enemyDeathTime_ = 0.0f;
@@ -6700,6 +6992,9 @@ private:
     std::vector<GLuint> modelTextures_;
     std::vector<ohos_model::Material> materials_;
     // Static helmet prop (LoadHelmetModel).
+    std::vector<GlesMesh> pistolMeshes_;
+    std::vector<GLuint> pistolTextures_;
+    std::vector<ohos_model::Material> pistolMaterials_;
     std::vector<GlesMesh> helmetMeshes_;
     std::vector<GLuint> helmetTextures_;
     std::vector<ohos_model::Material> helmetMaterials_;

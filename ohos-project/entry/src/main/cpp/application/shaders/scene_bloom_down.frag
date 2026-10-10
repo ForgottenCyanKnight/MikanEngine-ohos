@@ -1,4 +1,6 @@
 #version 450
+precision highp float;
+precision highp int;
 
 layout(set = 2, binding = 0) uniform sampler2D inputTexture;
 

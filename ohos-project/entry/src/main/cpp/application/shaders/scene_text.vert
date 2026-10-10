@@ -1,4 +1,6 @@
 #version 450
+precision highp float;
+precision highp int;
 
 layout(push_constant) uniform UiPushConstants
 {

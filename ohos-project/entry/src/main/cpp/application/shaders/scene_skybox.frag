@@ -1,4 +1,6 @@
 #version 450
+precision highp float;
+precision highp int;
 
 layout(set = 0, binding = 2) uniform samplerCube skyboxTexture;
 

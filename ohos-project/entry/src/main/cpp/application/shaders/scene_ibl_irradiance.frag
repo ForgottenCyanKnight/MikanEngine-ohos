@@ -1,4 +1,6 @@
 #version 450
+precision highp float;
+precision highp int;
 
 layout(set = 0, binding = 0) uniform samplerCube skyboxTexture;
 layout(location = 0) in vec3 vDirection;

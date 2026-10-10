@@ -1,4 +1,6 @@
 #version 450
+precision highp float;
+precision highp int;
 
 // The push range remains part of the shared pipeline layout for UI/shadow
 // compatibility. Model transforms now come from the Mikan-style instance

@@ -1,4 +1,6 @@
 #version 450
+precision highp float;
+precision highp int;
 
 // Depth-only scene shadow pass.  It uses the same skin UBO and object push
 // constants as the forward model pass so animated and static meshes cast from

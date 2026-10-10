@@ -1,4 +1,6 @@
 #version 450
+precision highp float;
+precision highp int;
 
 layout(set = 1, binding = 0) uniform sampler2D textAtlas;
 

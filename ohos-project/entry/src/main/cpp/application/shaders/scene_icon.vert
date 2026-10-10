@@ -1,4 +1,6 @@
 #version 450
+precision highp float;
+precision highp int;
 
 // Window-pixel icon geometry.  Keep the same top-left coordinate convention
 // as scene_overlay.vert so the GLES and Vulkan touch layouts are identical.

@@ -1,4 +1,6 @@
 #version 450
+precision highp float;
+precision highp int;
 
 // Window-pixel overlay geometry.  The positive-height Vulkan viewport used by
 // the OHOS swapchain has the same top-left UI convention as the GLES backend,
