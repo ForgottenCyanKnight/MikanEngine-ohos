@@ -164,6 +164,8 @@ int main()
     } else {
         SDL_Log("SDL3_AUDIO stage=hit_clip_ready path=audio/hit.wav");
     }
+    if (!audioManager.LoadAudio("pistol", "audio/pistol.wav"))
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,"SDL3_AUDIO stage=pistol_clip_unavailable");
     const bool lifecycleWatchInstalled = SDL_AddEventWatch(ApplicationLifecycleEventWatch, nullptr);
     if (!lifecycleWatchInstalled) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
@@ -231,6 +233,7 @@ int main()
         // a tap misrouted across a screen switch lands on a same-family
         // layout and costs nothing.
         touch.SetScreen(session.renderer->CurrentScreen());
+        touch.SetWeaponAvailable(session.renderer->WeaponAvailable());
         touch.SetWeaponEquipped(session.renderer->WeaponEquipped());
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {

@@ -85,6 +85,7 @@ SDL_Window* CreateWindow(Backend backend, const char* title, int width, int heig
 // Deltas are consumed exactly once by the renderer that implements it; the
 // Vulkan backend keeps its fixed turntable camera and ignores these for now.
 struct CameraInput {
+    float menuScrollDelta = 0.0f;
     float lookDeltaX = 0.0f;  // accumulated drag pixels since last frame
     float lookDeltaY = 0.0f;
     float zoomDelta = 0.0f;   // pinch spread change (positive = fingers apart)
@@ -132,6 +133,7 @@ public:
 
     // Stable identifier, used in logs to tell which backend actually came up.
     virtual const char* Name() const = 0;
+    virtual bool WeaponAvailable() const { return false; }
     virtual bool WeaponEquipped() const { return false; }
 
     // Called once at start-up and then every frame with the current drawable

@@ -218,12 +218,19 @@ void TouchController::HandleEvent(const SDL_Event& event, float width, float hei
                     tapFinger_ = finger;
                     tapDownX_ = x;
                     tapDownY_ = y;
+                    menuLastY_=y;menuDragging_=false;
                 }
+            } else if(event.type==SDL_EVENT_FINGER_MOTION && tapDown_ && finger==tapFinger_ &&
+                (screen_==rhi::UiScreen::Settings || screen_==rhi::UiScreen::GameplaySettings)) {
+                if(std::abs(y-tapDownY_)>height_*.012f || menuDragging_){
+                    menuDragging_=true;menuScrollDelta_+=menuLastY_-y;
+                }
+                menuLastY_=y;
             } else if (isUp) {
                 if (tapDown_ && finger == tapFinger_) {
                     tapDown_ = false;
                     tapFinger_ = static_cast<SDL_FingerID>(-1);
-                    tapPending_ = true;
+                    tapPending_ = !menuDragging_ && event.type!=SDL_EVENT_FINGER_CANCELED;
                     tapX_ = tapDownX_;
                     tapY_ = tapDownY_;
                 }
@@ -233,7 +240,7 @@ void TouchController::HandleEvent(const SDL_Event& event, float width, float hei
 
         if (event.type == SDL_EVENT_FINGER_DOWN) {
             if (menuBtnFinger_ == static_cast<SDL_FingerID>(-1) &&
-                gameplay::HitPistolButton(x,y,width_,height_,weaponEquipped_) >= 0) {
+                (gameplay::HitPistolButton(x,y,width_,height_,weaponEquipped_,weaponAvailable_) >= 0 || gameplay::HitPotionButton(x,y,width_,height_))) {
                 menuBtnFinger_=finger;
                 return;
             }
@@ -411,11 +418,14 @@ void TouchController::HandleEvent(const SDL_Event& event, float width, float hei
     // Mouse fallback for pointer-driven testing; dropped as soon as a real
     // finger has been seen (SDL synthesises mouse events from touch, and
     // counting both would double every drag).
+    if(event.type==SDL_EVENT_MOUSE_WHEEL && (screen_==rhi::UiScreen::Settings || screen_==rhi::UiScreen::GameplaySettings)) {
+        menuScrollDelta_-=event.wheel.y*height_*.08f;return;
+    }
     if (sawFinger_) {
         return;
     }
     if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT) {
-        if (gameplay::HitPistolButton(event.button.x,event.button.y,width_,height_,weaponEquipped_)>=0) {
+        if ((gameplay::HitPistolButton(event.button.x,event.button.y,width_,height_,weaponEquipped_,weaponAvailable_)>=0 || gameplay::HitPotionButton(event.button.x,event.button.y,width_,height_))) {
             tapPending_=true;tapX_=event.button.x;tapY_=event.button.y;return;
         }
         mouseLooking_ = true;
@@ -439,6 +449,7 @@ rhi::CameraInput TouchController::FrameInput()
     // anyway) and the HUD overlay is off; forward at most one queued tap.
     if (screen_ != rhi::UiScreen::Gameplay) {
         input.showOverlay = false;
+        input.menuScrollDelta=menuScrollDelta_;menuScrollDelta_=0;
         input.menuTapEdge = tapPending_;
         input.menuTapX = tapX_;
         input.menuTapY = tapY_;

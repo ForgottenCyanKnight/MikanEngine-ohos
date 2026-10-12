@@ -7,37 +7,45 @@
 namespace gameplay {
 struct WeaponButton { float x,y,r; };
 inline WeaponButton PistolButton(int index,float w,float h) {
-    return {w*0.79f,h*(0.23f+0.16f*index),std::min(w,h)*0.052f};
+    return {w*0.79f,h*(0.23f+0.13f*index),std::min(w,h)*0.052f};
 }
-inline int HitPistolButton(float x,float y,float w,float h,bool equipped) {
-    for(int i=0;i<(equipped?3:1);++i) {
+inline int HitPistolButton(float x,float y,float w,float h,bool equipped,bool available=true) {
+    if(!available)return -1;
+    for(int i=0;i<(equipped?4:1);++i) {
         auto b=PistolButton(i,w,h);float dx=x-b.x,dy=y-b.y;
         if(dx*dx+dy*dy<=b.r*b.r)return i;
     }
     return -1;
 }
+inline WeaponButton PotionButton(float w,float h){float mn=std::min(w,h);return {w*.5f-mn*.25f,h-mn*.06f,mn*.040f};}
+inline bool HitPotionButton(float x,float y,float w,float h){auto b=PotionButton(w,h);return (x-b.x)*(x-b.x)+(y-b.y)*(y-b.y)<=b.r*b.r;}
 struct PistolState {
-    bool equipped=false, aiming=false, pendingFire=false, fired=false, hit=false;
-    float cooldown=0, shotAge=10, hitFlash=0;
+    static constexpr int capacity=12;
+    bool equipped=false,aiming=false,pendingFire=false,fired=false,hit=false,reloading=false,pendingReload=false;
+    int ammo=capacity;
+    float cooldown=0,shotAge=10,hitFlash=0,reloadAge=0,reloadDuration=1.6666667f;
     void Reset(){*this=PistolState{};}
-    void Button(int i) {
-        if(i==0){equipped=!equipped;aiming=false;pendingFire=false;shotAge=10;}
-        else if(equipped && i==1)aiming=!aiming;
+    void Holster(){equipped=aiming=pendingFire=pendingReload=reloading=false;shotAge=10;reloadAge=0;}
+    void Button(int i){
+        if(i==0){if(equipped)Holster();else equipped=true;}
+        else if(equipped && i==1 && !reloading)aiming=!aiming;
         else if(equipped && i==2)pendingFire=true;
+        else if(equipped && i==3)pendingReload=true;
     }
-    void Tick(float dt,bool allowed) {
-        cooldown=std::max(0.f,cooldown-dt);shotAge+=dt;
-        hitFlash=std::max(0.f,hitFlash-dt);fired=false;hit=false;
-        if(pendingFire && equipped && allowed && cooldown<=0){
-            fired=true;cooldown=.35f;shotAge=0;
-        }
+    void Tick(float dt,bool allowed){
+        cooldown=std::max(0.f,cooldown-dt);shotAge+=dt;hitFlash=std::max(0.f,hitFlash-dt);fired=hit=false;
+        if(!equipped){pendingFire=pendingReload=false;return;}
+        if(!reloading && allowed && ammo<capacity && (pendingReload || (ammo==0 && shotAge>=.30f))){reloading=true;reloadAge=0;shotAge=10;}
+        pendingReload=false;
+        if(reloading){if(allowed)reloadAge+=dt;if(reloadAge>=reloadDuration){ammo=capacity;reloading=false;reloadAge=0;}pendingFire=false;return;}
+        if(pendingFire && allowed && cooldown<=0 && ammo>0){--ammo;fired=true;cooldown=.35f;shotAge=0;}
         pendingFire=false;
     }
 };
 inline const ohos_model::AnimationClip* PistolClip(
     const std::vector<ohos_model::AnimationClip>& clips,const PistolState& gun,float pitch) {
-    const char* name=gun.shotAge<.30f?"Pistol_Shoot":
-        (!gun.aiming?"Pistol_Idle_Loop":"Pistol_Aim_Neutral");
+    const char* name=gun.reloading?"Pistol_Reload":(gun.shotAge<.30f?"Pistol_Shoot":
+        (!gun.aiming?"Pistol_Idle_Loop":"Pistol_Aim_Neutral"));
     for(auto& clip:clips)if(clip.name==name)return &clip;
     return nullptr;
 }
@@ -47,7 +55,7 @@ template<class Sampler>
 inline void BlendPistolAim(const std::vector<ohos_model::AnimationClip>& clips,
     const PistolState& gun,float pitch,const ohos_model::AnimationChannel& channel,
     Sampler sample,float* value) {
-    if(!gun.aiming || gun.shotAge<.30f)return;
+    if(!gun.aiming || gun.reloading || gun.shotAge<.30f)return;
     float weight=std::min(1.f,std::abs(pitch)/1.0f);
     const char* name=pitch>=0?"Pistol_Aim_Down":"Pistol_Aim_Up";
     for(const auto& clip:clips)if(clip.name==name){

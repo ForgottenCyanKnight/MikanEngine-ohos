@@ -9,12 +9,14 @@ layout(push_constant) uniform WaterPush {
     vec4 camera;
     vec4 params; // height, half size, roughness, time
     vec4 color;
+    vec4 muzzle; // world origin and seconds since shot
 } water;
 layout(location = 0) in vec2 vTexCoord;
 layout(location = 0) out vec4 outColor;
 #define WATER_INV water.invViewProj
 #define WATER_CAMERA water.camera
 #define WATER_PARAMS water.params
+#define WATER_MUZZLE water.muzzle
 #define WATER_COLOR water.color
 #define WATER_UV vTexCoord
 #define DEPTH_NDC depth
@@ -105,12 +107,31 @@ vec3 SceneLightBillboards(vec3 camera, vec3 ray, float sceneDistance)
         LightBillboard(camera, ray, sceneDistance,
         vec3(0.0,-0.64,0.0), vec3(0.10,0.25,1.0)*8.0) +
         LightBillboard(camera, ray, sceneDistance,
-        vec3(-5.0,-0.64,5.0), vec3(0.10,1.0,0.18)*8.0);
+        vec3(6.0,-0.64,-6.0), vec3(0.10,1.0,0.18)*8.0);
+}
+
+// Fixed small particle burst, evaluated only during the shot lifetime.
+vec3 GunfireParticles(vec3 camera,vec3 ray,float sceneDistance) {
+    float age=WATER_MUZZLE.w;
+    if(age<0.0 || age>0.18)return vec3(0.0);
+    vec3 result=vec3(0.0);
+    for(int i=0;i<7;i++){
+        float seed=float(i);
+        vec3 velocity=vec3(sin(seed*13.1),cos(seed*7.7)*0.6+0.6,sin(seed*5.3+1.7));
+        vec3 center=WATER_MUZZLE.xyz+velocity*age*2.2;
+        float radius=i==0?mix(0.055,0.014,clamp(age/0.055,0.0,1.0)):0.009;
+        if(i==0 && age>0.055)continue;
+        vec3 offset=center-camera;float t=dot(offset,ray);
+        if(t<=0.0 || t>=sceneDistance-0.002)continue;
+        float d=length(camera+ray*t-center);
+        if(d<radius)result+=vec3(1.0,0.48,0.10)*18.0*(1.0-age/0.18);
+    }
+    return result;
 }
 
 vec4 FinishScene(vec3 color, vec3 camera, vec3 ray, float sceneDistance)
 {
-    vec3 emitter = SceneLightBillboards(camera, ray, sceneDistance);
+    vec3 emitter = SceneLightBillboards(camera, ray, sceneDistance) + GunfireParticles(camera,ray,sceneDistance);
     if (max(max(emitter.r, emitter.g), emitter.b) > 0.0) color = emitter;
     if (WATER_LDR) {
         color *= 1.8;

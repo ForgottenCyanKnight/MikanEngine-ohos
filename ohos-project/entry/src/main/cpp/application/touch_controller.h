@@ -41,6 +41,7 @@ public:
     // happens to run Relayout, so at launch it draws away from its home
     // position with a stale radius.
     void SetViewport(float width, float height);
+    void SetWeaponAvailable(bool available){weaponAvailable_=available;}
     void SetWeaponEquipped(bool equipped) { weaponEquipped_ = equipped; }
 
     // Sets the screen the renderer currently shows.  Outside gameplay this
@@ -125,6 +126,7 @@ private:
     SDL_FingerID actionBtnFinger_[rhi::CameraInput::kActionButtonCount] = {};
     int actionBtnPressedMask_ = 0;
 
+    bool weaponAvailable_=false;
     bool weaponEquipped_ = false;
     bool sawFinger_ = false;  // disables the mouse fallback forever once set
     bool mouseLooking_ = false;
@@ -137,6 +139,8 @@ private:
     // and lifts while this layer is in menu mode; the down position is
     // reported (stable hit-test target, immune to lift-time drift).
     rhi::UiScreen screen_ = rhi::UiScreen::Gameplay;
+    float menuScrollDelta_=0,menuLastY_=0;
+    bool menuDragging_=false;
     bool tapDown_ = false;
     SDL_FingerID tapFinger_ = static_cast<SDL_FingerID>(-1);
     float tapDownX_ = 0.0f;

@@ -102,7 +102,7 @@ vec4 ShadeGlass(vec2 pixel, vec4 shape, float radius, vec4 tint, vec2 resolution
     vec3 blurred = mix(spectral,frost,0.48*(1.0-edge));
     float lens = edge;
     float saturation = max(tint.r,max(tint.g,tint.b))-min(tint.r,min(tint.g,tint.b));
-    vec3 color = mix(blurred, tint.rgb, 0.055 + 0.16*saturation);
+    vec3 color = mix(blurred, tint.rgb, 0.24 + 0.28*saturation);
     color = mix(color, vec3(0.86,0.92,1.0), 0.035);
     // White specular lip stays legible against both sea and bright sky.
     // Pixel widths use derivative AA, so the fine edge does not shimmer.
@@ -112,7 +112,7 @@ vec4 ShadeGlass(vec2 pixel, vec4 shape, float radius, vec4 tint, vec2 resolution
     float counterLight = max(dot(direction, normalize(vec2(0.70,0.71))),0.0);
     float shoulder = exp(-abs(distance + 3.8) / 3.2);
     float innerRim = exp(-abs(distance + bezel*0.25)/2.2);
-    float specular = rim * (0.46 + 0.40*light + 0.18*counterLight);
+    float specular = rim * (0.60 + 0.48*light + 0.22*counterLight);
     color = mix(color, vec3(1.0), clamp(specular, 0.0, 0.94));
     color += vec3(0.80,0.89,1.0) * shoulder * (0.06 + 0.16*light);
     color += vec3(0.36,0.48,0.64) * innerRim * counterLight * 0.32;
@@ -120,4 +120,4 @@ vec4 ShadeGlass(vec2 pixel, vec4 shape, float radius, vec4 tint, vec2 resolution
     float coverage = 1.0 - smoothstep(-max(fwidth(distance),0.6),0.0,distance);
     return vec4(clamp(color,0.0,1.0), tint.a * coverage);
 }
-void main() { outColor = ShadeGlass(vPixel, vShape, vRadius, vColor, vScreen.xy); }
+void main() { outColor = vScreen.z < 0.0 ? vColor : ShadeGlass(vPixel, vShape, vRadius, vColor, vScreen.xy); }

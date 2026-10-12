@@ -282,7 +282,7 @@ void main()
             N, V, NoV, albedo, metallic, roughness, F0, vWorldPosition) +
         PointLight(vec3(0.0, -0.64, 0.0), vec3(0.10, 0.25, 1.0) * 8.0,
             N, V, NoV, albedo, metallic, roughness, F0, vWorldPosition) +
-        PointLight(vec3(-5.0, -0.64, 5.0), vec3(0.10, 1.0, 0.18) * 8.0,
+        PointLight(vec3(6.0, -0.64, -6.0), vec3(0.10, 1.0, 0.18) * 8.0,
             N, V, NoV, albedo, metallic, roughness, F0, vWorldPosition);
 
     // Match GLES' full IBL contract: irradiance is a cosine-convolved cube,

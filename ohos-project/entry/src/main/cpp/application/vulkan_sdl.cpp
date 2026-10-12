@@ -1,3 +1,6 @@
+#include "inventory_ui.h"
+#include "settings_ui.h"
+#include "minimap_hud.h"
 #define LOG_DOMAIN 0xD001530
 #define LOG_TAG "NativeVulkan"
 
@@ -356,13 +359,13 @@ Mat4 Mat4ShadowView(float centerX, float centerY, float centerZ)
 // Light-space texel snapping for the player-following shadow frustum.  Must
 // stay in lockstep with Mat4ShadowView's basis; 2048 and 12 m mirror
 // kShadowMapSize and Mat4ShadowProjection's half extent.
-Mat4 SnapShadowCenter(float playerX, float playerY, float playerZ)
+Mat4 SnapShadowCenter(float playerX, float playerY, float playerZ,float mapSize)
 {
     constexpr float kLightX = 0.45f;
     constexpr float kLightY = 1.0f;
     constexpr float kLightZ = 0.55f;
     constexpr float kShadowHalfExtent = 12.0f;
-    constexpr float kShadowMapSize = 2048.0f;
+    const float kShadowMapSize = mapSize;
     const float lightLength = std::sqrt(kLightX * kLightX + kLightY * kLightY + kLightZ * kLightZ);
     const float lx = kLightX / lightLength;
     const float ly = kLightY / lightLength;
@@ -603,8 +606,9 @@ struct WaterPushConstants {
     float camera[4];
     float params[4];
     float color[4];
+    float muzzle[4];
 };
-static_assert(sizeof(WaterPushConstants) == 112, "Water push layout must match GLSL");
+static_assert(sizeof(WaterPushConstants) == 128, "Water push layout must match GLSL");
 
 struct PostProcessPushConstants {
     float exposure;
@@ -718,7 +722,7 @@ struct ModelGpuAsset {
 };
 
 constexpr std::size_t kMaxJoints = 256;
-constexpr uint32_t kShadowMapSize = 2048;
+
 constexpr int kBloomDsLevels = 6;
 constexpr int kBloomUpLevels = 5;
 constexpr bool kEnableVulkanSkyboxMipmaps = true;
@@ -909,6 +913,7 @@ public:
         return true;
     }
 
+    bool WeaponAvailable() const override {return inventory_.HasPistol();}
     bool WeaponEquipped() const override { return pistol_.equipped; }
 
     rhi::UiScreen CurrentScreen() const override
@@ -4164,6 +4169,7 @@ private:
                     physics::kGroundCollider.halfExtentY, model, error)) {
                 SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "SDL3_TERRAIN stage=load_failed error=%s", error.c_str());
             } else {
+                minimapTerrain_.Build(model);
                 // Sea is composited after opaque rendering; preserve bottom color/depth.
                 if (!model.meshes.empty())
                     (void)UploadModelAsset("terrain", model, terrainAsset_, false);
@@ -4698,7 +4704,7 @@ private:
                 static_cast<int>(depthFormat_));
             return false;
         }
-        if (!CreateImage(kShadowMapSize, kShadowMapSize, 1, depthFormat_,
+        if (!CreateImage(shadowMapSize_, shadowMapSize_, 1, depthFormat_,
             VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
             0, shadowMap_.image, shadowMap_.memory)) {
             return false;
@@ -4717,8 +4723,8 @@ private:
         framebufferInfo.renderPass = shadowRenderPass_;
         framebufferInfo.attachmentCount = 1;
         framebufferInfo.pAttachments = &attachment;
-        framebufferInfo.width = kShadowMapSize;
-        framebufferInfo.height = kShadowMapSize;
+        framebufferInfo.width = shadowMapSize_;
+        framebufferInfo.height = shadowMapSize_;
         framebufferInfo.layers = 1;
         const VkResult result = vkCreateFramebuffer(device_, &framebufferInfo, nullptr,
             &shadowFramebuffer_);
@@ -4728,7 +4734,7 @@ private:
             shadowFramebuffer_ = VK_NULL_HANDLE;
             return false;
         }
-        SDL_Log("SDL3_VULKAN stage=shadow_target_ready size=%ux%u", kShadowMapSize, kShadowMapSize);
+        SDL_Log("SDL3_VULKAN stage=shadow_target_ready size=%ux%u", shadowMapSize_, shadowMapSize_);
         return true;
     }
 
@@ -4923,6 +4929,9 @@ private:
         const float w = UiWidth();
         const float h = UiHeight();
         const float mn = w < h ? w : h;
+        if(uiScreen_==rhi::UiScreen::Settings || uiScreen_==rhi::UiScreen::GameplaySettings){
+            auto b=settings_ui::Layout(index,w,h,settingsScroll_);return {b.cx,b.cy,b.hw,b.hh,b.r};
+        }
         if (uiScreen_ == rhi::UiScreen::GameplayRetry) {
             if (index == 0) {
                 return {w * 0.5f, h * 0.62f, mn * 0.22f, mn * 0.072f, mn * 0.072f};
@@ -4937,29 +4946,8 @@ private:
             }
             return {w * 0.93f, h * 0.42f, mn * 0.055f, mn * 0.055f, mn * 0.055f};
         }
-        if (uiScreen_ == rhi::UiScreen::GameplayInventory) {
-            // 0 = close, 1..3 = equipment slots (weapon/helmet/armor),
-            // 10+i = bag grid cell i (5 columns x 3 rows).  Same geometry as
-            // the GLES backend so both stay visually identical.
-            if (index == 0) {
-                return {w * 0.5f + mn * 0.395f, h * 0.17f,
-                    mn * 0.026f, mn * 0.026f, mn * 0.018f};
-            }
-            if (index >= 1 && index <= 3) {
-                static const float kEquipY[3] = {0.33f, 0.50f, 0.67f};
-                return {w * 0.5f - mn * 0.335f, h * kEquipY[index - 1],
-                    mn * 0.068f, mn * 0.068f, mn * 0.012f};
-            }
-            if (index >= 10) {
-                const int cell = index - 10;
-                const int col = cell % 5;
-                const int row = cell / 5;
-                static const float kGridRowY[3] = {0.34f, 0.47f, 0.60f};
-                return {w * 0.5f - mn * 0.135f + mn * 0.043f + mn * 0.099f * col,
-                    h * kGridRowY[row], mn * 0.043f, mn * 0.043f, mn * 0.010f};
-            }
-            return {w * 0.5f + mn * 0.395f, h * 0.17f,
-                mn * 0.026f, mn * 0.026f, mn * 0.018f};
+        if(uiScreen_==rhi::UiScreen::GameplayInventory){
+            auto b=inventory_ui::Layout(index,w,h);return {b.cx,b.cy,b.hw,b.hh,b.r};
         }
         if (uiScreen_ == rhi::UiScreen::MainMenu) {
             if (index == 0) {
@@ -4967,34 +4955,8 @@ private:
             }
             return {w * 0.5f, h * 0.83f, mn * 0.24f, mn * 0.062f, mn * 0.062f};
         }
-        if (uiScreen_ == rhi::UiScreen::GameplaySettings) {
-            if (index >= 1 && index <= 4) {
-                static const float kDisplayRowY[4] = {0.36f, 0.46f, 0.56f, 0.66f};
-                return {w * 0.5f + mn * 0.17f, h * kDisplayRowY[index - 1],
-                    mn * 0.09f, mn * 0.050f, mn * 0.012f};
-            }
-            if (index == 5) {
-                return {w * 0.5f, h * 0.78f, mn * 0.27f, mn * 0.047f,
-                    mn * 0.012f};
-            }
-            if (index == 0) {
-                return {w * 0.5f + mn * 0.29f, h * 0.5f - mn * 0.29f,
-                    mn * 0.028f, mn * 0.028f, mn * 0.010f};
-            }
-            return {w * 0.5f, h * 0.78f, mn * 0.27f, mn * 0.047f,
-                mn * 0.012f};
-        }
-        if (uiScreen_ == rhi::UiScreen::Settings) {
-            static const float kSettingsRowY[5] = {0.33f, 0.43f, 0.53f, 0.63f, 0.73f};
-            if (index >= 0 && index <= 4) {
-                return {w * 0.5f + mn * 0.22f, h * kSettingsRowY[index],
-                    mn * 0.095f, mn * 0.034f, mn * 0.008f};
-            }
-            if (index == 5) {
-                return {w * 0.5f + mn * 0.36f, h * 0.17f,
-                    mn * 0.026f, mn * 0.026f, mn * 0.018f};
-            }
-        }
+
+
         static const float kRowY[4] = {0.26f, 0.40f, 0.54f, 0.68f};
         switch (index) {
         case 0: return {w * 0.28f, h * kRowY[0], mn * 0.10f, mn * 0.055f, mn * 0.055f};
@@ -5037,8 +4999,9 @@ private:
             return;
         }
         if (uiScreen_ == rhi::UiScreen::Gameplay) {
+            if(gameplay::HitPotionButton(x,y,static_cast<float>(width_),static_cast<float>(height_))){inventory_.UsePotion(playerHealth_,playerMaxHealth_);return;}
             const int weaponButton = gameplay::HitPistolButton(x,y,
-                static_cast<float>(width_),static_cast<float>(height_),pistol_.equipped);
+                static_cast<float>(width_),static_cast<float>(height_),pistol_.equipped,inventory_.HasPistol());
             if (weaponButton>=0) { pistol_.Button(weaponButton); return; }
             if (HitRect(uiX, uiY, MenuButtonLayout(0))) {
                 uiScreen_ = rhi::UiScreen::GameplaySettings;
@@ -5067,52 +5030,29 @@ private:
                     continue;
                 }
                 if (inventory_.DefOf(cell) != nullptr) {
-                    inventory_.TapBag(cell);
+                    auto def=inventory_.DefOf(cell);
+                    if(def->slot!=inventory::SlotType::Count)inventory_.TapBag(cell);
                     SDL_Log("SDL3_VULKAN stage=inventory_bag_tap cell=%d", cell);
                 }
                 return;
             }
             return;
         }
-        if (uiScreen_ == rhi::UiScreen::GameplaySettings) {
-            for (int index = 0; index <= 5; ++index) {
-                if (!HitRect(uiX, uiY, MenuButtonLayout(index))) {
-                    continue;
-                }
-                switch (index) {
-                case 0:
-                    uiScreen_ = rhi::UiScreen::Gameplay;
-                    SDL_Log("SDL3_VULKAN stage=gameplay_settings_close");
-                    break;
-                case 1:
-                    settingFps_ = !settingFps_;
-                    SDL_Log("SDL3_VULKAN stage=setting_fps on=%d", settingFps_ ? 1 : 0);
-                    break;
-                case 2:
-                    bloomEnabled_ = !bloomEnabled_;
-                    SDL_Log("SDL3_VULKAN stage=setting_bloom on=%d", bloomEnabled_ ? 1 : 0);
-                    break;
-                case 3:
-                    resIndex_ = (resIndex_ + 1) % 4;
-                    renderScale_ = kScaleChoices[resIndex_];
-                    renderTargetsDirty_ = true;
-                    SDL_Log("SDL3_VULKAN stage=setting_res scale=%.2f", renderScale_);
-                    break;
-                case 4:
-                    uiOpacityIndex_ = (uiOpacityIndex_ + 1) % 5;
-                    uiOpacity_ = kOpacityChoices[uiOpacityIndex_];
-                    SDL_Log("SDL3_VULKAN stage=setting_ui_opacity a=%.2f", uiOpacity_);
-                    break;
-                case 5:
-                    uiScreen_ = rhi::UiScreen::MainMenu;
-                    SDL_Log("SDL3_VULKAN stage=menu_open_from_gameplay_settings");
-                    break;
-                default:
-                    break;
-                }
-                break;
-            }
-            return;
+        if(uiScreen_==rhi::UiScreen::Settings || uiScreen_==rhi::UiScreen::GameplaySettings){
+            for(int i=0;i<=8;i++){
+                if(!settings_ui::Visible(i,UiWidth(),UiHeight(),settingsScroll_) || !HitRect(uiX,uiY,MenuButtonLayout(i)))continue;
+                switch(i){
+                case 0:uiScreen_=uiScreen_==rhi::UiScreen::GameplaySettings?rhi::UiScreen::Gameplay:rhi::UiScreen::MainMenu;settingsScroll_=0;break;
+                case 1:settingFps_=!settingFps_;break;
+                case 2:sensIndex_=(sensIndex_+1)%3;lookSensitivityScale_=kSensitivityChoices[sensIndex_];break;
+                case 3:bloomEnabled_=!bloomEnabled_;break;
+                case 4:resIndex_=(resIndex_+1)%4;renderScale_=kScaleChoices[resIndex_];renderTargetsDirty_=true;break;
+                case 5:uiOpacityIndex_=(uiOpacityIndex_+1)%5;uiOpacity_=kOpacityChoices[uiOpacityIndex_];break;
+                case 6:shadowQuality_=(shadowQuality_+1)%4;shadowMapSize_=shadowQuality_==1?1024:(shadowQuality_==3?4096:2048);renderTargetsDirty_=true;break;
+                case 7:glassEnabled_=!glassEnabled_;break;
+                case 8:uiScreen_=rhi::UiScreen::MainMenu;settingsScroll_=0;break;
+                }return;
+            }return;
         }
         if (uiScreen_ == rhi::UiScreen::MainMenu) {
             if (HitRect(uiX, uiY, MenuButtonLayout(0))) {
@@ -5124,45 +5064,7 @@ private:
             }
             return;
         }
-        for (int index = 0; index < 6; ++index) {
-            if (!HitRect(uiX, uiY, MenuButtonLayout(index))) {
-                continue;
-            }
-            switch (index) {
-            case 0:
-                settingFps_ = !settingFps_;
-                SDL_Log("SDL3_VULKAN stage=setting_fps on=%d", settingFps_ ? 1 : 0);
-                break;
-            case 1:
-                sensIndex_ = (sensIndex_ + 1) % 3;
-                lookSensitivityScale_ = kSensitivityChoices[sensIndex_];
-                SDL_Log("SDL3_VULKAN stage=setting_sens scale=%.1f", lookSensitivityScale_);
-                break;
-            case 2:
-                bloomEnabled_ = !bloomEnabled_;
-                SDL_Log("SDL3_VULKAN stage=setting_bloom on=%d", bloomEnabled_ ? 1 : 0);
-                break;
-            case 3:
-                resIndex_ = (resIndex_ + 1) % 4;
-                renderScale_ = kScaleChoices[resIndex_];
-                // Taps are processed after vkAcquireNextImageKHR, so the
-                // offscreen chain cannot be torn down here; defer the rebuild
-                // to the top of the next DrawOnce, before the next acquire.
-                renderTargetsDirty_ = true;
-                SDL_Log("SDL3_VULKAN stage=setting_res scale=%.2f", renderScale_);
-                break;
-            case 4:
-                uiOpacityIndex_ = (uiOpacityIndex_ + 1) % 5;
-                uiOpacity_ = kOpacityChoices[uiOpacityIndex_];
-                SDL_Log("SDL3_VULKAN stage=setting_ui_opacity a=%.2f", uiOpacity_);
-                break;
-            default:
-                uiScreen_ = rhi::UiScreen::MainMenu;
-                SDL_Log("SDL3_VULKAN stage=menu_back");
-                break;
-            }
-            break;
-        }
+
     }
 
     void UpdateFrameTiming()
@@ -5179,10 +5081,15 @@ private:
 
     void ConsumeCameraAndMenuInput()
     {
+        if(uiScreen_==rhi::UiScreen::Settings || uiScreen_==rhi::UiScreen::GameplaySettings)
+            settingsScroll_=std::max(0.f,std::min(settings_ui::MaxScroll(UiWidth(),UiHeight()),settingsScroll_+cameraInput_.menuScrollDelta*UiHeight()/std::max(1.f,static_cast<float>(height_))));
+        cameraInput_.menuScrollDelta=0;
         if (cameraInput_.menuTapEdge) {
             HandleMenuTap(cameraInput_.menuTapX, cameraInput_.menuTapY);
             cameraInput_.menuTapEdge = false;
         }
+        if(!inventory_.HasPistol())pistol_.Holster();
+
 
         constexpr float kLookSensitivity = 0.0055f;
         constexpr float kZoomWorldPerPixel = 0.004f;
@@ -5326,7 +5233,7 @@ private:
             const float v1 = (static_cast<float>(glyph->cellY) + pad + glyph->h) / atlasH;
             // Negative range opts this title into glass shading without changing the vertex ABI.
             const float range = rhi::kSdfPxRange * scale *
-                (std::strcmp(text,"MikanEngine") == 0 ? -1.0f : 1.0f);
+                (glassEnabled_ && std::strcmp(text,"MikanEngine") == 0 ? -1.0f : 1.0f);
             const float alpha = color[3] * uiOpacity_;
             const auto push = [&](float px, float py, float u, float v) {
                 vertices.push_back({px, py, u, v, color[0], color[1], color[2], alpha, range});
@@ -5399,8 +5306,8 @@ private:
         const float mn = w < h ? w : h;
         const float barHalfWidth = mn * 0.145f;
         const float barHalfHeight = mn * 0.018f;
-        const float barCenterX = mn * 0.255f;
-        const float barCenterY = h * 0.090f;
+        const float barCenterX = w * 0.5f;
+        const float barCenterY = h - mn * 0.060f;
         const float radius = mn * 0.012f;
         const float ratio = std::max(0.0f, std::min(1.0f,
             playerMaxHealth_ > 0.0f ? playerHealth_ / playerMaxHealth_ : 0.0f));
@@ -5493,62 +5400,7 @@ private:
             AppendTextCentered(text, "设置", settings.cx, settings.cy, settings.hh * 0.85f, white);
             return;
         }
-        if (uiScreen_ == rhi::UiScreen::Settings) {
-            const float settingsBackground[4] = {0.015f, 0.035f, 0.055f, 0.20f};
-            const float settingsSheet[4] = {0.94f, 0.97f, 0.99f, 0.84f};
-            const float rowColor[4] = {0.96f, 0.98f, 1.0f, 0.30f};
-            const float controlColor[4] = {0.72f, 0.82f, 0.90f, 0.78f};
-            const float activeColor[4] = {0.20f, 0.48f, 0.66f, 0.94f};
-            const float ink[4] = {1.0f, 1.0f, 1.0f, 0.98f};
-            const float secondaryInk[4] = {0.95f, 0.97f, 1.0f, 0.98f};
-            const float dividerColor[4] = {0.22f, 0.34f, 0.44f, 0.28f};
-            const float leftX = w * 0.5f - mn * 0.35f;
-            AppendRoundedRect(overlay,
-                {w * 0.5f, h * 0.5f, w * 0.5f, h * 0.5f, 0.0f},
-                settingsBackground);
-            AppendRoundedRect(overlay,
-                {w * 0.5f, h * 0.5f, mn * 0.43f, mn * 0.39f, mn * 0.020f},
-                settingsSheet);
-            AppendTextLeftAligned(text, "设置", leftX, h * 0.22f, mn * 0.050f, ink, true);
-            const MenuButtonPos back = MenuButtonLayout(5);
-            AppendRoundedRect(overlay, back, rowColor);
-            AppendTextCentered(text, "X", back.cx, back.cy, back.hh * 0.82f, ink, true);
-            AppendRoundedRect(overlay,
-                {w * 0.5f, h * 0.30f, mn * 0.37f, mn * 0.001f, 0.0f},
-                dividerColor);
 
-            static const char* const kLabels[5] = {
-                "调试面板", "视角灵敏度", "泛光", "渲染分辨率", "UI透明度"};
-            for (int settingIndex = 0; settingIndex < 5; ++settingIndex) {
-                const MenuButtonPos control = MenuButtonLayout(settingIndex);
-                const MenuButtonPos row = {w * 0.5f, control.cy,
-                    mn * 0.40f, mn * 0.045f, mn * 0.008f};
-                AppendRoundedRect(overlay, row, rowColor);
-                const bool isToggle = settingIndex == 0 || settingIndex == 2;
-                const bool enabled = settingIndex == 0 ? settingFps_ : bloomEnabled_;
-                const float* valueColor = isToggle && enabled ? activeColor : controlColor;
-                const float* valueInk = isToggle && enabled ? white : ink;
-                AppendRoundedRect(overlay, control, valueColor);
-                AppendTextLeftAligned(text, kLabels[settingIndex], leftX, control.cy,
-                    mn * 0.032f, secondaryInk, true);
-
-                char value[16]{};
-                if (settingIndex == 0) {
-                    std::snprintf(value, sizeof(value), "%s", settingFps_ ? "开" : "关");
-                } else if (settingIndex == 1) {
-                    std::snprintf(value, sizeof(value), "%.1f", lookSensitivityScale_);
-                } else if (settingIndex == 2) {
-                    std::snprintf(value, sizeof(value), "%s", bloomEnabled_ ? "开" : "关");
-                } else if (settingIndex == 3) {
-                    std::snprintf(value, sizeof(value), "%.0f%%", renderScale_ * 100.0f);
-                } else {
-                    std::snprintf(value, sizeof(value), "%.0f%%", uiOpacity_ * 100.0f);
-                }
-                AppendTextCentered(text, value, control.cx, control.cy,
-                    control.hh * 0.84f, valueInk, true);
-            }
-            return;
-        }
 
         if (uiScreen_ == rhi::UiScreen::GameplayRetry) {
             const MenuButtonPos dim = {w * 0.5f, h * 0.5f, w * 0.5f, h * 0.5f, 0.0f};
@@ -5565,152 +5417,54 @@ private:
             return;
         }
 
-        if (uiScreen_ == rhi::UiScreen::GameplaySettings) {
-            const MenuButtonPos dim = {w * 0.5f, h * 0.5f, w * 0.5f, h * 0.5f, 0.0f};
-            const float dimColor[4] = {0.015f, 0.035f, 0.055f, 0.20f};
-            const MenuButtonPos sheet = {w * 0.5f, h * 0.50f, mn * 0.34f, mn * 0.34f,
-                mn * 0.018f};
-            const float sheetColor[4] = {0.94f, 0.97f, 0.99f, 0.84f};
-            const float controlColor[4] = {0.72f, 0.82f, 0.90f, 0.78f};
-            const float activeColor[4] = {0.20f, 0.48f, 0.66f, 0.94f};
-            const float dividerColor[4] = {0.22f, 0.34f, 0.44f, 0.28f};
-            const float labelColor[4] = {0.95f, 0.97f, 1.0f, 0.98f};
-            const float ink[4] = {1.0f, 1.0f, 1.0f, 0.98f};
-            const float labelX = w * 0.5f - mn * 0.27f;
-            AppendRoundedRect(overlay, dim, dimColor);
-            AppendRoundedRect(overlay, sheet, sheetColor);
-            AppendTextLeftAligned(text, "显示设置", labelX, h * 0.275f, mn * 0.050f, ink, true);
-            const MenuButtonPos close = MenuButtonLayout(0);
-            AppendRoundedRect(overlay, close, controlColor);
-            AppendTextCentered(text, "X", close.cx, close.cy, close.hh * 0.90f, ink, true);
-            const float dividerY[5] = {0.31f, 0.41f, 0.51f, 0.61f, 0.71f};
-            for (float rowY : dividerY) {
-                AppendRoundedRect(overlay,
-                    {w * 0.5f, h * rowY, mn * 0.27f, mn * 0.0012f, 0.0f},
-                    dividerColor);
-            }
-            const MenuButtonPos fps = MenuButtonLayout(1);
-            const float* fpsColor = settingFps_ ? activeColor : controlColor;
-            const float* fpsInk = settingFps_ ? white : ink;
-            AppendRoundedRect(overlay, fps, fpsColor);
-            AppendTextCentered(text, settingFps_ ? "开" : "关", fps.cx, fps.cy,
-                fps.hh * 0.85f, fpsInk, true);
-            AppendTextLeftAligned(text, "调试面板", labelX, fps.cy, mn * 0.030f,
-                labelColor, true);
-            const MenuButtonPos bloom = MenuButtonLayout(2);
-            const float* bloomColor = bloomEnabled_ ? activeColor : controlColor;
-            const float* bloomInk = bloomEnabled_ ? white : ink;
-            AppendRoundedRect(overlay, bloom, bloomColor);
-            AppendTextCentered(text, bloomEnabled_ ? "开" : "关", bloom.cx, bloom.cy,
-                bloom.hh * 0.85f, bloomInk, true);
-            AppendTextLeftAligned(text, "泛光", labelX, bloom.cy, mn * 0.030f,
-                labelColor, true);
-            const MenuButtonPos res = MenuButtonLayout(3);
-            AppendRoundedRect(overlay, res, controlColor);
-            char displayScaleLabel[8]{};
-            std::snprintf(displayScaleLabel, sizeof(displayScaleLabel), "x%.2f", renderScale_);
-            AppendTextCentered(text, displayScaleLabel, res.cx, res.cy,
-                res.hh * 0.85f, ink, true);
-            AppendTextLeftAligned(text, "渲染分辨率", labelX, res.cy, mn * 0.030f,
-                labelColor, true);
-            const MenuButtonPos opacity = MenuButtonLayout(4);
-            AppendRoundedRect(overlay, opacity, controlColor);
-            char opacityLabel[8]{};
-            std::snprintf(opacityLabel, sizeof(opacityLabel), "%.0f%%",
-                uiOpacity_ * 100.0f);
-            AppendTextCentered(text, opacityLabel, opacity.cx, opacity.cy,
-                opacity.hh * 0.85f, ink, true);
-            AppendTextLeftAligned(text, "UI透明度", labelX, opacity.cy, mn * 0.030f,
-                labelColor, true);
-            const MenuButtonPos title = MenuButtonLayout(5);
-            AppendRoundedRect(overlay, title, accent);
-            AppendTextCentered(text, "返回游戏标题", title.cx, title.cy, mn * 0.032f, white);
+        if(uiScreen_==rhi::UiScreen::Settings || uiScreen_==rhi::UiScreen::GameplaySettings){
+            char values[7][32]{};
+            std::snprintf(values[0],32,"%s",settingFps_?"开":"关");
+            std::snprintf(values[1],32,"%.1f",lookSensitivityScale_);
+            std::snprintf(values[2],32,"%s",bloomEnabled_?"开":"关");
+            std::snprintf(values[3],32,"%.0f%%",renderScale_*100);
+            std::snprintf(values[4],32,"%.0f%%",uiOpacity_*100);
+            const char* quality[]={"关闭","低 1024","中 2048","高 4096"};
+            std::snprintf(values[5],32,"%s",quality[shadowQuality_]);
+            std::snprintf(values[6],32,"%s",glassEnabled_?"开":"关");
+            settings_ui::Draw(w,h,settingsScroll_,values,glassEnabled_,
+                [this,&overlay,&text](float x,float y,float hw,float hh,float radius,const float* c){AppendRoundedRect(overlay,{x,y,hw,hh,radius},c);},
+                [this,&overlay,&text](const char* label,float x,float y,float em,const float* c,bool center){if(center)AppendTextCentered(text,label,x,y,em,c,true);else AppendTextLeftAligned(text,label,x,y,em,c,true);});
+
             return;
         }
 
-        if (uiScreen_ == rhi::UiScreen::GameplayInventory) {
-            // Same glass-card language as the settings sheet: light panel over
-            // the frozen live scene, soft control pills, dark ink labels.
-            // Geometry mirrors the GLES backend cell for cell.
-            const MenuButtonPos dim = {w * 0.5f, h * 0.5f, w * 0.5f, h * 0.5f, 0.0f};
-            const float dimColor[4] = {0.015f, 0.035f, 0.055f, 0.20f};
-            const MenuButtonPos sheet = {w * 0.5f, h * 0.50f, mn * 0.46f, mn * 0.40f,
-                mn * 0.018f};
-            const float sheetColor[4] = {0.94f, 0.97f, 0.99f, 0.84f};
-            const float slotColor[4] = {0.72f, 0.82f, 0.90f, 0.78f};
-            const float emptyColor[4] = {0.96f, 0.98f, 1.0f, 0.30f};
-            const float activeColor[4] = {0.20f, 0.48f, 0.66f, 0.94f};
-            const float ink[4] = {1.0f, 1.0f, 1.0f, 0.98f};
-            const float secondaryInk[4] = {0.95f, 0.97f, 1.0f, 0.98f};
-            const float labelX = w * 0.5f - mn * 0.40f;
-            AppendRoundedRect(overlay, dim, dimColor);
-            AppendRoundedRect(overlay, sheet, sheetColor);
-            AppendTextLeftAligned(text, "背包", labelX, h * 0.175f, mn * 0.050f, ink, true);
-            AppendTextLeftAligned(text, "装备", w * 0.5f - mn * 0.335f - mn * 0.068f,
-                h * 0.245f, mn * 0.032f, secondaryInk, true);
-            AppendTextLeftAligned(text, "物品", w * 0.5f - mn * 0.135f,
-                h * 0.245f, mn * 0.032f, secondaryInk, true);
-            const MenuButtonPos close = MenuButtonLayout(0);
-            AppendRoundedRect(overlay, close, slotColor);
-            AppendTextCentered(text, "X", close.cx, close.cy, close.hh * 0.90f, ink, true);
+        if(uiScreen_==rhi::UiScreen::GameplayInventory){
+            inventory_ui::Draw(w,h,inventory_,
+                [this,&overlay,&text](float x,float y,float hw,float hh,float radius,const float* c){AppendRoundedRect(overlay,{x,y,hw,hh,radius},c);},
+                [this,&overlay,&text](const char* label,float x,float y,float em,const float* c){AppendTextCentered(text,label,x,y,em,c,true);});
 
-            static const char* const kSlotNames[3] = {"武器", "头盔", "护甲"};
-            for (int slot = 1; slot <= 3; ++slot) {
-                const MenuButtonPos slotPos = MenuButtonLayout(slot);
-                const int bagIndex = inventory_.equipped[slot - 1];
-                const inventory::ItemDef* def = inventory_.DefOf(bagIndex);
-                AppendRoundedRect(overlay, slotPos, def != nullptr ? activeColor : emptyColor);
-                if (def != nullptr) {
-                    const MenuButtonPos icon = {slotPos.cx, slotPos.cy - mn * 0.022f,
-                        mn * 0.030f, mn * 0.030f, mn * 0.008f};
-                    AppendRoundedRect(overlay, icon, def->color);
-                    AppendTextCentered(text, def->name, slotPos.cx,
-                        slotPos.cy + mn * 0.040f, mn * 0.024f, ink, true);
-                } else {
-                    AppendTextCentered(text, "空", slotPos.cx, slotPos.cy,
-                        mn * 0.030f, secondaryInk, true);
-                }
-                AppendTextCentered(text, kSlotNames[slot - 1], slotPos.cx,
-                    slotPos.cy + mn * 0.095f, mn * 0.026f, secondaryInk, true);
-            }
-
-            for (int cell = 0; cell < inventory::kBagCapacity; ++cell) {
-                const MenuButtonPos cellPos = MenuButtonLayout(10 + cell);
-                const inventory::ItemDef* def = inventory_.DefOf(cell);
-                AppendRoundedRect(overlay, cellPos, def != nullptr ? slotColor : emptyColor);
-                if (def != nullptr) {
-                    const MenuButtonPos icon = {cellPos.cx, cellPos.cy - mn * 0.014f,
-                        mn * 0.020f, mn * 0.020f, mn * 0.006f};
-                    AppendRoundedRect(overlay, icon, def->color);
-                    AppendTextCentered(text, def->name, cellPos.cx,
-                        cellPos.cy + mn * 0.022f, mn * 0.019f, ink, true);
-                    if (inventory::kItemDefs[inventory_.bag[cell].defId].maxCount > 1) {
-                        char countLabel[8]{};
-                        std::snprintf(countLabel, sizeof(countLabel), "x%d",
-                            inventory_.bag[cell].count);
-                        AppendTextCentered(text, countLabel, cellPos.cx + mn * 0.024f,
-                            cellPos.cy + mn * 0.036f, mn * 0.016f, secondaryInk, true);
-                    }
-                }
-            }
-            AppendTextCentered(text, "轻点物品装备 轻点装备栏卸下", w * 0.5f, h * 0.82f,
-                mn * 0.026f, secondaryInk, true);
             return;
         }
 
-        for(int i=0;i<(pistol_.equipped?3:1);++i) {
+        for(int i=0;i<(inventory_.HasPistol()?(pistol_.equipped?4:1):0);++i) {
             auto b=gameplay::PistolButton(i,w,h);
             const float active[4]={.22f,.48f,.68f,.75f};
             const bool selected=(i==0&&pistol_.equipped)||(i==1&&pistol_.aiming);
             AppendRoundedRect(overlay,{b.x,b.y,b.r,b.r,b.r},selected?active:panel);
-            const char* label=i==0?(pistol_.equipped?"收起":"枪械"):(i==1?"瞄准":"射击");
+            const char* label=i==0?(pistol_.equipped?"收起":"枪械"):(i==1?"瞄准":(i==2?"射击":"换弹"));
             AppendTextCentered(text,label,b.x,b.y,b.r*.55f,white,true);
         }
+        auto potion=gameplay::PotionButton(w,h);const float potionColor[4]={.48f,.16f,.22f,.92f};
+        AppendRoundedRect(overlay,{potion.x,potion.y,potion.r,potion.r,potion.r},potionColor);
+        char potionLabel[32];std::snprintf(potionLabel,sizeof(potionLabel),"药水×%d",inventory_.PotionCount());
+        AppendTextCentered(text,potionLabel,potion.x,potion.y,mn*.018f,white,true);
+        if(pistol_.equipped){char ammo[32];std::snprintf(ammo,sizeof(ammo),pistol_.reloading?"换弹中":"弹量 %d/12",pistol_.ammo);
+            AppendTextCentered(text,ammo,w*.5f,h-mn*.115f,mn*.026f,white,true);}
         if(pistol_.equipped && !playerSwimming_) {
             const float hit[4]={1.f,.25f,.15f,1.f};
             AppendTextCentered(text,pistol_.hitFlash>0?"×":"+",w*.5f,h*.5f,
                 mn*(pistol_.shotAge<.10f?.050f:.036f),pistol_.hitFlash>0?hit:white,true);
         }
+        gameplay::DrawMinimap(w,h,playerX_,playerZ_,playerYaw_,enemyX_,enemyZ_,enemyAlive_,sceneDefinition_,minimapTerrain_,
+            [&overlay,this](float x,float y,float hw,float hh,float r,const float* c){
+                AppendRoundedRect(overlay,{x,y,hw,hh,r},c);
+            });
         AppendPlayerHealthBar(overlay, text);
         AppendEnemyHealthBar(overlay, text);
         AppendHitFlash(overlay, w, h);
@@ -5905,23 +5659,23 @@ private:
             uiScreen_ == rhi::UiScreen::GameplaySettings ||
             uiScreen_ == rhi::UiScreen::GameplayRetry ||
             uiScreen_ == rhi::UiScreen::GameplayInventory;
-        if (renderGameplayScene && shadowFramebuffer_ != VK_NULL_HANDLE &&
+        if (renderGameplayScene && shadowQuality_!=0 && shadowFramebuffer_ != VK_NULL_HANDLE &&
             shadowPipeline_ != VK_NULL_HANDLE) {
             VkClearValue shadowClear{};
             shadowClear.depthStencil.depth = 1.0f;
             VkRenderPassBeginInfo shadowPassInfo{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
             shadowPassInfo.renderPass = shadowRenderPass_;
             shadowPassInfo.framebuffer = shadowFramebuffer_;
-            shadowPassInfo.renderArea.extent = {kShadowMapSize, kShadowMapSize};
+            shadowPassInfo.renderArea.extent = {shadowMapSize_, shadowMapSize_};
             shadowPassInfo.clearValueCount = 1;
             shadowPassInfo.pClearValues = &shadowClear;
             vkCmdBeginRenderPass(commandBuffer, &shadowPassInfo, VK_SUBPASS_CONTENTS_INLINE);
             VkViewport shadowViewport{};
-            shadowViewport.width = static_cast<float>(kShadowMapSize);
-            shadowViewport.height = static_cast<float>(kShadowMapSize);
+            shadowViewport.width = static_cast<float>(shadowMapSize_);
+            shadowViewport.height = static_cast<float>(shadowMapSize_);
             shadowViewport.maxDepth = 1.0f;
             VkRect2D shadowScissor{};
-            shadowScissor.extent = {kShadowMapSize, kShadowMapSize};
+            shadowScissor.extent = {shadowMapSize_, shadowMapSize_};
             vkCmdSetViewport(commandBuffer, 0, 1, &shadowViewport);
             vkCmdSetScissor(commandBuffer, 0, 1, &shadowScissor);
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipeline_);
@@ -6059,6 +5813,8 @@ private:
         waterPush.params[2] = waterSettings.roughness;
         waterPush.params[3] = static_cast<float>(SDL_GetTicks() % 3600000U) * 0.001f;
         waterPush.color[0] = waterSettings.color.x; waterPush.color[1] = waterSettings.color.y; waterPush.color[2] = waterSettings.color.z;
+        for(int i=0;i<3;i++)waterPush.muzzle[i]=shotMuzzle_[i];
+        waterPush.muzzle[3]=renderGameplayScene && pistolPoseReady_?pistol_.shotAge:10.f;
         vkCmdPushConstants(commandBuffer, pipelineLayout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(waterPush), &waterPush);
         vkCmdDraw(commandBuffer, 3, 1, 0, 0);
         vkCmdEndRenderPass(commandBuffer);
@@ -6172,7 +5928,7 @@ private:
         vkCmdDraw(commandBuffer, 3, 1, 0, 0);
 
         const UiPushConstants pushConstants = {static_cast<float>(swapchainExtent_.width),
-            static_cast<float>(swapchainExtent_.height), bloomEnabled_ ? 0.1f : 0.0f, 0.0f};
+            static_cast<float>(swapchainExtent_.height), glassEnabled_ ? (bloomEnabled_ ? .1f : 0.f) : -1.f, 0.0f};
         const VkDeviceSize overlayOffset = 0;
         if (overlayCount > 0) {
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, overlayPipeline_);
@@ -6749,7 +6505,7 @@ private:
             const auto* gunClip=gameplay::PistolClip(asset.animationClips,pistol_,camPitch_);
             if(gunClip)for(const auto& channel:gunClip->channels) {
                 if(channel.nodeIndex>=nodeCount || !gameplay::WeaponUpperBody(asset.animationNodes,channel.nodeIndex))continue;
-                const float time=pistol_.shotAge<.30f?std::min(pistol_.shotAge,gunClip->duration):0.f;
+                const float time=pistol_.reloading?std::min(pistol_.reloadAge,gunClip->duration):(pistol_.shotAge<.30f?std::min(pistol_.shotAge,gunClip->duration):0.f);
                 SampleAnimationChannel(channel,time,sampled);
                 gameplay::BlendPistolAim(asset.animationClips,pistol_,camPitch_,channel,
                     [this](const ohos_model::AnimationChannel& c,float t,float* v){SampleAnimationChannel(c,t,v);},sampled);
@@ -7053,9 +6809,14 @@ private:
             playerAttackAcceptedThisFrame_ = true;
         }
 
+        for(const auto& clip:playerAsset_.animationClips)if(clip.name=="Pistol_Reload" && clip.duration>0)pistol_.reloadDuration=clip.duration;
         pistol_.Tick(dt,playerHealth_>0 && !playerSwimming_ && playerHitLockTimer_<=0);
         bool pistolHit = false;
         if (pistol_.fired) {
+            AudioManager::GetInstance().PlayAudio("pistol",0.65f);
+            for(int axis=0;axis<3;axis++)shotMuzzle_[axis]=pistolMatrix_.value[12+axis]+
+                pistolMatrix_.value[axis]*.95f+pistolMatrix_.value[4+axis]*.35f;
+
             const float dx=std::sin(camYaw_)*std::cos(camPitch_);
             const float dy=-std::sin(camPitch_);
             const float dz=-std::cos(camYaw_)*std::cos(camPitch_);
@@ -7081,7 +6842,7 @@ private:
         float distance = std::sqrt(toEnemyX * toEnemyX + toEnemyZ * toEnemyZ);
         if (((playerAttackAcceptedThisFrame_ && distance <= 1.75f) || pistolHit) && enemyAlive_ &&
             (pistolHit || enemyHitInvulnerability_ <= 0.0f)) {
-            enemyHealth_ = std::max(0.0f, enemyHealth_ - 25.0f);
+            enemyHealth_ = std::max(0.0f, enemyHealth_ - 25.0f * inventory_.Stats().attack);
             AudioManager::GetInstance().PlayAudio("hit", 0.55f);
             enemyHitInvulnerability_ = kHitInvulnerability;
             if (enemyHealth_ <= 0.0f) {
@@ -7137,7 +6898,7 @@ private:
             enemyAttackRequested_ = true;
             if (playerAttackInvulnerability_ <= 0.0f &&
                 playerHitInvulnerability_ <= 0.0f) {
-                playerHealth_ = std::max(0.0f, playerHealth_ - 8.0f);
+                playerHealth_ = std::max(0.0f, playerHealth_ - 8.0f / inventory_.Stats().defense);
                 AudioManager::GetInstance().PlayAudio("hit",
                     playerHealth_ <= 0.0f ? 0.95f : 0.70f);
                 playerHitInvulnerability_ = kHitInvulnerability;
@@ -7241,7 +7002,7 @@ private:
                 directionX /= directionLength;
                 directionZ /= directionLength;
                 playerSprinting_ = cameraInput_.actionButtonHeld[2] && !crouchEnabled_;
-                const float speed = playerSprinting_ ? 2.6f : 1.3f;
+                const float speed = (playerSprinting_ ? 2.6f : 1.3f) * inventory_.Stats().speed;
                 desiredVelocityX = directionX * speed * stickMagnitude;
                 desiredVelocityZ = directionZ * speed * stickMagnitude;
                 hasMovementDirection = true;
@@ -7329,7 +7090,7 @@ private:
         // Shadow frustum follows the player, snapped to the light-space texel
         // grid so walking does not make shadow edges shimmer.  The -0.2 y bias
         // is inherited from the original fixed window.
-        const Mat4 shadowCenter = SnapShadowCenter(playerX_, playerY_ - 0.2f, playerZ_);
+        const Mat4 shadowCenter = SnapShadowCenter(playerX_, playerY_ - 0.2f, playerZ_,static_cast<float>(shadowMapSize_));
         shadowMatrix_ = Mat4Multiply(Mat4ShadowProjection(),
             Mat4ShadowView(shadowCenter.value[12], shadowCenter.value[13],
                 shadowCenter.value[14]));
@@ -7351,6 +7112,7 @@ private:
             ? static_cast<float>(environmentTexture.mipLevels - 1) : 0.0f;
         uniforms.cameraToWorld = camToWorld;
         uniforms.shadowMvp = shadowMatrix_;
+        if(shadowQuality_==0){uniforms.shadowMvp=Mat4Identity();uniforms.shadowMvp.value[14]=-10000.f;}
         uniforms.viewProj = viewProj_;
         return UploadToMappedBuffer(target, &uniforms, sizeof(uniforms));
     }
@@ -8013,6 +7775,7 @@ private:
     bool deviceLost_ = false;
     bool firstFrameLogged_ = false;
     rhi::CameraInput cameraInput_{};
+    gameplay::MinimapTerrain minimapTerrain_;
     const scene::Definition* sceneDefinition_ = nullptr;
     physics::JoltGameplayPhysics* physicsWorld_ = nullptr;
     bool physicsReset_ = false;
@@ -8026,6 +7789,7 @@ private:
     float camPosY_ = 0.0f;
     float camPosZ_ = 2.8f;
     gameplay::PistolState pistol_;
+    float shotMuzzle_[3]{};
     Mat4 pistolMatrix_ = Mat4Identity();
     bool pistolPoseReady_ = false;
     float playerX_ = gameplay::kPlayerSpawnX;
@@ -8077,6 +7841,10 @@ private:
     Mat4 enemyMatrix_{};
     Mat4 shadowMatrix_{};
     rhi::UiScreen uiScreen_ = rhi::UiScreen::MainMenu;
+    float settingsScroll_=0;
+    int shadowQuality_=2;
+    unsigned shadowMapSize_=2048;
+    bool glassEnabled_=true;
     bool settingFps_ = false;
     int sensIndex_ = 1;
     float lookSensitivityScale_ = 1.0f;

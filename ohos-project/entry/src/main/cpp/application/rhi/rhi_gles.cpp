@@ -1,3 +1,6 @@
+#include "../inventory_ui.h"
+#include "../settings_ui.h"
+#include "../minimap_hud.h"
 // GLES 3.0 backend.
 //
 // This renders the same scene as the Vulkan backend (cubemap skybox + the glTF
@@ -195,13 +198,13 @@ Mat4 Mat4ShadowView(float centerX, float centerY, float centerZ)
 // shadow edge crawl by up to one texel per frame while walking.  The basis
 // here must stay in lockstep with Mat4ShadowView; 2048 and 12 m mirror
 // kShadowMapSize and Mat4ShadowProjection's half extent.
-Mat4 SnapShadowCenter(float playerX, float playerY, float playerZ)
+Mat4 SnapShadowCenter(float playerX, float playerY, float playerZ,float mapSize)
 {
     constexpr float kLightX = 0.45f;
     constexpr float kLightY = 1.0f;
     constexpr float kLightZ = 0.55f;
     constexpr float kShadowHalfExtent = 12.0f;
-    constexpr float kShadowMapSize = 2048.0f;
+    const float kShadowMapSize = mapSize;
     const float lightLength = std::sqrt(kLightX * kLightX + kLightY * kLightY + kLightZ * kLightZ);
     const float lx = kLightX / lightLength;
     const float ly = kLightY / lightLength;
@@ -534,13 +537,14 @@ uniform vec4 overlayColor;
 uniform vec2 overlayResolution;
 uniform vec4 glassShape;
 uniform float glassRadius;
+uniform int glassEnabled;
 uniform sampler2D glassBackground;
 out vec4 outColor;
 vec3 GlassScene(vec2 uv) { return texture(glassBackground, clamp(vec2(uv.x,1.0-uv.y),vec2(0.0),vec2(1.0))).rgb; }
 // Rounded glass lens in top-left window pixels. Background excludes all UI.
 vec4 ShadeGlass(vec2 pixel, vec4 shape, float radius, vec4 tint, vec2 resolution)
 {
-    if (radius < 3.0 || min(shape.z, shape.w) < 16.0 || tint.a < 0.001)
+    if (glassEnabled==0 || radius < 3.0 || min(shape.z, shape.w) < 16.0 || tint.a < 0.001)
         return tint; // Masks, status fills and opacity-zero controls stay unchanged.
     vec2 p = pixel - shape.xy;
     vec2 q = abs(p) - (shape.zw - vec2(radius));
@@ -575,7 +579,7 @@ vec4 ShadeGlass(vec2 pixel, vec4 shape, float radius, vec4 tint, vec2 resolution
     vec3 blurred = mix(spectral,frost,0.48*(1.0-edge));
     float lens = edge;
     float saturation = max(tint.r,max(tint.g,tint.b))-min(tint.r,min(tint.g,tint.b));
-    vec3 color = mix(blurred, tint.rgb, 0.055 + 0.16*saturation);
+    vec3 color = mix(blurred, tint.rgb, 0.24 + 0.28*saturation);
     color = mix(color, vec3(0.86,0.92,1.0), 0.035);
     // White specular lip stays legible against both sea and bright sky.
     // Pixel widths use derivative AA, so the fine edge does not shimmer.
@@ -585,7 +589,7 @@ vec4 ShadeGlass(vec2 pixel, vec4 shape, float radius, vec4 tint, vec2 resolution
     float counterLight = max(dot(direction, normalize(vec2(0.70,0.71))),0.0);
     float shoulder = exp(-abs(distance + 3.8) / 3.2);
     float innerRim = exp(-abs(distance + bezel*0.25)/2.2);
-    float specular = rim * (0.46 + 0.40*light + 0.18*counterLight);
+    float specular = rim * (0.60 + 0.48*light + 0.22*counterLight);
     color = mix(color, vec3(1.0), clamp(specular, 0.0, 0.94));
     color += vec3(0.80,0.89,1.0) * shoulder * (0.06 + 0.16*light);
     color += vec3(0.36,0.48,0.64) * innerRim * counterLight * 0.32;
@@ -630,13 +634,15 @@ precision highp samplerCube;
 
 uniform sampler2D iconTexture;
 uniform vec4 iconColor;
+uniform int iconUseRgb;
 in vec2 iconUV;
 out vec4 outColor;
 
 void main()
 {
-    float alpha = texture(iconTexture, iconUV).a;
-    outColor = vec4(iconColor.rgb, iconColor.a * alpha);
+    vec4 sampled = texture(iconTexture, iconUV);
+    vec3 color = iconUseRgb != 0 ? sampled.rgb * iconColor.rgb : iconColor.rgb;
+    outColor = vec4(color, iconColor.a * sampled.a);
 }
 )";
 
@@ -984,7 +990,7 @@ void main()
             N, V, NoV, albedo, metallic, roughness, F0, worldPos)
       + PointLight(vec3(0.0, -0.64, 0.0), vec3(0.10, 0.25, 1.0) * 8.0,
             N, V, NoV, albedo, metallic, roughness, F0, worldPos) +
-        PointLight(vec3(-5.0, -0.64, 5.0), vec3(0.10, 1.0, 0.18) * 8.0,
+        PointLight(vec3(6.0, -0.64, -6.0), vec3(0.10, 1.0, 0.18) * 8.0,
             N, V, NoV, albedo, metallic, roughness, F0, worldPos);
 
     // IBL ambient (MikanEngine full-tier composition).
@@ -1057,12 +1063,14 @@ uniform mat4 waterInvViewProj;
 uniform vec4 waterCamera;
 uniform vec4 waterParams;
 uniform vec4 waterColor;
+uniform vec4 waterMuzzle;
 uniform int waterLdr;
 in vec2 vUV;
 out vec4 outColor;
 #define WATER_INV waterInvViewProj
 #define WATER_CAMERA waterCamera
 #define WATER_PARAMS waterParams
+#define WATER_MUZZLE waterMuzzle
 #define WATER_COLOR waterColor
 #define WATER_UV vUV
 #define DEPTH_NDC (depth * 2.0 - 1.0)
@@ -1153,12 +1161,31 @@ vec3 SceneLightBillboards(vec3 camera, vec3 ray, float sceneDistance)
         LightBillboard(camera, ray, sceneDistance,
         vec3(0.0,-0.64,0.0), vec3(0.10,0.25,1.0)*8.0) +
         LightBillboard(camera, ray, sceneDistance,
-        vec3(-5.0,-0.64,5.0), vec3(0.10,1.0,0.18)*8.0);
+        vec3(6.0,-0.64,-6.0), vec3(0.10,1.0,0.18)*8.0);
+}
+
+// Fixed small particle burst, evaluated only during the shot lifetime.
+vec3 GunfireParticles(vec3 camera,vec3 ray,float sceneDistance) {
+    float age=WATER_MUZZLE.w;
+    if(age<0.0 || age>0.18)return vec3(0.0);
+    vec3 result=vec3(0.0);
+    for(int i=0;i<7;i++){
+        float seed=float(i);
+        vec3 velocity=vec3(sin(seed*13.1),cos(seed*7.7)*0.6+0.6,sin(seed*5.3+1.7));
+        vec3 center=WATER_MUZZLE.xyz+velocity*age*2.2;
+        float radius=i==0?mix(0.055,0.014,clamp(age/0.055,0.0,1.0)):0.009;
+        if(i==0 && age>0.055)continue;
+        vec3 offset=center-camera;float t=dot(offset,ray);
+        if(t<=0.0 || t>=sceneDistance-0.002)continue;
+        float d=length(camera+ray*t-center);
+        if(d<radius)result+=vec3(1.0,0.48,0.10)*18.0*(1.0-age/0.18);
+    }
+    return result;
 }
 
 vec4 FinishScene(vec3 color, vec3 camera, vec3 ray, float sceneDistance)
 {
-    vec3 emitter = SceneLightBillboards(camera, ray, sceneDistance);
+    vec3 emitter = SceneLightBillboards(camera, ray, sceneDistance) + GunfireParticles(camera,ray,sceneDistance);
     if (max(max(emitter.r, emitter.g), emitter.b) > 0.0) color = emitter;
     if (WATER_LDR) {
         color *= 1.8;
@@ -2362,6 +2389,7 @@ public:
         return true;
     }
 
+    bool WeaponAvailable() const override {return inventory_.HasPistol();}
     bool WeaponEquipped() const override { return pistol_.equipped; }
 
     rhi::UiScreen CurrentScreen() const override
@@ -2455,6 +2483,7 @@ public:
             overlayColorLocation_ = glGetUniformLocation(overlayProgram_, "overlayColor");
             glassShapeLocation_ = glGetUniformLocation(overlayProgram_, "glassShape");
             glassRadiusLocation_ = glGetUniformLocation(overlayProgram_, "glassRadius");
+            glassEnabledLocation_ = glGetUniformLocation(overlayProgram_, "glassEnabled");
             glUseProgram(overlayProgram_);
             glUniform1i(glGetUniformLocation(overlayProgram_, "glassBackground"), 7);
             glUseProgram(0);
@@ -2471,6 +2500,7 @@ public:
         if (iconProgram_ != 0) {
             iconResolutionLocation_ = glGetUniformLocation(iconProgram_, "iconResolution");
             iconSamplerLocation_ = glGetUniformLocation(iconProgram_, "iconTexture");
+            iconUseRgbLocation_ = glGetUniformLocation(iconProgram_, "iconUseRgb");
             iconColorLocation_ = glGetUniformLocation(iconProgram_, "iconColor");
             glGenBuffers(1, &iconVbo_);
             glGenVertexArrays(1, &iconVao_);
@@ -2599,6 +2629,7 @@ public:
     // the overlay vertex shader's clip mapping).
     void SetGlassShape(float cx, float cy, float hw, float hh, float radius)
     {
+        glUniform1i(glassEnabledLocation_,glassEnabled_?1:0);
         glUniform4f(glassShapeLocation_, cx, cy, hw, hh);
         glUniform1f(glassRadiusLocation_, std::min(radius, std::min(hw,hh)));
         // Sample the completed LDR scene, never the active window attachment.
@@ -2642,6 +2673,9 @@ public:
         const float w = static_cast<float>(width_);
         const float h = static_cast<float>(height_);
         const float mn = w < h ? w : h;
+        if(uiScreen_==rhi::UiScreen::Settings || uiScreen_==rhi::UiScreen::GameplaySettings){
+            auto b=settings_ui::Layout(index,w,h,settingsScroll_);return {b.cx,b.cy,b.hw,b.hh,b.r};
+        }
         if (uiScreen_ == rhi::UiScreen::GameplayRetry) {
             if (index == 0) {
                 return {w * 0.5f, h * 0.62f, mn * 0.22f, mn * 0.072f,
@@ -2661,28 +2695,8 @@ public:
             return {w * 0.93f, h * 0.42f, mn * 0.055f, mn * 0.055f,
                 mn * 0.055f};              // BAG
         }
-        if (uiScreen_ == rhi::UiScreen::GameplayInventory) {
-            // 0 = close, 1..3 = equipment slots (weapon/helmet/armor),
-            // 10+i = bag grid cell i (5 columns x 3 rows).
-            if (index == 0) {
-                return {w * 0.5f + mn * 0.395f, h * 0.17f,
-                    mn * 0.026f, mn * 0.026f, mn * 0.018f};
-            }
-            if (index >= 1 && index <= 3) {
-                static const float kEquipY[3] = {0.33f, 0.50f, 0.67f};
-                return {w * 0.5f - mn * 0.335f, h * kEquipY[index - 1],
-                    mn * 0.068f, mn * 0.068f, mn * 0.012f};
-            }
-            if (index >= 10) {
-                const int cell = index - 10;
-                const int col = cell % 5;
-                const int row = cell / 5;
-                static const float kGridRowY[3] = {0.34f, 0.47f, 0.60f};
-                return {w * 0.5f - mn * 0.135f + mn * 0.043f + mn * 0.099f * col,
-                    h * kGridRowY[row], mn * 0.043f, mn * 0.043f, mn * 0.010f};
-            }
-            return {w * 0.5f + mn * 0.395f, h * 0.17f,
-                mn * 0.026f, mn * 0.026f, mn * 0.018f};
+        if(uiScreen_==rhi::UiScreen::GameplayInventory){
+            auto b=inventory_ui::Layout(index,w,h);return {b.cx,b.cy,b.hw,b.hh,b.r};
         }
         if (uiScreen_ == rhi::UiScreen::MainMenu) {
             if (index == 0) {
@@ -2692,34 +2706,8 @@ public:
             return {w * 0.5f, h * 0.83f, mn * 0.24f, mn * 0.062f,
                 mn * 0.062f};      // SETTINGS
         }
-        if (uiScreen_ == rhi::UiScreen::GameplaySettings) {
-            if (index >= 1 && index <= 4) {
-                static const float kDisplayRowY[4] = {0.36f, 0.46f, 0.56f, 0.66f};
-                return {w * 0.5f + mn * 0.17f, h * kDisplayRowY[index - 1],
-                    mn * 0.09f, mn * 0.050f, mn * 0.012f};
-            }
-            if (index == 5) {
-                return {w * 0.5f, h * 0.78f, mn * 0.27f, mn * 0.047f,
-                    mn * 0.012f};
-            }
-            if (index == 0) {
-                return {w * 0.5f + mn * 0.29f, h * 0.5f - mn * 0.29f,
-                    mn * 0.028f, mn * 0.028f, mn * 0.010f};  // close
-            }
-            return {w * 0.5f, h * 0.78f, mn * 0.27f, mn * 0.047f,
-                mn * 0.012f};
-        }
-        if (uiScreen_ == rhi::UiScreen::Settings) {
-            static const float kSettingsRowY[5] = {0.33f, 0.43f, 0.53f, 0.63f, 0.73f};
-            if (index >= 0 && index <= 4) {
-                return {w * 0.5f + mn * 0.22f, h * kSettingsRowY[index],
-                    mn * 0.095f, mn * 0.034f, mn * 0.008f};
-            }
-            if (index == 5) {
-                return {w * 0.5f + mn * 0.36f, h * 0.17f,
-                    mn * 0.026f, mn * 0.026f, mn * 0.018f};
-            }
-        }
+
+
         static const float kRowY[4] = {0.26f, 0.40f, 0.54f, 0.68f};
         switch (index) {
         case 0: return {w * 0.28f, h * kRowY[0], mn * 0.10f, mn * 0.055f,
@@ -2764,8 +2752,9 @@ public:
             return;
         }
         if (uiScreen_ == rhi::UiScreen::Gameplay) {
+            if(gameplay::HitPotionButton(x,y,static_cast<float>(width_),static_cast<float>(height_))){inventory_.UsePotion(playerHealth_,playerMaxHealth_);return;}
             const int weaponButton = gameplay::HitPistolButton(x,y,
-                static_cast<float>(width_),static_cast<float>(height_),pistol_.equipped);
+                static_cast<float>(width_),static_cast<float>(height_),pistol_.equipped,inventory_.HasPistol());
             if (weaponButton>=0) { pistol_.Button(weaponButton); return; }
             // Gameplay exposes one larger SET button plus the BAG shortcut.
             // Returning to the title is intentionally handled inside the
@@ -2797,53 +2786,29 @@ public:
                     continue;
                 }
                 if (inventory_.DefOf(cell) != nullptr) {
-                    inventory_.TapBag(cell);
+                    auto def=inventory_.DefOf(cell);
+                    if(def->slot!=inventory::SlotType::Count)inventory_.TapBag(cell);
                     SDL_Log("SDL3_GLES stage=inventory_bag_tap cell=%d", cell);
                 }
                 return;
             }
             return;
         }
-        if (uiScreen_ == rhi::UiScreen::GameplaySettings) {
-            for (int index = 0; index <= 5; ++index) {
-                if (!HitRect(x, y, MenuButtonLayout(index))) {
-                    continue;
-                }
-                switch (index) {
-                case 0:
-                    uiScreen_ = rhi::UiScreen::Gameplay;
-                    SDL_Log("SDL3_GLES stage=gameplay_settings_close");
-                    break;
-                case 1:
-                    settingFps_ = !settingFps_;
-                    SDL_Log("SDL3_GLES stage=setting_fps on=%d", settingFps_ ? 1 : 0);
-                    break;
-                case 2:
-                    bloomEnabled_ = !bloomEnabled_;
-                    SDL_Log("SDL3_GLES stage=setting_bloom on=%d", bloomEnabled_ ? 1 : 0);
-                    break;
-                case 3:
-                    resIndex_ = (resIndex_ + 1) % 4;
-                    renderScale_ = kScaleChoices[resIndex_];
-                    DestroyGBufferTarget();
-                    DestroyPostTarget();
-                    SDL_Log("SDL3_GLES stage=setting_res scale=%.2f", renderScale_);
-                    break;
-                case 4:
-                    uiOpacityIndex_ = (uiOpacityIndex_ + 1) % 5;
-                    uiOpacity_ = kOpacityChoices[uiOpacityIndex_];
-                    SDL_Log("SDL3_GLES stage=setting_ui_opacity a=%.2f", uiOpacity_);
-                    break;
-                case 5:
-                    uiScreen_ = rhi::UiScreen::MainMenu;
-                    SDL_Log("SDL3_GLES stage=menu_open_from_gameplay_settings");
-                    break;
-                default:
-                    break;
-                }
-                break;
-            }
-            return;
+        if(uiScreen_==rhi::UiScreen::Settings || uiScreen_==rhi::UiScreen::GameplaySettings){
+            for(int i=0;i<=8;i++){
+                if(!settings_ui::Visible(i,static_cast<float>(width_),static_cast<float>(height_),settingsScroll_) || !HitRect(x,y,MenuButtonLayout(i)))continue;
+                switch(i){
+                case 0:uiScreen_=uiScreen_==rhi::UiScreen::GameplaySettings?rhi::UiScreen::Gameplay:rhi::UiScreen::MainMenu;settingsScroll_=0;break;
+                case 1:settingFps_=!settingFps_;break;
+                case 2:sensIndex_=(sensIndex_+1)%3;lookSensitivityScale_=kSensitivityChoices[sensIndex_];break;
+                case 3:bloomEnabled_=!bloomEnabled_;break;
+                case 4:resIndex_=(resIndex_+1)%4;renderScale_=kScaleChoices[resIndex_];DestroyGBufferTarget();DestroyPostTarget();break;
+                case 5:uiOpacityIndex_=(uiOpacityIndex_+1)%5;uiOpacity_=kOpacityChoices[uiOpacityIndex_];break;
+                case 6:shadowQuality_=(shadowQuality_+1)%4;shadowMapSize_=shadowQuality_==1?1024:(shadowQuality_==3?4096:2048);DestroyShadowMapTarget();if(shadowQuality_!=0)CreateShadowMapTarget();break;
+                case 7:glassEnabled_=!glassEnabled_;break;
+                case 8:uiScreen_=rhi::UiScreen::MainMenu;settingsScroll_=0;break;
+                }return;
+            }return;
         }
         if (uiScreen_ == rhi::UiScreen::MainMenu) {
             if (HitRect(x, y, MenuButtonLayout(0))) {
@@ -2855,48 +2820,7 @@ public:
             }
             return;
         }
-        if (uiScreen_ == rhi::UiScreen::Settings) {
-            // Hit-test every settings button; the first hit handles the tap.
-            for (int index = 0; index < 6; ++index) {
-                if (!HitRect(x, y, MenuButtonLayout(index))) {
-                    continue;
-                }
-                switch (index) {
-                case 0:
-                    settingFps_ = !settingFps_;
-                    SDL_Log("SDL3_GLES stage=setting_fps on=%d", settingFps_ ? 1 : 0);
-                    break;
-                case 1:
-                    sensIndex_ = (sensIndex_ + 1) % 3;
-                    lookSensitivityScale_ = kSensitivityChoices[sensIndex_];
-                    SDL_Log("SDL3_GLES stage=setting_sens scale=%.1f", lookSensitivityScale_);
-                    break;
-                case 2:
-                    bloomEnabled_ = !bloomEnabled_;
-                    SDL_Log("SDL3_GLES stage=setting_bloom on=%d", bloomEnabled_ ? 1 : 0);
-                    break;
-                case 3:
-                    resIndex_ = (resIndex_ + 1) % 4;
-                    renderScale_ = kScaleChoices[resIndex_];
-                    // The menu tap is consumed before rendering; rebuild lazily
-                    // at the selected scale before this frame's skybox pass.
-                    DestroyGBufferTarget();
-                    DestroyPostTarget();
-                    SDL_Log("SDL3_GLES stage=setting_res scale=%.2f", renderScale_);
-                    break;
-                case 4:
-                    uiOpacityIndex_ = (uiOpacityIndex_ + 1) % 5;
-                    uiOpacity_ = kOpacityChoices[uiOpacityIndex_];
-                    SDL_Log("SDL3_GLES stage=setting_ui_opacity a=%.2f", uiOpacity_);
-                    break;
-                default:
-                    uiScreen_ = rhi::UiScreen::MainMenu;
-                    SDL_Log("SDL3_GLES stage=menu_back");
-                    break;
-                }
-                break;  // one button per tap
-            }
-        }
+
     }
 
     // Draws one text run centred on (cx, cy), with the same soft shadow the
@@ -3028,6 +2952,7 @@ public:
             {centerX + halfSize, centerY - halfSize, 1.0f, 0.0f},
         };
         glUseProgram(iconProgram_);
+        glUniform1i(iconUseRgbLocation_,0);
         glUniform2f(iconResolutionLocation_, static_cast<float>(width_),
             static_cast<float>(height_));
         glUniform4f(iconColorLocation_, held ? 1.0f : 0.94f, held ? 0.92f : 0.95f,
@@ -3058,6 +2983,45 @@ public:
         DrawMenuRect(fullscreen, flashColor);
     }
 
+    void DrawMinimapTexture()
+    {
+        constexpr int size=192;
+        const float mn=static_cast<float>(std::min(width_,height_));
+        const float extent=mn*.244f,left=mn*.155f-extent*.5f,top=mn*.17f-extent*.5f,scale=size/extent;
+        minimapPixels_.assign(size*size*4,0);
+        gameplay::DrawMinimap(static_cast<float>(width_),static_cast<float>(height_),
+            playerX_,playerZ_,playerYaw_,enemyX_,enemyZ_,enemyAlive_,sceneDefinition_,minimapTerrain_,
+            [&](float x,float y,float hw,float hh,float radius,const float* color){
+                int x0=std::max(0,int(std::floor((x-hw-left)*scale))),x1=std::min(size,int(std::ceil((x+hw-left)*scale)));
+                int y0=std::max(0,int(std::floor((y-hh-top)*scale))),y1=std::min(size,int(std::ceil((y+hh-top)*scale)));
+                float alpha=color[3];
+                for(int iy=y0;iy<y1;iy++)for(int ix=x0;ix<x1;ix++){
+                    float dx=std::max(0.f,std::abs(left+(ix+.5f)/scale-x)-(hw-radius));
+                    float dy=std::max(0.f,std::abs(top+(iy+.5f)/scale-y)-(hh-radius));
+                    if(radius>0 && dx*dx+dy*dy>radius*radius)continue;
+                    auto* pixel=&minimapPixels_[(iy*size+ix)*4];
+                    float oldAlpha=pixel[3]/255.f,newAlpha=alpha+oldAlpha*(1-alpha);
+                    if(newAlpha<=0)continue;
+                    for(int c=0;c<3;c++)pixel[c]=static_cast<unsigned char>(std::min(255.f,
+                        (color[c]*alpha*255.f+pixel[c]*oldAlpha*(1-alpha))/newAlpha));
+                    pixel[3]=static_cast<unsigned char>(newAlpha*255.f);
+                }
+            });
+        glActiveTexture(GL_TEXTURE0);
+        if(minimapTexture_==0){
+            glGenTextures(1,&minimapTexture_);glBindTexture(GL_TEXTURE_2D,minimapTexture_);
+            glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+            glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,size,size,0,GL_RGBA,GL_UNSIGNED_BYTE,minimapPixels_.data());
+        }else{glBindTexture(GL_TEXTURE_2D,minimapTexture_);glTexSubImage2D(GL_TEXTURE_2D,0,0,0,size,size,GL_RGBA,GL_UNSIGNED_BYTE,minimapPixels_.data());}
+        const float right=left+extent,bottom=top+extent;
+        const float v[6][4]={{left,top,0,0},{left,bottom,0,1},{right,bottom,1,1},{left,top,0,0},{right,bottom,1,1},{right,top,1,0}};
+        glUseProgram(iconProgram_);glUniform1i(iconUseRgbLocation_,1);glUniform2f(iconResolutionLocation_,static_cast<float>(width_),static_cast<float>(height_));
+        glUniform4f(iconColorLocation_,1,1,1,uiOpacity_);glUniform1i(iconSamplerLocation_,0);
+        glBindVertexArray(iconVao_);glBindBuffer(GL_ARRAY_BUFFER,iconVbo_);
+        glBufferData(GL_ARRAY_BUFFER,sizeof(v),v,GL_DYNAMIC_DRAW);glDrawArrays(GL_TRIANGLES,0,6);
+    }
+
     void DrawPlayerHealthBar()
     {
         if (overlayProgram_ == 0 || uiScreen_ != rhi::UiScreen::Gameplay) {
@@ -3068,8 +3032,8 @@ public:
         const float mn = w < h ? w : h;
         const float barHalfWidth = mn * 0.145f;
         const float barHalfHeight = mn * 0.018f;
-        const float barCenterX = mn * 0.255f;
-        const float barCenterY = h * 0.090f;
+        const float barCenterX = w * 0.5f;
+        const float barCenterY = h - mn * 0.060f;
         const float radius = mn * 0.012f;
         const float ratio = std::max(0.0f, std::min(1.0f,
             playerMaxHealth_ > 0.0f ? playerHealth_ / playerMaxHealth_ : 0.0f));
@@ -3208,199 +3172,31 @@ public:
             return;
         }
 
-        if (uiScreen_ == rhi::UiScreen::GameplayInventory) {
-            // Same glass-card language as the settings sheet: light panel over
-            // the frozen live scene, soft control pills, dark ink labels.
-            const MenuButtonPos dim = {w * 0.5f, h * 0.5f, w * 0.5f, h * 0.5f, 0.0f};
-            const float dimColor[4] = {0.015f, 0.035f, 0.055f, 0.20f};
-            const MenuButtonPos sheet = {w * 0.5f, h * 0.50f, mn * 0.46f, mn * 0.40f,
-                mn * 0.018f};
-            const float sheetColor[4] = {0.94f, 0.97f, 0.99f, 0.84f};
-            const float slotColor[4] = {0.72f, 0.82f, 0.90f, 0.78f};
-            const float emptyColor[4] = {0.96f, 0.98f, 1.0f, 0.30f};
-            const float activeColor[4] = {0.20f, 0.48f, 0.66f, 0.94f};
-            const float ink[4] = {1.0f, 1.0f, 1.0f, 0.98f};
-            const float secondaryInk[4] = {0.95f, 0.97f, 1.0f, 0.98f};
-            const float labelX = w * 0.5f - mn * 0.40f;
-            DrawMenuRect(dim, dimColor);
-            DrawMenuRect(sheet, sheetColor);
-            DrawTextLeftAligned("背包", labelX, h * 0.175f, mn * 0.050f, ink, true);
-            DrawTextLeftAligned("装备", w * 0.5f - mn * 0.335f - mn * 0.068f,
-                h * 0.245f, mn * 0.032f, secondaryInk, true);
-            DrawTextLeftAligned("物品", w * 0.5f - mn * 0.135f,
-                h * 0.245f, mn * 0.032f, secondaryInk, true);
-            const MenuButtonPos close = MenuButtonLayout(0);
-            DrawMenuRect(close, slotColor);
-            DrawTextCentered("X", close.cx, close.cy, close.hh * 0.90f, ink, true);
-
-            static const char* const kSlotNames[3] = {"武器", "头盔", "护甲"};
-            for (int slot = 1; slot <= 3; ++slot) {
-                const MenuButtonPos slotPos = MenuButtonLayout(slot);
-                const int bagIndex = inventory_.equipped[slot - 1];
-                const inventory::ItemDef* def = inventory_.DefOf(bagIndex);
-                DrawMenuRect(slotPos, def != nullptr ? activeColor : emptyColor);
-                if (def != nullptr) {
-                    const MenuButtonPos icon = {slotPos.cx, slotPos.cy - mn * 0.022f,
-                        mn * 0.030f, mn * 0.030f, mn * 0.008f};
-                    DrawMenuRect(icon, def->color);
-                    DrawTextCentered(def->name, slotPos.cx, slotPos.cy + mn * 0.040f,
-                        mn * 0.024f, ink, true);
-                } else {
-                    DrawTextCentered("空", slotPos.cx, slotPos.cy, mn * 0.030f,
-                        secondaryInk, true);
-                }
-                DrawTextCentered(kSlotNames[slot - 1], slotPos.cx,
-                    slotPos.cy + mn * 0.095f, mn * 0.026f, secondaryInk, true);
-            }
-
-            for (int cell = 0; cell < inventory::kBagCapacity; ++cell) {
-                const MenuButtonPos cellPos = MenuButtonLayout(10 + cell);
-                const inventory::ItemDef* def = inventory_.DefOf(cell);
-                DrawMenuRect(cellPos, def != nullptr ? slotColor : emptyColor);
-                if (def != nullptr) {
-                    const MenuButtonPos icon = {cellPos.cx, cellPos.cy - mn * 0.014f,
-                        mn * 0.020f, mn * 0.020f, mn * 0.006f};
-                    DrawMenuRect(icon, def->color);
-                    DrawTextCentered(def->name, cellPos.cx, cellPos.cy + mn * 0.022f,
-                        mn * 0.019f, ink, true);
-                    if (inventory::kItemDefs[inventory_.bag[cell].defId].maxCount > 1) {
-                        char countLabel[8];
-                        snprintf(countLabel, sizeof(countLabel), "x%d",
-                            inventory_.bag[cell].count);
-                        DrawTextCentered(countLabel, cellPos.cx + mn * 0.024f,
-                            cellPos.cy + mn * 0.036f, mn * 0.016f, secondaryInk, true);
-                    }
-                }
-            }
-            DrawTextCentered("轻点物品装备 轻点装备栏卸下", w * 0.5f, h * 0.82f,
-                mn * 0.026f, secondaryInk, true);
-            glEnable(GL_DEPTH_TEST);
-            glDisable(GL_BLEND);
+        if(uiScreen_==rhi::UiScreen::GameplayInventory){
+            inventory_ui::Draw(w,h,inventory_,
+                [this](float x,float y,float hw,float hh,float radius,const float* c){DrawMenuRect({x,y,hw,hh,radius},c);},
+                [this](const char* label,float x,float y,float em,const float* c){DrawTextCentered(label,x,y,em,c,true);});
+            glEnable(GL_DEPTH_TEST);glDisable(GL_BLEND);
             return;
         }
 
-        if (uiScreen_ == rhi::UiScreen::GameplaySettings) {
-            // Keep the live scene visible behind a dimmed, touch-friendly
-            // sheet, matching MikanEngine's runtime settings overlay instead
-            // of sending the player back through the main menu.
-            const MenuButtonPos dim = {w * 0.5f, h * 0.5f, w * 0.5f, h * 0.5f, 0.0f};
-            const float dimColor[4] = {0.015f, 0.035f, 0.055f, 0.20f};
-            const MenuButtonPos sheet = {w * 0.5f, h * 0.50f, mn * 0.34f, mn * 0.34f,
-                mn * 0.018f};
-            const float sheetColor[4] = {0.94f, 0.97f, 0.99f, 0.84f};
-            const float controlColor[4] = {0.72f, 0.82f, 0.90f, 0.78f};
-            const float activeColor[4] = {0.20f, 0.48f, 0.66f, 0.94f};
-            const float dividerColor[4] = {0.22f, 0.34f, 0.44f, 0.28f};
-            const float labelColor[4] = {0.95f, 0.97f, 1.0f, 0.98f};
-            const float ink[4] = {1.0f, 1.0f, 1.0f, 0.98f};
-            const float labelX = w * 0.5f - mn * 0.27f;
-            DrawMenuRect(dim, dimColor);
-            DrawMenuRect(sheet, sheetColor);
-            DrawTextLeftAligned("显示设置", labelX, h * 0.275f, mn * 0.050f, ink, true);
-            const MenuButtonPos close = MenuButtonLayout(0);
-            DrawMenuRect(close, controlColor);
-            DrawTextCentered("X", close.cx, close.cy, close.hh * 0.90f, ink, true);
-
-            const float dividerY[5] = {0.31f, 0.41f, 0.51f, 0.61f, 0.71f};
-            for (float rowY : dividerY) {
-                DrawMenuRect({w * 0.5f, h * rowY, mn * 0.27f, mn * 0.0012f, 0.0f},
-                    dividerColor);
-            }
-
-            const MenuButtonPos fps = MenuButtonLayout(1);
-            const float* fpsColor = settingFps_ ? activeColor : controlColor;
-            const float* fpsInk = settingFps_ ? white : ink;
-            DrawMenuRect(fps, fpsColor);
-            DrawTextCentered(settingFps_ ? "开" : "关", fps.cx, fps.cy,
-                fps.hh * 0.85f, fpsInk, true);
-            DrawTextLeftAligned("调试面板", labelX, fps.cy, mn * 0.030f, labelColor, true);
-
-            const MenuButtonPos bloom = MenuButtonLayout(2);
-            const float* bloomColor = bloomEnabled_ ? activeColor : controlColor;
-            const float* bloomInk = bloomEnabled_ ? white : ink;
-            DrawMenuRect(bloom, bloomColor);
-            DrawTextCentered(bloomEnabled_ ? "开" : "关", bloom.cx, bloom.cy,
-                bloom.hh * 0.85f, bloomInk, true);
-            DrawTextLeftAligned("泛光", labelX, bloom.cy, mn * 0.030f, labelColor, true);
-
-            const MenuButtonPos res = MenuButtonLayout(3);
-            DrawMenuRect(res, controlColor);
-            char resLabel[8];
-            snprintf(resLabel, sizeof(resLabel), "x%.2f", renderScale_);
-            DrawTextCentered(resLabel, res.cx, res.cy, res.hh * 0.85f, ink, true);
-            DrawTextLeftAligned("渲染分辨率", labelX, res.cy, mn * 0.030f, labelColor, true);
-
-            const MenuButtonPos opacity = MenuButtonLayout(4);
-            DrawMenuRect(opacity, controlColor);
-            char opacityLabel[8];
-            snprintf(opacityLabel, sizeof(opacityLabel), "%.0f%%", uiOpacity_ * 100.0f);
-            DrawTextCentered(opacityLabel, opacity.cx, opacity.cy,
-                opacity.hh * 0.85f, ink, true);
-            DrawTextLeftAligned("UI透明度", labelX, opacity.cy, mn * 0.030f,
-                labelColor, true);
-
-            const MenuButtonPos title = MenuButtonLayout(5);
-            DrawMenuRect(title, accent);
-            DrawTextCentered("返回游戏标题", title.cx, title.cy, mn * 0.032f, white);
-            glEnable(GL_DEPTH_TEST);
-            glDisable(GL_BLEND);
+        if(uiScreen_==rhi::UiScreen::Settings || uiScreen_==rhi::UiScreen::GameplaySettings){
+            char values[7][32]{};
+            std::snprintf(values[0],32,"%s",settingFps_?"开":"关");
+            std::snprintf(values[1],32,"%.1f",lookSensitivityScale_);
+            std::snprintf(values[2],32,"%s",bloomEnabled_?"开":"关");
+            std::snprintf(values[3],32,"%.0f%%",renderScale_*100);
+            std::snprintf(values[4],32,"%.0f%%",uiOpacity_*100);
+            const char* quality[]={"关闭","低 1024","中 2048","高 4096"};
+            std::snprintf(values[5],32,"%s",quality[shadowQuality_]);
+            std::snprintf(values[6],32,"%s",glassEnabled_?"开":"关");
+            settings_ui::Draw(w,h,settingsScroll_,values,glassEnabled_,
+                [this](float x,float y,float hw,float hh,float radius,const float* c){DrawMenuRect({x,y,hw,hh,radius},c);},
+                [this](const char* label,float x,float y,float em,const float* c,bool center){if(center)DrawTextCentered(label,x,y,em,c,true);else DrawTextLeftAligned(label,x,y,em,c,true);});
+            glEnable(GL_DEPTH_TEST);glDisable(GL_BLEND);
             return;
         }
 
-        // Standalone settings screen: a light translucent glass card over the
-        // same slowly orbiting skybox used by the main menu.
-        const float settingsBackground[4] = {0.015f, 0.035f, 0.055f, 0.20f};
-        const float settingsSheet[4] = {0.94f, 0.97f, 0.99f, 0.84f};
-        const float rowColor[4] = {0.96f, 0.98f, 1.0f, 0.30f};
-        const float controlColor[4] = {0.72f, 0.82f, 0.90f, 0.78f};
-        const float activeColor[4] = {0.20f, 0.48f, 0.66f, 0.94f};
-        const float ink[4] = {1.0f, 1.0f, 1.0f, 0.98f};
-        const float secondaryInk[4] = {0.95f, 0.97f, 1.0f, 0.98f};
-        const float dividerColor[4] = {0.22f, 0.34f, 0.44f, 0.28f};
-        const float leftX = w * 0.5f - mn * 0.35f;
-        DrawMenuRect({w * 0.5f, h * 0.5f, w * 0.5f, h * 0.5f, 0.0f},
-            settingsBackground);
-        DrawMenuRect({w * 0.5f, h * 0.5f, mn * 0.43f, mn * 0.39f, mn * 0.020f},
-            settingsSheet);
-        DrawTextLeftAligned("设置", leftX, h * 0.22f, mn * 0.050f, ink, true);
-        const MenuButtonPos back = MenuButtonLayout(5);
-        DrawMenuRect(back, rowColor);
-        DrawTextCentered("X", back.cx, back.cy, back.hh * 0.82f, ink, true);
-        DrawMenuRect({w * 0.5f, h * 0.30f, mn * 0.37f, mn * 0.001f, 0.0f},
-            dividerColor);
-
-        static const char* const kLabels[5] = {
-            "调试面板", "视角灵敏度", "泛光", "渲染分辨率", "UI透明度"};
-        for (int index = 0; index < 5; ++index) {
-            const MenuButtonPos control = MenuButtonLayout(index);
-            const MenuButtonPos row = {w * 0.5f, control.cy,
-                mn * 0.40f, mn * 0.045f, mn * 0.008f};
-            DrawMenuRect(row, rowColor);
-            const bool isToggle = index == 0 || index == 2;
-            const bool enabled = index == 0 ? settingFps_ : bloomEnabled_;
-            const float* valueColor = isToggle && enabled ? activeColor : controlColor;
-            const float* valueInk = isToggle && enabled ? white : ink;
-            DrawMenuRect(control, valueColor);
-            DrawTextLeftAligned(kLabels[index], leftX, control.cy, mn * 0.032f,
-                secondaryInk, true);
-
-            char value[16]{};
-            if (index == 0) {
-                snprintf(value, sizeof(value), "%s", settingFps_ ? "开" : "关");
-            } else if (index == 1) {
-                snprintf(value, sizeof(value), "%.1f", lookSensitivityScale_);
-            } else if (index == 2) {
-                snprintf(value, sizeof(value), "%s", bloomEnabled_ ? "开" : "关");
-            } else if (index == 3) {
-                snprintf(value, sizeof(value), "%.0f%%", renderScale_ * 100.0f);
-            } else {
-                snprintf(value, sizeof(value), "%.0f%%", uiOpacity_ * 100.0f);
-            }
-            DrawTextCentered(value, control.cx, control.cy, control.hh * 0.84f,
-                valueInk, true);
-        }
-        glEnable(GL_DEPTH_TEST);
-        glDisable(GL_BLEND);
     }
 
     void DrawJoystickOverlay()
@@ -3524,7 +3320,7 @@ public:
             static_cast<float>(height_));
         // A negative range selects glass only for the main title; magnitude is AA range.
         glUniform1f(textPxRangeLocation_, rhi::kSdfPxRange * scale *
-            (std::strcmp(text,"MikanEngine") == 0 ? -1.0f : 1.0f));
+            (glassEnabled_ && std::strcmp(text,"MikanEngine") == 0 ? -1.0f : 1.0f));
         glActiveTexture(GL_TEXTURE7);
         glBindTexture(GL_TEXTURE_2D, tonemapTex_);
         glActiveTexture(GL_TEXTURE0);
@@ -3573,10 +3369,15 @@ public:
         }
         // Menu/settings taps: consume before anything else so a screen switch
         // (START/BACK) takes effect for this very frame's HUD selection.
+        if(uiScreen_==rhi::UiScreen::Settings || uiScreen_==rhi::UiScreen::GameplaySettings)
+            settingsScroll_=std::max(0.f,std::min(settings_ui::MaxScroll(static_cast<float>(width_),static_cast<float>(height_)),settingsScroll_+cameraInput_.menuScrollDelta));
+        cameraInput_.menuScrollDelta=0;
         if (cameraInput_.menuTapEdge) {
             HandleMenuTap(cameraInput_.menuTapX, cameraInput_.menuTapY);
             cameraInput_.menuTapEdge = false;
         }
+        if(!inventory_.HasPistol())pistol_.Holster();
+
         if (!UpdateSceneUniforms()) {
             return false;
         }
@@ -3596,9 +3397,9 @@ public:
             uiScreen_ == rhi::UiScreen::GameplaySettings ||
             uiScreen_ == rhi::UiScreen::GameplayRetry ||
             uiScreen_ == rhi::UiScreen::GameplayInventory;
-        if (renderGameplayScene && shadowReady_ && shadowProgram_ != 0) {
+        if (renderGameplayScene && shadowQuality_!=0 && shadowReady_ && shadowProgram_ != 0) {
             glBindFramebuffer(GL_FRAMEBUFFER, shadowFbo_);
-            glViewport(0, 0, kShadowMapSize, kShadowMapSize);
+            glViewport(0, 0, shadowMapSize_, shadowMapSize_);
             glEnable(GL_DEPTH_TEST);
             glDepthFunc(GL_LESS);
             glDepthMask(GL_TRUE);
@@ -3758,7 +3559,7 @@ public:
         glUniform1f(lightingMaxLodLocation_, skyboxMaxLod_);
         glUniform1i(lightingEnvPrefilteredLocation_, prefilteredTexture_ != 0 ? 1 : 0);
         glUniform1i(lightingUseBrdfLutLocation_, brdfLutTexture_ != 0 ? 1 : 0);
-        glUniform1i(lightingUseShadowMapLocation_, shadowReady_ ? 1 : 0);
+        glUniform1i(lightingUseShadowMapLocation_, shadowReady_ && shadowQuality_!=0 ? 1 : 0);
         glUniform1i(lightingDebugNormalLocation_, kDebugNormalMode);
         glUniform1i(lightingHdrOutputLocation_, hdrPipeline_ ? 1 : 0);
         glUniformMatrix4fv(lightingShadowMatrixLocation_, 1, GL_FALSE, shadowMatrix_.value);
@@ -3817,6 +3618,7 @@ public:
             glUniform4f(waterParamsLocation_, water.height, water.size * 0.5f, water.roughness,
                 static_cast<float>(SDL_GetTicks() % 3600000U) * 0.001f);
             glUniform4f(waterColorLocation_, water.color.x, water.color.y, water.color.z, 1.0f);
+            glUniform4f(waterMuzzleLocation_,shotMuzzle_[0],shotMuzzle_[1],shotMuzzle_[2],pistolPoseReady_?pistol_.shotAge:10.f);
             glUniform1i(waterLdrLocation_, hdrPipeline_ ? 0 : 1);
             glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, postColorTex_);
             glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, gbufferDepthTex_);
@@ -3932,6 +3734,10 @@ public:
             uiScreen_ == rhi::UiScreen::GameplayInventory) {
             DrawMenuOverlay();
         } else {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glDisable(GL_DEPTH_TEST);
+            DrawMinimapTexture();
             DrawPlayerHealthBar();
             DrawEnemyHealthBar();
             DrawHitFlash();
@@ -3944,14 +3750,21 @@ public:
             const float mnF = static_cast<float>(width_ < height_ ? width_ : height_);
             const float panelF[4] = {0.30f, 0.32f, 0.36f, 0.55f};
             const float whiteF[4] = {1.0f, 1.0f, 1.0f, 0.92f};
-            for(int i=0;i<(pistol_.equipped?3:1);++i) {
+            for(int i=0;i<(inventory_.HasPistol()?(pistol_.equipped?4:1):0);++i) {
                 auto b=gameplay::PistolButton(i,static_cast<float>(width_),static_cast<float>(height_));
                 const float active[4]={.22f,.48f,.68f,.75f};
                 const bool selected=(i==0&&pistol_.equipped)||(i==1&&pistol_.aiming);
                 DrawMenuRect({b.x,b.y,b.r,b.r,b.r},selected?active:panelF);
-                const char* label=i==0?(pistol_.equipped?"收起":"枪械"):(i==1?"瞄准":"射击");
+                const char* label=i==0?(pistol_.equipped?"收起":"枪械"):(i==1?"瞄准":(i==2?"射击":"换弹"));
                 DrawTextCentered(label,b.x,b.y,b.r*.55f,whiteF);
             }
+            auto potion=gameplay::PotionButton(static_cast<float>(width_),static_cast<float>(height_));
+            const float potionColor[4]={.48f,.16f,.22f,.92f};
+            DrawMenuRect({potion.x,potion.y,potion.r,potion.r,potion.r},potionColor);
+            char potionLabel[32];std::snprintf(potionLabel,sizeof(potionLabel),"药水×%d",inventory_.PotionCount());
+            DrawTextCentered(potionLabel,potion.x,potion.y,mnF*.018f,whiteF);
+            if(pistol_.equipped){char ammo[32];std::snprintf(ammo,sizeof(ammo),pistol_.reloading?"换弹中":"弹量 %d/12",pistol_.ammo);
+                DrawTextCentered(ammo,width_*.5f,height_-mnF*.115f,mnF*.026f,whiteF);}
             if(pistol_.equipped && !playerSwimming_) {
                 const float hit[4]={1.f,.25f,.15f,1.f};
                 DrawTextCentered(pistol_.hitFlash>0?"×":"+",width_*.5f,height_*.5f,
@@ -4135,6 +3948,7 @@ public:
             glDeleteBuffers(1, &characterInstanceVbo_);
             characterInstanceVbo_ = 0;
         }
+        if(minimapTexture_!=0){glDeleteTextures(1,&minimapTexture_);minimapTexture_=0;}
         DestroyShadowMapTarget();
         DestroyGBufferTarget();
         if (uniformBuffer_ != 0) {
@@ -4377,6 +4191,7 @@ private:
         waterCameraLocation_ = glGetUniformLocation(waterProgram_, "waterCamera");
         waterParamsLocation_ = glGetUniformLocation(waterProgram_, "waterParams");
         waterColorLocation_ = glGetUniformLocation(waterProgram_, "waterColor");
+        waterMuzzleLocation_ = glGetUniformLocation(waterProgram_, "waterMuzzle");
         waterLdrLocation_ = glGetUniformLocation(waterProgram_, "waterLdr");
         glUseProgram(waterProgram_);
         glUniform1i(glGetUniformLocation(waterProgram_, "opaqueColor"), 0);
@@ -4449,7 +4264,7 @@ private:
         DestroyShadowMapTarget();
         glGenTextures(1, &shadowDepthTexture_);
         glBindTexture(GL_TEXTURE_2D, shadowDepthTexture_);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, kShadowMapSize, kShadowMapSize,
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, shadowMapSize_, shadowMapSize_,
             0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -4471,7 +4286,7 @@ private:
             return false;
         }
         shadowReady_ = true;
-        SDL_Log("SDL3_GLES stage=shadow_target_ready size=%dx%d", kShadowMapSize, kShadowMapSize);
+        SDL_Log("SDL3_GLES stage=shadow_target_ready size=%dx%d", shadowMapSize_, shadowMapSize_);
         return true;
     }
 
@@ -5242,6 +5057,7 @@ private:
                     physics::kGroundCollider.halfExtentY, terrainModel, terrainError)) {
                 SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "SDL3_TERRAIN stage=load_failed error=%s", terrainError.c_str());
             } else {
+                minimapTerrain_.Build(terrainModel);
                 // Sea is composited after opaque lighting; preserve bottom color/depth.
                 terrainMaterials_ = terrainModel.materials;
                 LoadStaticTextures(terrainModel, terrainTextures_);
@@ -5744,7 +5560,7 @@ private:
             const auto* gunClip=gameplay::PistolClip(clips_,pistol_,camPitch_);
             if (gunClip) for(const auto& channel:gunClip->channels) {
                 if(channel.nodeIndex>=nodeCount || !gameplay::WeaponUpperBody(animNodes_,channel.nodeIndex))continue;
-                const float time=pistol_.shotAge<.30f?std::min(pistol_.shotAge,gunClip->duration):0.f;
+                const float time=pistol_.reloading?std::min(pistol_.reloadAge,gunClip->duration):(pistol_.shotAge<.30f?std::min(pistol_.shotAge,gunClip->duration):0.f);
                 SampleChannel(channel,time,sampled);
                 gameplay::BlendPistolAim(clips_,pistol_,camPitch_,channel,
                     [this](const ohos_model::AnimationChannel& c,float t,float* v){SampleChannel(c,t,v);},sampled);
@@ -6305,9 +6121,14 @@ private:
             playerAttackAcceptedThisFrame_ = true;
         }
 
+        for(const auto& clip:clips_)if(clip.name=="Pistol_Reload" && clip.duration>0)pistol_.reloadDuration=clip.duration;
         pistol_.Tick(dt,playerHealth_>0 && !playerSwimming_ && playerHitLockTimer_<=0);
         bool pistolHit = false;
         if (pistol_.fired) {
+            AudioManager::GetInstance().PlayAudio("pistol",0.65f);
+            for(int axis=0;axis<3;axis++)shotMuzzle_[axis]=pistolMatrix_.value[12+axis]+
+                pistolMatrix_.value[axis]*.95f+pistolMatrix_.value[4+axis]*.35f;
+
             const float dx=std::sin(camYaw_)*std::cos(camPitch_);
             const float dy=-std::sin(camPitch_);
             const float dz=-std::cos(camYaw_)*std::cos(camPitch_);
@@ -6333,7 +6154,7 @@ private:
         float distance = std::sqrt(toEnemyX * toEnemyX + toEnemyZ * toEnemyZ);
         if (((playerAttackAcceptedThisFrame_ && distance <= 1.75f) || pistolHit) && enemyAlive_ &&
             (pistolHit || enemyHitInvulnerability_ <= 0.0f)) {
-            enemyHealth_ = std::max(0.0f, enemyHealth_ - 25.0f);
+            enemyHealth_ = std::max(0.0f, enemyHealth_ - 25.0f * inventory_.Stats().attack);
             AudioManager::GetInstance().PlayAudio("hit", 0.55f);
             enemyHitInvulnerability_ = kHitInvulnerability;
             if (enemyHealth_ <= 0.0f) {
@@ -6390,7 +6211,7 @@ private:
             enemyAttackRequested_ = true;
             if (playerAttackInvulnerability_ <= 0.0f &&
                 playerHitInvulnerability_ <= 0.0f) {
-                playerHealth_ = std::max(0.0f, playerHealth_ - 8.0f);
+                playerHealth_ = std::max(0.0f, playerHealth_ - 8.0f / inventory_.Stats().defense);
                 AudioManager::GetInstance().PlayAudio("hit",
                     playerHealth_ <= 0.0f ? 0.95f : 0.70f);
                 playerHitInvulnerability_ = kHitInvulnerability;
@@ -6527,7 +6348,7 @@ private:
                 constexpr float kWalkSpeed = 1.3f;    // world units/s at full stick
                 constexpr float kSprintSpeed = 2.6f;  // RUN held: 2x walk
                 playerSprinting_ = cameraInput_.actionButtonHeld[2] && !crouchEnabled_;
-                const float speed = playerSprinting_ ? kSprintSpeed : kWalkSpeed;
+                const float speed = (playerSprinting_ ? kSprintSpeed : kWalkSpeed) * inventory_.Stats().speed;
                 desiredVelocityX = dirX * speed * stickMag;
                 desiredVelocityZ = dirZ * speed * stickMag;
                 hasMovementDirection = true;
@@ -6631,7 +6452,7 @@ private:
         // Shadow frustum follows the player, snapped to the light-space texel
         // grid so walking does not make shadow edges shimmer.  The -0.2 y bias
         // is inherited from the original fixed window.
-        const Mat4 shadowCenter = SnapShadowCenter(playerX_, playerY_ - 0.2f, playerZ_);
+        const Mat4 shadowCenter = SnapShadowCenter(playerX_, playerY_ - 0.2f, playerZ_,static_cast<float>(shadowMapSize_));
         shadowMatrix_ = Mat4Multiply(Mat4ShadowProjection(),
             Mat4ShadowView(shadowCenter.value[12], shadowCenter.value[13],
                 shadowCenter.value[14]));
@@ -6685,6 +6506,7 @@ private:
     GLint waterCameraLocation_ = -1;
     GLint waterParamsLocation_ = -1;
     GLint waterColorLocation_ = -1;
+    GLint waterMuzzleLocation_ = -1;
     GLint waterLdrLocation_ = -1;
     GLuint shadowFbo_ = 0;
     GLuint shadowDepthTexture_ = 0;
@@ -6861,6 +6683,9 @@ private:
     GLuint brdfLutTexture_ = 0;
     // Touch camera state; updated from cameraInput_ every UpdateSceneUniforms.
     rhi::CameraInput cameraInput_{};
+    GLuint minimapTexture_=0;
+    std::vector<unsigned char> minimapPixels_;
+    gameplay::MinimapTerrain minimapTerrain_;
     const scene::Definition* sceneDefinition_ = nullptr;
     physics::JoltGameplayPhysics* physicsWorld_ = nullptr;
     bool physicsReset_ = false;
@@ -6873,6 +6698,7 @@ private:
     // Third-person player state: ground position, facing yaw and the move
     // flag the animation state machine reads (see UpdateSceneUniforms).
     gameplay::PistolState pistol_;
+    float shotMuzzle_[3]{};
     Mat4 pistolMatrix_ = Mat4Identity();
     bool pistolPoseReady_ = false;
     float playerX_ = gameplay::kPlayerSpawnX;
@@ -6918,6 +6744,10 @@ private:
     // state; the main loop feeds it back to the touch layer via
     // IRenderer::CurrentScreen so input routing follows the screen.
     rhi::UiScreen uiScreen_ = rhi::UiScreen::MainMenu;
+    float settingsScroll_=0;
+    int shadowQuality_=2;
+    unsigned shadowMapSize_=2048;
+    bool glassEnabled_=true;
     bool settingFps_ = false;             // debug HUD (FPS + anim state text)
     int sensIndex_ = 1;                   // index into kSensitivityChoices
 
@@ -6953,6 +6783,7 @@ private:
     GLint overlayColorLocation_ = -1;
     GLint glassShapeLocation_ = -1;
     GLint glassRadiusLocation_ = -1;
+    GLint glassEnabledLocation_ = -1;
     static constexpr int kOverlaySegments = 48;
     int rectIndexCount_ = 0;  // vertices of the last UploadRoundedRect
     static constexpr int kOverlayFanCount = kOverlaySegments + 2;
@@ -6961,6 +6792,7 @@ private:
     GLuint iconVbo_ = 0;
     GLint iconResolutionLocation_ = -1;
     GLint iconSamplerLocation_ = -1;
+    GLint iconUseRgbLocation_ = -1;
     GLint iconColorLocation_ = -1;
     GLuint actionIconTextures_[rhi::CameraInput::kActionButtonCount] = {};
     // SDF text overlay state.

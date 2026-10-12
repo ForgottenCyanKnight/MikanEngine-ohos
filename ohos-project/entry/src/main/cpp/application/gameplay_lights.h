@@ -7,9 +7,9 @@ inline constexpr float kPlayerSpawnX = 0.0f;
 inline constexpr float kPlayerSpawnZ = 0.0f;
 inline constexpr float kEnemySpawnX = 12.0f;
 inline constexpr float kEnemySpawnZ = -12.0f;
-inline constexpr float kHealingLightX = -5.0f;
+inline constexpr float kHealingLightX = (kPlayerSpawnX + kEnemySpawnX) * 0.5f;
 inline constexpr float kHealingLightY = -0.64f;
-inline constexpr float kHealingLightZ = 5.0f;
+inline constexpr float kHealingLightZ = (kPlayerSpawnZ + kEnemySpawnZ) * 0.5f;
 inline constexpr float kHealingRadius = 2.0f;
 inline constexpr float kHealingPerSecond = 15.0f;
 
