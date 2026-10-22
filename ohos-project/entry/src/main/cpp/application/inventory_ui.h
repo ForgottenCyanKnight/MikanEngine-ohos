@@ -5,7 +5,7 @@
 namespace inventory_ui {
 struct Button {float cx,cy,hw,hh,r;};
 inline Button Layout(int index,float w,float h){float mn=std::min(w,h),width=std::min(w*.88f,mn*1.65f);
- if(index==0)return {w*.5f+width*.45f,h*.145f,mn*.025f,mn*.025f,mn*.01f};
+ if(index==0)return {w*.5f+width*.45f,h*.145f,mn*.040f,mn*.040f,mn*.016f};
  if(index>=1&&index<=3)return {w*.5f+(index-2)*width*.29f,h*.29f,width*.125f,h*.052f,mn*.012f};
  int i=index-10;return {w*.5f+(i%5-2)*width*.18f,h*(.46f+.11f*(i/5)),width*.08f,h*.044f,mn*.010f};
 }
@@ -16,7 +16,7 @@ void Draw(float w,float h,const inventory::State& state,Rect rect,Text text){
  const float slot[4]={.12f,.22f,.29f,.95f},equipped[4]={.12f,.37f,.34f,.98f},white[4]={1,1,1,1};
  rect(w*.5f,h*.5f,w*.5f,h*.5f,0,bg);rect(w*.5f,h*.51f,width*.5f,h*.42f,mn*.02f,sheet);
  text("背包",w*.5f,h*.145f,mn*.043f,white);
- auto close=Layout(0,w,h);rect(close.cx,close.cy,close.hw,close.hh,close.r,slot);text("X",close.cx,close.cy,mn*.024f,white);
+ auto close=Layout(0,w,h);rect(close.cx,close.cy,close.hw,close.hh,close.r,slot);text("X",close.cx,close.cy,mn*.038f,white);
  const char* names[]={"武器","头盔","护甲"};
  for(int i=0;i<3;i++){auto b=Layout(i+1,w,h);auto d=state.EquippedDef(i);
   text(names[i],b.cx,h*.215f,mn*.025f,white);rect(b.cx,b.cy,b.hw,b.hh,b.r,d?equipped:slot);

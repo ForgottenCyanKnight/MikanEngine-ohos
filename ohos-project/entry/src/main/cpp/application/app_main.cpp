@@ -224,7 +224,24 @@ int main()
     bool splashHidden = false;
     bool rendererSuspended = false;
     bool restoreFailureLogged = false;
+    bool waitForEvents = false;
     TouchController touch;
+    const auto handleEvent = [&](const SDL_Event& event) {
+        if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {
+            running = false;
+        } else if (event.type == SDL_EVENT_WILL_ENTER_BACKGROUND ||
+            event.type == SDL_EVENT_DID_ENTER_BACKGROUND) {
+            // SDL lifecycle events are primarily handled by the event
+            // watch above; this is a fallback if an event is also queued.
+            gAppInBackground.store(true, std::memory_order_release);
+        } else if (event.type == SDL_EVENT_DID_ENTER_FOREGROUND) {
+            gRendererResumePending.store(true, std::memory_order_release);
+            gAppInBackground.store(false, std::memory_order_release);
+        } else {
+            touch.HandleEvent(event, static_cast<float>(session.width),
+                static_cast<float>(session.height));
+        }
+    };
     while (running) {
         SDL_Event event;
         // Sync the renderer's screen state before polling: the touch layer
@@ -235,21 +252,12 @@ int main()
         touch.SetScreen(session.renderer->CurrentScreen());
         touch.SetWeaponAvailable(session.renderer->WeaponAvailable());
         touch.SetWeaponEquipped(session.renderer->WeaponEquipped());
+        touch.SetChestPrompt(session.renderer->ChestPromptActive());
+        if (waitForEvents && SDL_WaitEventTimeout(&event, 80)) {
+            handleEvent(event);
+        }
         while (SDL_PollEvent(&event)) {
-            if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {
-                running = false;
-            } else if (event.type == SDL_EVENT_WILL_ENTER_BACKGROUND ||
-                event.type == SDL_EVENT_DID_ENTER_BACKGROUND) {
-                // SDL lifecycle events are primarily handled by the event
-                // watch above; this is a fallback if an event is also queued.
-                gAppInBackground.store(true, std::memory_order_release);
-            } else if (event.type == SDL_EVENT_DID_ENTER_FOREGROUND) {
-                gRendererResumePending.store(true, std::memory_order_release);
-                gAppInBackground.store(false, std::memory_order_release);
-            } else {
-                touch.HandleEvent(event, static_cast<float>(session.width),
-                    static_cast<float>(session.height));
-            }
+            handleEvent(event);
         }
         if (!running) {
             break;
@@ -307,6 +315,13 @@ int main()
                             restoreFailureLogged = false;
                             session.renderer->PushCameraInput(touch.FrameInput());
                             const bool framePresented = session.renderer->DrawOnce();
+                            if (!framePresented) {
+                                // Surface loss/out-of-date and transient
+                                // renderer failures are retried at a bounded
+                                // rate while remaining responsive to lifecycle
+                                // or input events.
+                                shouldWaitForSurface = true;
+                            }
                             if (framePresented && !splashHidden) {
                                 splashHidden = true;
                                 SDL_Log("SDL3_RHI stage=first_frame_presented hide_splash");
@@ -326,7 +341,12 @@ int main()
                 }
             }
         }
-        SDL_Delay(shouldWaitForSurface ? 80 : 16);
+        // Both active backends already pace frames through presentation:
+        // GLES uses swap interval 1 and Vulkan uses FIFO. A second fixed
+        // 16 ms delay after present would halve cadence on blocking drivers.
+        // When rendering is unavailable, wait on the SDL queue so foreground
+        // and surface events wake the loop immediately instead of polling.
+        waitForEvents = shouldWaitForSurface;
     }
 
     if (lifecycleWatchInstalled) {

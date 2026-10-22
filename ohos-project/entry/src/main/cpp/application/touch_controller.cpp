@@ -240,27 +240,31 @@ void TouchController::HandleEvent(const SDL_Event& event, float width, float hei
 
         if (event.type == SDL_EVENT_FINGER_DOWN) {
             if (menuBtnFinger_ == static_cast<SDL_FingerID>(-1) &&
-                (gameplay::HitPistolButton(x,y,width_,height_,weaponEquipped_,weaponAvailable_) >= 0 || gameplay::HitPotionButton(x,y,width_,height_))) {
+                (gameplay::HitPistolButton(x,y,width_,height_,weaponEquipped_,weaponAvailable_) >= 0 ||
+                 gameplay::HitPotionButton(x,y,width_,height_) ||
+                 (chestPrompt_ && gameplay::HitChestButton(x,y,width_,height_)))) {
                 menuBtnFinger_=finger;
                 return;
             }
-            // The gameplay HUD right-edge buttons (SET at 0.93w,0.26h and
-            // BAG at 0.93w,0.42h, radius 0.055*mn) claim their finger before
-            // everything else: a press there must never drag the camera or
-            // fire an action.  The renderer decides which button the lift
-            // position hits and switches screens accordingly.
+            // The gameplay HUD top-right menu buttons (SET at w-0.075mn,
+            // BAG at w-0.225mn, SHOP at w-0.375mn, all at y 0.085mn, radius
+            // 0.055*mn) claim their finger before everything else: a press
+            // there must never drag the camera or fire an action.  The
+            // renderer decides which button the lift position hits and
+            // switches screens accordingly.
             if (menuBtnFinger_ == static_cast<SDL_FingerID>(-1)) {
                 const float mn = width_ < height_ ? width_ : height_;
                 const float mhalf = 0.055f * mn;
-                const float mdx = std::fabs(x - width_ * 0.93f);
-                if (mdx <= mhalf) {
-                    const float setDy = std::fabs(y - height_ * 0.26f);
-                    const float bagDy = std::fabs(y - height_ * 0.42f);
-                    if (setDy <= mhalf || bagDy <= mhalf) {
-                        menuBtnFinger_ = finger;
-                        SDL_Log("SDL3_TOUCH stage=menu_claim finger=%llu",
-                            (unsigned long long)finger);
-                        return;
+                if (std::fabs(y - mn * 0.085f) <= mhalf) {
+                    const float xs[3] = {width_ - mn * 0.075f,
+                        width_ - mn * 0.225f, width_ - mn * 0.375f};
+                    for (float buttonX : xs) {
+                        if (std::fabs(x - buttonX) <= mhalf) {
+                            menuBtnFinger_ = finger;
+                            SDL_Log("SDL3_TOUCH stage=menu_claim finger=%llu",
+                                (unsigned long long)finger);
+                            return;
+                        }
                     }
                 }
             }
@@ -425,8 +429,25 @@ void TouchController::HandleEvent(const SDL_Event& event, float width, float hei
         return;
     }
     if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT) {
-        if ((gameplay::HitPistolButton(event.button.x,event.button.y,width_,height_,weaponEquipped_,weaponAvailable_)>=0 || gameplay::HitPotionButton(event.button.x,event.button.y,width_,height_))) {
+        if ((gameplay::HitPistolButton(event.button.x,event.button.y,width_,height_,weaponEquipped_,weaponAvailable_)>=0 ||
+             gameplay::HitPotionButton(event.button.x,event.button.y,width_,height_) ||
+             (chestPrompt_ && gameplay::HitChestButton(event.button.x,event.button.y,width_,height_)))) {
             tapPending_=true;tapX_=event.button.x;tapY_=event.button.y;return;
+        }
+        // Top-right HUD menu buttons (SET/BAG/SHOP) claim the press exactly
+        // like the finger path so a click never turns into a camera drag.
+        {
+            const float mn = width_ < height_ ? width_ : height_;
+            const float mhalf = 0.055f * mn;
+            if (std::fabs(event.button.y - mn * 0.085f) <= mhalf) {
+                const float xs[3] = {width_ - mn * 0.075f,
+                    width_ - mn * 0.225f, width_ - mn * 0.375f};
+                for (float buttonX : xs) {
+                    if (std::fabs(event.button.x - buttonX) <= mhalf) {
+                        tapPending_=true;tapX_=event.button.x;tapY_=event.button.y;return;
+                    }
+                }
+            }
         }
         mouseLooking_ = true;
         lookLastX_ = static_cast<float>(event.button.x);

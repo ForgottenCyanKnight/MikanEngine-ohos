@@ -26,6 +26,16 @@ struct State {
   if(slot<0||slot>=kSlotCount)return nullptr;int id=equipped[slot];return id>=0&&id<kItemDefCount?&kItemDefs[id]:nullptr;
  }
  int TargetSlot(int cell)const {auto d=DefOf(cell);return !d||d->slot==SlotType::Count?kNoItem:static_cast<int>(d->slot);}
+ // Shop purchase path: stackable goods (potions) pile onto the first matching
+ // cell, everything else takes the first empty cell.  Returns false when the
+ // bag cannot hold the item.
+ bool AddItem(int defId,int count=1){
+  if(defId<0||defId>=kItemDefCount||count<=0)return false;
+  if(kItemDefs[defId].maxCount>1)
+   for(auto& cell:bag)if(cell.defId==defId){cell.count+=count;return true;}
+  for(auto& cell:bag)if(cell.defId==kNoItem){cell={defId,count};return true;}
+  return false;
+ }
  bool TapBag(int cell){
   auto d=DefOf(cell);if(!d)return false;
   if(d->slot==SlotType::Count){if(--bag[cell].count==0)bag[cell]={};return true;}

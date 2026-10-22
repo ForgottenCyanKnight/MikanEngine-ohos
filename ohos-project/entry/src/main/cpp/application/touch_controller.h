@@ -43,6 +43,7 @@ public:
     void SetViewport(float width, float height);
     void SetWeaponAvailable(bool available){weaponAvailable_=available;}
     void SetWeaponEquipped(bool equipped) { weaponEquipped_ = equipped; }
+    void SetChestPrompt(bool active) { chestPrompt_ = active; }
 
     // Sets the screen the renderer currently shows.  Outside gameplay this
     // layer stops driving stick/look/buttons and only reports tap edges.
@@ -128,6 +129,7 @@ private:
 
     bool weaponAvailable_=false;
     bool weaponEquipped_ = false;
+    bool chestPrompt_ = false;  // chest interaction prompt on screen
     bool sawFinger_ = false;  // disables the mouse fallback forever once set
     bool mouseLooking_ = false;
 
