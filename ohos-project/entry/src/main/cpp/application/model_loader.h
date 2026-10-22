@@ -89,6 +89,11 @@ struct Mesh {
     std::vector<Vertex> vertices;
     std::vector<std::uint32_t> indices;
     std::uint32_t materialIndex = 0;
+    // Index into Model::nodes for the node that instantiates this mesh
+    // (primaries of one glTF mesh share the node).  Lets the renderer group
+    // sub-meshes under an animated subtree, e.g. a chest lid.  -1 when the
+    // node was not part of the resolved scene graph.
+    std::int32_t nodeIndex = -1;
     // 2 when every index fits in 16 bits, otherwise 4.  metalRoughSpheres
     // peaks at 62664 vertices per mesh, so the 16 bit path is used and the
     // uploaded index data stays at 3 MB instead of 6 MB.
@@ -96,6 +101,12 @@ struct Mesh {
 };
 
 struct Material {
+    enum class AlphaMode : std::uint8_t {
+        Opaque,
+        Mask,
+        Blend,
+    };
+
     bool waterSurface = false;
     bool worldSpaceUv = false; // Cube faces repeat once per world metre.
     // glTF material name, e.g. "M_Joints" -- the renderer uses it to skip
@@ -112,12 +123,25 @@ struct Material {
     float roughnessFactor = 1.0f;
     float emissiveFactor[3] = {0.0f, 0.0f, 0.0f};
     float normalScale = 1.0f;
+    AlphaMode alphaMode = AlphaMode::Opaque;
+    float alphaCutoff = 0.5f;
+    bool doubleSided = false;
 };
 
 struct Image {
+    enum class WrapMode : std::uint8_t {
+        Repeat,
+        ClampToEdge,
+        MirroredRepeat,
+    };
+
     std::string uri;
     std::uint32_t width = 0;
     std::uint32_t height = 0;
+    // glTF sampling state belongs to the texture; these bundled assets use
+    // one sampler per image, so retain it beside the decoded pixels.
+    WrapMode wrapS = WrapMode::Repeat;
+    WrapMode wrapT = WrapMode::Repeat;
     // Always decoded to 4 channels so the uploader can assume RGBA8.
     std::vector<std::uint8_t> rgba;
 };

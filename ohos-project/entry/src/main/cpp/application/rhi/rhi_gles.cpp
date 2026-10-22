@@ -1,4 +1,5 @@
 #include "../inventory_ui.h"
+#include "../shop_ui.h"
 #include "../settings_ui.h"
 #include "../minimap_hud.h"
 // GLES 3.0 backend.
@@ -26,6 +27,7 @@
 // Same directory as this file; the include path does not contain application/,
 // only the cpp root, so the sibling header is addressed relatively.
 #include "../water/water_surface.h"
+#include "../water/water_normal_map.h"
 #include "rhi.h"
 #include "../audio/audio_manager.h"
 #include "../inventory.h"
@@ -65,6 +67,9 @@ extern "C" void OHOS_FreeRawFile(void* data);
 
 namespace {
 
+constexpr char kEzTreeGrassModelPath[] = "models/EZTree/grass.glb";
+constexpr char kEzTreeTreeModelPath[] = "models/EZTree/tree.glb";
+
 // ---------------------------------------------------------------------------
 // Math.  Column-major, matching both GLSL's mat4 memory layout and the helper
 // functions in the Vulkan backend.
@@ -93,6 +98,149 @@ Mat4 Mat4FromSceneEntity(const scene::Definition& definition, const scene::Entit
     Mat4 result{};
     scene::BuildModelMatrix(transform, result.value);
     return result;
+}
+
+// ---- prop animation helpers (treasure chest lid) -------------------------
+// Hamilton product, glTF quat layout (x, y, z, w).
+void QuatMultiply(const float a[4], const float b[4], float out[4])
+{
+    const float ax = a[0], ay = a[1], az = a[2], aw = a[3];
+    const float bx = b[0], by = b[1], bz = b[2], bw = b[3];
+    out[0] = aw * bx + ax * bw + ay * bz - az * by;
+    out[1] = aw * by - ax * bz + ay * bw + az * bx;
+    out[2] = aw * bz + ax * by - ay * bx + az * bw;
+    out[3] = aw * bw - ax * bx - ay * by - az * bz;
+}
+
+void QuatNormalize(float q[4])
+{
+    const float n = std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+    if (n > 1e-8f) {
+        q[0] /= n; q[1] /= n; q[2] /= n; q[3] /= n;
+    }
+}
+
+void QuatToMat4(const float q[4], float out[16])
+{
+    const float x = q[0], y = q[1], z = q[2], w = q[3];
+    const float xx = x * x, yy = y * y, zz = z * z;
+    const float xy = x * y, xz = x * z, yz = y * z;
+    const float wx = w * x, wy = w * y, wz = w * z;
+    // Column-major, no translation.
+    out[0] = 1.f - 2.f * (yy + zz); out[1] = 2.f * (xy + wz);       out[2] = 2.f * (xz - wy);       out[3] = 0.f;
+    out[4] = 2.f * (xy - wz);       out[5] = 1.f - 2.f * (xx + zz); out[6] = 2.f * (yz + wx);       out[7] = 0.f;
+    out[8] = 2.f * (xz + wy);       out[9] = 2.f * (yz - wx);       out[10] = 1.f - 2.f * (xx + yy); out[11] = 0.f;
+    out[12] = 0.f;                  out[13] = 0.f;                  out[14] = 0.f;                  out[15] = 1.f;
+}
+
+// General 4x4 inverse (adjugate).  Returns false for singular matrices.
+bool Mat4Invert(const float m[16], float out[16])
+{
+    const float a00 = m[0], a01 = m[1], a02 = m[2], a03 = m[3];
+    const float a10 = m[4], a11 = m[5], a12 = m[6], a13 = m[7];
+    const float a20 = m[8], a21 = m[9], a22 = m[10], a23 = m[11];
+    const float a30 = m[12], a31 = m[13], a32 = m[14], a33 = m[15];
+    const float b00 = a00 * a11 - a01 * a10;
+    const float b01 = a00 * a12 - a02 * a10;
+    const float b02 = a00 * a13 - a03 * a10;
+    const float b03 = a01 * a12 - a02 * a11;
+    const float b04 = a01 * a13 - a03 * a11;
+    const float b05 = a02 * a13 - a03 * a12;
+    const float b06 = a20 * a31 - a21 * a30;
+    const float b07 = a20 * a32 - a22 * a30;
+    const float b08 = a20 * a33 - a23 * a30;
+    const float b09 = a21 * a32 - a22 * a31;
+    const float b10 = a21 * a33 - a23 * a31;
+    const float b11 = a22 * a33 - a23 * a32;
+    float det = b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
+    if (std::fabs(det) < 1e-12f) {
+        return false;
+    }
+    det = 1.0f / det;
+    out[0] = (a11 * b11 - a12 * b10 + a13 * b09) * det;
+    out[1] = (a02 * b10 - a01 * b11 - a03 * b09) * det;
+    out[2] = (a31 * b05 - a32 * b04 + a33 * b03) * det;
+    out[3] = (a22 * b04 - a21 * b05 - a23 * b03) * det;
+    out[4] = (a12 * b08 - a10 * b11 - a13 * b07) * det;
+    out[5] = (a00 * b11 - a02 * b08 + a03 * b07) * det;
+    out[6] = (a32 * b02 - a30 * b05 - a33 * b01) * det;
+    out[7] = (a20 * b05 - a22 * b02 + a23 * b01) * det;
+    out[8] = (a10 * b10 - a11 * b08 + a13 * b06) * det;
+    out[9] = (a01 * b08 - a00 * b10 - a03 * b06) * det;
+    out[10] = (a30 * b04 - a31 * b02 + a33 * b00) * det;
+    out[11] = (a21 * b02 - a20 * b04 - a23 * b00) * det;
+    out[12] = (a11 * b07 - a10 * b09 - a12 * b06) * det;
+    out[13] = (a00 * b09 - a01 * b07 + a02 * b06) * det;
+    out[14] = (a31 * b01 - a30 * b03 - a32 * b00) * det;
+    out[15] = (a20 * b03 - a21 * b01 + a22 * b00) * det;
+    return true;
+}
+
+// Compose a node's world matrix from the Model::nodes hierarchy (local TRS,
+// parents precede children).  Mirrors the loader's static bake so animated
+// deltas can be expressed against the baked vertices.
+void NodeWorldMatrix(const std::vector<ohos_model::Node>& nodes, int index, float out[16])
+{
+    float local[16];
+    const ohos_model::Node& node = nodes[static_cast<size_t>(index)];
+    float rot[16];
+    QuatToMat4(node.rotation, rot);
+    for (int c = 0; c < 3; ++c) {
+        for (int r = 0; r < 4; ++r) {
+            local[c * 4 + r] = rot[c * 4 + r] * node.scale[c];
+        }
+    }
+    local[12] = node.translation[0];
+    local[13] = node.translation[1];
+    local[14] = node.translation[2];
+    local[15] = 1.0f;
+    if (node.parent >= 0 && node.parent < static_cast<int32_t>(nodes.size()) &&
+        node.parent != index) {
+        float parentWorld[16];
+        NodeWorldMatrix(nodes, node.parent, parentWorld);
+        float combined[16];
+        for (int c = 0; c < 4; ++c) {
+            for (int r = 0; r < 4; ++r) {
+                float value = 0.0f;
+                for (int k = 0; k < 4; ++k) {
+                    value += parentWorld[k * 4 + r] * local[c * 4 + k];
+                }
+                combined[c * 4 + r] = value;
+            }
+        }
+        std::memcpy(out, combined, sizeof(out[0]) * 16);
+        return;
+    }
+    std::memcpy(out, local, sizeof(out[0]) * 16);
+}
+
+// Sample the lid rotation channel at time t (linear, quaternion lerp).
+// Falls back to the node default rotation when the clip has no channel.
+void SampleNodeRotation(const ohos_model::AnimationClip& clip, int nodeIndex,
+    float t, const float defaultQ[4], float outQ[4])
+{
+    for (const ohos_model::AnimationChannel& channel : clip.channels) {
+        if (channel.nodeIndex != static_cast<std::uint32_t>(nodeIndex) ||
+            channel.path != 1 || channel.times.size() < 2) {
+            continue;
+        }
+        const float clamped = std::min(std::max(t, channel.times.front()),
+            channel.times.back());
+        size_t k = 0;
+        while (k + 1 < channel.times.size() && channel.times[k + 1] < clamped) {
+            ++k;
+        }
+        const float t0 = channel.times[k], t1 = channel.times[k + 1];
+        const float a = t1 > t0 ? (clamped - t0) / (t1 - t0) : 0.0f;
+        const float* qa = &channel.values[k * 4];
+        const float* qb = &channel.values[(k + 1) * 4];
+        for (int c = 0; c < 4; ++c) {
+            outQ[c] = qa[c] + (qb[c] - qa[c]) * a;
+        }
+        QuatNormalize(outQ);
+        return;
+    }
+    std::memcpy(outQ, defaultQ, sizeof(outQ[0]) * 4);
 }
 
 Mat4 Mat4Multiply(const Mat4& left, const Mat4& right)
@@ -518,13 +666,24 @@ precision highp int;
 precision highp sampler2D;
 precision highp samplerCube;
 layout(location = 0) in vec2 aPos;
+layout(location = 1) in vec4 aGlassShape;
+layout(location = 2) in float aGlassRadius;
+layout(location = 3) in vec4 aColor;
 uniform vec2 overlayResolution;
+out vec4 vGlassShape;
+out float vGlassRadius;
+out vec4 vColor;
 
 void main()
 {
     vec2 clip = vec2(aPos.x / overlayResolution.x * 2.0 - 1.0,
                      1.0 - aPos.y / overlayResolution.y * 2.0);
     gl_Position = vec4(clip, 0.0, 1.0);
+    // Every vertex of one primitive carries identical constants, so the
+    // interpolation reproduces the exact uniform values of the old path.
+    vGlassShape = aGlassShape;
+    vGlassRadius = aGlassRadius;
+    vColor = aColor;
 }
 )";
 
@@ -533,12 +692,12 @@ precision highp float;
 precision highp int;
 precision highp sampler2D;
 precision highp samplerCube;
-uniform vec4 overlayColor;
 uniform vec2 overlayResolution;
-uniform vec4 glassShape;
-uniform float glassRadius;
 uniform int glassEnabled;
 uniform sampler2D glassBackground;
+in vec4 vGlassShape;
+in float vGlassRadius;
+in vec4 vColor;
 out vec4 outColor;
 vec3 GlassScene(vec2 uv) { return texture(glassBackground, clamp(vec2(uv.x,1.0-uv.y),vec2(0.0),vec2(1.0))).rgb; }
 // Rounded glass lens in top-left window pixels. Background excludes all UI.
@@ -599,7 +758,7 @@ vec4 ShadeGlass(vec2 pixel, vec4 shape, float radius, vec4 tint, vec2 resolution
 }
 void main() {
     vec2 pixel = vec2(gl_FragCoord.x, overlayResolution.y - gl_FragCoord.y);
-    outColor = ShadeGlass(pixel, glassShape, glassRadius, overlayColor, overlayResolution);
+    outColor = ShadeGlass(pixel, vGlassShape, vGlassRadius, vColor, overlayResolution);
 }
 )";
 
@@ -659,8 +818,8 @@ precision highp samplerCube;
 layout(location = 0) in vec2 aPos;
 layout(location = 1) in vec2 aUV;
 layout(location = 2) in vec4 aColor;
+layout(location = 3) in float aPxRange;
 uniform vec2 textResolution;
-uniform float textScreenPxRange;
 out vec2 fragUV;
 out vec4 fragColor;
 out float fragScreenPxRange;
@@ -672,7 +831,7 @@ void main()
     gl_Position = vec4(clip, 0.0, 1.0);
     fragUV = aUV;
     fragColor = aColor;
-    fragScreenPxRange = textScreenPxRange;
+    fragScreenPxRange = aPxRange;
 }
 )";
 
@@ -809,6 +968,11 @@ float ShadowVisibility(vec3 worldPosition, vec3 N, vec3 L)
     if (useShadowMap == 0) {
         return 1.0;
     }
+    // Back-facing receivers contribute zero direct light anyway (the product
+    // with NoL below is zero), so skip the 9-tap PCF on them.
+    if (dot(N, L) <= 0.0) {
+        return 0.0;
+    }
     vec4 shadowH = shadowMatrix * vec4(worldPosition, 1.0);
     vec3 shadowNdc = shadowH.xyz / max(shadowH.w, 1e-5);
     vec2 shadowUv = shadowNdc.xy * 0.5 + 0.5;
@@ -884,6 +1048,13 @@ vec3 PointLight(vec3 lightPos, vec3 lightColor, vec3 N, vec3 V, float NoV,
 {
     vec3 toLight = lightPos - worldPos;
     float dist = length(toLight);
+    // Distance cutoff: with the scene's intensity scale (color * 8) the
+    // 1/(1+d^2) falloff at 30 m is under 1%, so skipping the whole PBR there
+    // is visually free and removes three full light evaluations from most
+    // far-field pixels.  Lockstep with shaders/scene_model.frag.
+    if (dist > 30.0) {
+        return vec3(0.0);
+    }
     vec3 L = toLight / max(dist, 1e-4);
     float attenuation = 1.0 / (1.0 + dist * dist);
     vec3 H = normalize(V + L);
@@ -938,7 +1109,11 @@ void main()
         return;
     }
 
-    vec3 albedo = sRGBToLinear(texture(albedoTexture, vUV).rgb);
+    // Albedo alpha carries the water-surface flag (see the g-buffer write);
+    // the material attachment is RGB8 so its w component is gone.
+    vec4 albedoSample = texture(albedoTexture, vUV);
+    vec3 albedo = sRGBToLinear(albedoSample.rgb);
+    float waterSurface = albedoSample.a;
     vec4 mat = texture(materialTexture, vUV);
     float metallic = clamp(mat.x, 0.0, 1.0);
     float roughness = clamp(mat.y, 0.045, 1.0);
@@ -947,7 +1122,7 @@ void main()
     vec3 emissive = encodedEmission.rgb * exp2(encodedEmission.a * 255.0 - 128.0);
     vec3 N = OctahedronDecode(texture(normalTexture, vUV).xy * 2.0 - 1.0);
 
-    if (mat.w > 0.5) {
+    if (waterSurface > 0.5) {
         float NoV = max(dot(N, V), 0.0);
         float fresnel = 0.02 + 0.98 * pow(1.0 - NoV, 5.0);
         vec3 reflection = sRGBToLinear(textureLod(skyboxTexture, reflect(-V, N), roughness * 4.0).rgb);
@@ -1059,6 +1234,7 @@ precision highp samplerCube;
 uniform sampler2D opaqueColor;
 uniform highp sampler2D opaqueDepth;
 uniform samplerCube waterSky;
+uniform sampler2D waterNormalMap;
 uniform mat4 waterInvViewProj;
 uniform vec4 waterCamera;
 uniform vec4 waterParams;
@@ -1075,36 +1251,13 @@ out vec4 outColor;
 #define WATER_UV vUV
 #define DEPTH_NDC (depth * 2.0 - 1.0)
 #define WATER_LDR (waterLdr == 1)
-// Four advected noise octaves with analytic height gradients. Geometry stays
-// at the fixed sea level; only the reflection normal changes.
-float WaterHash(vec2 p)
-{
-    vec3 q = fract(vec3(p.xyx) * 0.1031);
-    q += dot(q, q.yzx + 33.33);
-    return fract((q.x + q.y) * q.z);
-}
-
-vec2 WaterNoiseGradient(vec2 p)
-{
-    vec2 cell = floor(p);
-    vec2 f = fract(p);
-    // Quintic interpolation gives continuous first and second derivatives
-    // across lattice boundaries, without finite-difference texture samples.
-    vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
-    vec2 du = 30.0 * f * f * (f * (f - 2.0) + 1.0);
-    float a = WaterHash(cell);
-    float b = WaterHash(cell + vec2(1.0, 0.0));
-    float c = WaterHash(cell + vec2(0.0, 1.0));
-    float d = WaterHash(cell + vec2(1.0, 1.0));
-    return vec2(mix(b - a, d - c, u.y) * du.x,
-                mix(c - a, d - b, u.x) * du.y);
-}
-
-vec3 WaterNormal(vec3 worldPosition, float time)
+// The packed repeating gradient tile replaces four layers of runtime hashes.
+vec3 WaterNormal(vec3 worldPosition, float time, vec2 positionDx, vec2 positionDy)
 {
     vec2 p = worldPosition.xz;
-    float footprint = max(length(dFdx(p)), length(dFdy(p)));
+    float footprint = max(length(positionDx), length(positionDy));
     const mat2 turn = mat2(0.8, 0.6, -0.6, 0.8);
+    const float inverseTilePeriod = 1.0 / 32.0;
     mat2 basis = mat2(1.0);
     vec2 drift = vec2(0.12, -0.08);
     vec2 offset = vec2(17.3, -9.2);
@@ -1115,7 +1268,12 @@ vec3 WaterNormal(vec3 worldPosition, float time)
         // Each layer has its own scale, orientation, origin and flow direction.
         vec2 q = basis * p * frequency + drift * (time * 3.0) + offset;
         float filterWeight = 1.0 - smoothstep(0.25, 0.85, footprint * frequency);
-        slope += transpose(basis) * WaterNoiseGradient(q)
+        vec4 packedGradient = textureGrad(waterNormalMap, q * inverseTilePeriod,
+            basis * positionDx * (frequency * inverseTilePeriod),
+            basis * positionDy * (frequency * inverseTilePeriod));
+        vec2 encodedGradient = (octave % 2 == 0) ? packedGradient.rg : packedGradient.ba;
+        vec2 noiseGradient = (encodedGradient * 2.0 - 1.0) * 1.875;
+        slope += transpose(basis) * noiseGradient
             * (amplitude * frequency * filterWeight);
         basis = turn * basis;
         drift = turn * drift * 1.19;
@@ -1216,7 +1374,8 @@ void main()
     bool insideSea = abs(surface.x) <= WATER_PARAMS.y && abs(surface.z) <= WATER_PARAMS.y;
     bool hitsWater = WATER_CAMERA.w < 1.5 && insideSea && surfaceDistance > 0.0 && surfaceDistance < bottomDistance - 0.001;
     bool underwater = WATER_CAMERA.w < 1.5 && camera.y < WATER_PARAMS.x && abs(camera.x) <= WATER_PARAMS.y && abs(camera.z) <= WATER_PARAMS.y;
-    vec3 waveNormal = WaterNormal(surface, WATER_PARAMS.w);
+    vec2 surfaceDx = dFdx(surface.xz);
+    vec2 surfaceDy = dFdy(surface.xz);
     if (!hitsWater && !underwater) {
         outColor = FinishScene(background, camera, ray, bottomDistance); return;
     }
@@ -1230,7 +1389,7 @@ void main()
     vec3 throughWater = background * transmission + body * (vec3(1.0) - transmission);
     vec3 color = throughWater;
     if (hitsWater) {
-        vec3 N = waveNormal;
+        vec3 N = WaterNormal(surface, WATER_PARAMS.w, surfaceDx, surfaceDy);
         vec3 V = -ray;
         if (dot(N, V) < 0.0) N = -N;
         float NoV = clamp(dot(N, V), 0.0, 1.0);
@@ -1252,6 +1411,27 @@ void main()
 // translation layer is choking on the chained render passes.
 constexpr float kBloomStrength = 0.1f;   // engine default 0.2, halved on request
 
+// ---- per-frame CPU/GPU profiling probes (hilog breadcrumbs) --------------
+// CPU: SDL performance counters around each render stage; averaged over 300
+// frames and logged as "SDL3_GLES prof ...".  GPU: GL_EXT_disjoint_timer_query
+// when the driver exposes it (probed once through SDL_GL_GetProcAddress -- the
+// DGLES bridge may not have it, in which case gpu[] stays 0).  Timer queries
+// are double buffered: results are collected one frame late, never stalling.
+#ifndef GL_TIME_ELAPSED_EXT
+#define GL_TIME_ELAPSED_EXT 0x88BF
+#endif
+#ifndef GL_QUERY_RESULT_AVAILABLE_EXT
+#define GL_QUERY_RESULT_AVAILABLE_EXT 0x8867
+#endif
+#ifndef GL_QUERY_RESULT_EXT
+#define GL_QUERY_RESULT_EXT 0x8866
+#endif
+using PFN_ProfGenQueries = void (*)(GLsizei, GLuint*);
+using PFN_ProfDeleteQueries = void (*)(GLsizei, const GLuint*);
+using PFN_ProfBeginQuery = void (*)(GLenum, GLuint);
+using PFN_ProfEndQuery = void (*)(GLenum);
+using PFN_ProfGetQueryObjectuiv = void (*)(GLuint, GLenum, GLuint*);
+
 // FXAA 3.11 (quality profile), ported from MikanEngine fxaa.frag.  Input is
 // the final LDR image (tonemapped + gamma encoded) produced by the lighting
 // pass: luma is measured directly on it, matching the engine decision to run
@@ -1263,6 +1443,7 @@ precision highp sampler2D;
 precision highp samplerCube;
 
 uniform sampler2D colorTex;
+uniform int fxaaEnabled;
 
 in vec2 vUV;
 out vec4 outColor;
@@ -1430,8 +1611,12 @@ vec3 FXAA311(vec3 color, vec2 texCoord, vec2 view) {
 }
 
 void main() {
-    vec2 texelSize = 1.0 / vec2(textureSize(colorTex, 0));
     vec3 color = texture(colorTex, vUV).rgb;
+    if (fxaaEnabled == 0) {
+        outColor = vec4(color * 0.98, 1.0);
+        return;
+    }
+    vec2 texelSize = 1.0 / vec2(textureSize(colorTex, 0));
     // Same 0.98 as the engine's display pass.
     color = FXAA311(color, vUV, texelSize) * 0.98;
     outColor = vec4(color, 1.0);
@@ -2008,6 +2193,7 @@ uniform vec3 cameraPosition;
 uniform float waterTime;
 uniform vec4 materialParams;
 uniform vec4 materialBaseColorFactor;
+uniform float materialAlphaCutoff;
 // 0 when the material has no normal map.  PerturbNormal reconstructs the
 // tangent frame from screen-space derivatives, and feeding it the white
 // fallback texel yields mapN = (1,1,1) -- a per-pixel pseudo-random rotation
@@ -2091,36 +2277,13 @@ vec3 PerturbNormal(vec3 N, vec3 V, vec2 uv)
     return normalize(TBN * mapN);
 }
 
-// Four advected noise octaves with analytic height gradients. Geometry stays
-// at the fixed sea level; only the reflection normal changes.
-float WaterHash(vec2 p)
-{
-    vec3 q = fract(vec3(p.xyx) * 0.1031);
-    q += dot(q, q.yzx + 33.33);
-    return fract((q.x + q.y) * q.z);
-}
-
-vec2 WaterNoiseGradient(vec2 p)
-{
-    vec2 cell = floor(p);
-    vec2 f = fract(p);
-    // Quintic interpolation gives continuous first and second derivatives
-    // across lattice boundaries, without finite-difference texture samples.
-    vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
-    vec2 du = 30.0 * f * f * (f * (f - 2.0) + 1.0);
-    float a = WaterHash(cell);
-    float b = WaterHash(cell + vec2(1.0, 0.0));
-    float c = WaterHash(cell + vec2(0.0, 1.0));
-    float d = WaterHash(cell + vec2(1.0, 1.0));
-    return vec2(mix(b - a, d - c, u.y) * du.x,
-                mix(c - a, d - b, u.x) * du.y);
-}
-
-vec3 WaterNormal(vec3 worldPosition, float time)
+// The packed repeating gradient tile replaces four layers of runtime hashes.
+vec3 WaterNormal(vec3 worldPosition, float time, vec2 positionDx, vec2 positionDy)
 {
     vec2 p = worldPosition.xz;
-    float footprint = max(length(dFdx(p)), length(dFdy(p)));
+    float footprint = max(length(positionDx), length(positionDy));
     const mat2 turn = mat2(0.8, 0.6, -0.6, 0.8);
+    const float inverseTilePeriod = 1.0 / 32.0;
     mat2 basis = mat2(1.0);
     vec2 drift = vec2(0.12, -0.08);
     vec2 offset = vec2(17.3, -9.2);
@@ -2131,7 +2294,12 @@ vec3 WaterNormal(vec3 worldPosition, float time)
         // Each layer has its own scale, orientation, origin and flow direction.
         vec2 q = basis * p * frequency + drift * (time * 3.0) + offset;
         float filterWeight = 1.0 - smoothstep(0.25, 0.85, footprint * frequency);
-        slope += transpose(basis) * WaterNoiseGradient(q)
+        vec4 packedGradient = textureGrad(normalTexture, q * inverseTilePeriod,
+            basis * positionDx * (frequency * inverseTilePeriod),
+            basis * positionDy * (frequency * inverseTilePeriod));
+        vec2 encodedGradient = (octave % 2 == 0) ? packedGradient.rg : packedGradient.ba;
+        vec2 noiseGradient = (encodedGradient * 2.0 - 1.0) * 1.875;
+        slope += transpose(basis) * noiseGradient
             * (amplitude * frequency * filterWeight);
         basis = turn * basis;
         drift = turn * drift * 1.19;
@@ -2158,8 +2326,12 @@ void main()
     // Keep the source material texture/factors intact for normal instances;
     // the enemy marker is an explicit gameplay presentation tint carried by
     // the instance stream rather than a baked texture/material change.
-    vec3 baseAlbedo = texture(baseColorTexture, materialUv).rgb
-        * materialBaseColorFactor.rgb;
+    vec4 baseColorSample = texture(baseColorTexture, materialUv);
+    float materialAlpha = baseColorSample.a * materialBaseColorFactor.a;
+    if (materialAlphaCutoff > 0.0 && materialAlpha < materialAlphaCutoff) {
+        discard;
+    }
+    vec3 baseAlbedo = baseColorSample.rgb * materialBaseColorFactor.rgb;
     float markerStrength = clamp(vInstanceColor.a, 0.0, 1.0);
     vec3 albedo = mix(baseAlbedo, vInstanceColor.rgb, markerStrength);
     vec4 mr = texture(metallicRoughnessTexture, materialUv);
@@ -2169,11 +2341,20 @@ void main()
     float roughness = clamp(mr.g * materialParams.y, 0.0, 1.0);
     float ao = texture(aoTexture, materialUv).r;
 
-    vec3 N = isWater ? WaterNormal(vWorldPosition, waterTime) : normalize(vNormal);
+    vec2 waterPositionDx = dFdx(vWorldPosition.xz);
+    vec2 waterPositionDy = dFdy(vWorldPosition.xz);
+    vec3 N = isWater ? WaterNormal(vWorldPosition, waterTime,
+        waterPositionDx, waterPositionDy) : normalize(vNormal);
     vec3 V = normalize(cameraPosition - vWorldPosition);
     if (isWater && dot(N, V) < 0.0) N = -N;
     if (hasNormalMap == 1 && !isWater) {
         N = PerturbNormal(N, vWorldPosition, materialUv);
+    }
+    // glTF doubleSided materials keep their surfaces visible from both sides
+    // and orient the lighting normal toward the viewer on back faces. Meshes
+    // that are not double-sided are culled before this point.
+    if (!isWater && !gl_FrontFacing) {
+        N = -N;
     }
 
     vec3 emberGlow = vec3(0.0);
@@ -2191,16 +2372,24 @@ void main()
         albedo = mix(albedo, clamp(emberGlow, 0.0, 1.0), edge * 0.85);
     }
 
-    outAlbedo = vec4(albedo, 1.0);
+    // Albedo alpha carries the water-surface flag for the lighting pass:
+    // the material attachment is RGB8 (metallic/roughness/ao only) to save
+    // bandwidth, so the binary flag moved to the one spare alpha channel.
+    outAlbedo = vec4(albedo, isWater ? 1.0 : 0.0);
     outNormal = vec4(OctahedronEncode(N) * 0.5 + 0.5, 0.0, 1.0);
-    outMaterial = vec4(metallic, roughness, ao, isWater ? 1.0 : 0.0);
+    // Attachment is RGB8; the fourth component is dropped by the driver.
+    outMaterial = vec4(metallic, roughness, ao, 1.0);
     // Bake each material's linear emission into RGBE, retaining HDR in RGBA8.
     // A missing emissive texture resolves to white, allowing factor-only glow.
     vec3 srgbEmission = texture(emissiveTexture, materialUv).rgb;
     vec3 linearEmission = mix(srgbEmission / 12.92,
         pow((srgbEmission + vec3(0.055)) / 1.055, vec3(2.4)),
         step(vec3(0.04045), srgbEmission));
-    vec3 emission = max(linearEmission * materialEmissiveFactor + emberGlow, vec3(0.0));
+    // Emissive gain: glTF emissiveFactor=1 leaves emissive textures (lantern
+    // glass, helmet display) reading as plain lit albedo under the daylight
+    // key light.  Boost emission so emissive materials read as light sources;
+    // matches the gain in shaders/scene_model.frag (Vulkan lockstep).
+    vec3 emission = max(linearEmission * materialEmissiveFactor * 3.0 + emberGlow, vec3(0.0));
     float peak = max(max(emission.r, emission.g), emission.b);
     float exponent = clamp(ceil(log2(max(peak, 1e-30))), -127.0, 127.0);
     outEmissive = vec4(emission / exp2(exponent), (exponent + 128.0) / 255.0);
@@ -2314,13 +2503,165 @@ void BindSceneUniformBlock(GLuint program, const char* label)
 struct GlesMesh {
     terrain::Bounds bounds;
     bool castShadow = true;
+    bool doubleSided = false;
     GLuint vao = 0;
     GLuint vertexBuffer = 0;
     GLuint indexBuffer = 0;
     GLuint indexCount = 0;
     GLenum indexType = GL_UNSIGNED_SHORT;
     int32_t materialIndex = 0;
+    int32_t nodeIndex = -1;  // source scene-graph node (chest lid grouping)
 };
+
+struct GlesSceneModel {
+    std::string path;
+    std::vector<GlesMesh> meshes;
+    std::vector<GLuint> textures;
+    std::vector<ohos_model::Material> materials;
+    // Union of all mesh bounds (baked model space), computed once at load;
+    // enables whole-entity frustum rejection before any GL state work.
+    terrain::Bounds bounds;
+    bool boundsValid = false;    // Openable-prop data (treasure chest).  Meshes under the lid subtree are
+    // drawn with a hinge matrix sampled from the model's own animation clip;
+    // everything else uses the plain entity world matrix.  Per frame:
+    //   lidWorld = entityWorld * N * W(t) * W0^-1 * N^-1
+    // where N bakes the centring transform, W0 is the closed-pose hinge world
+    // and W(t) rebuilds the lid node world with the sampled rotation.
+    std::vector<ohos_model::Node> nodes;
+    int lidNode = -1;
+    std::vector<int> staticOrder;
+    std::vector<int> lidOrder;
+    Mat4 normaliseMat{};    // N (model space -> baked space)
+    Mat4 normaliseInv{};
+    Mat4 lidWorld0Inv{};    // W0^-1
+    Mat4 lidParentWorld{};  // W_parent of the lid node
+    Mat4 lidTranslation{};  // T0
+    Mat4 lidScale{};        // S
+    float lidRotation0[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    bool hasOpenClip = false;
+    ohos_model::AnimationClip openClip{};
+};
+
+// Treasure chest interaction constants (kChestModelPath is referenced by the
+// scene JSON entity and by the proximity/interaction logic below).
+static const char* const kChestModelPath = "models/Chest/chest.glb";
+constexpr float kChestInteractDistance = 2.2f;
+constexpr int kChestGoldReward = 50;
+
+// Whole-entity frustum rejection helper: union of a mesh list's bounds.
+terrain::Bounds UnionMeshBounds(const std::vector<GlesMesh>& meshes)
+{
+    terrain::Bounds b;
+    for (const GlesMesh& mesh : meshes) {
+        if (mesh.bounds.minimum[0] > mesh.bounds.maximum[0]) {
+            continue;
+        }
+        for (int axis = 0; axis < 3; ++axis) {
+            b.minimum[axis] = std::min(b.minimum[axis], mesh.bounds.minimum[axis]);
+            b.maximum[axis] = std::max(b.maximum[axis], mesh.bounds.maximum[axis]);
+        }
+    }
+    return b;
+}
+
+// Resolve the lid sub-tree and hinge frame for an openable prop (chest).
+// Meshes under the "lidgroup" node are split from the static parts so the
+// draw path can hinge them with the model's own baked animation clip.
+void InitOpenableProp(GlesSceneModel& asset, const ohos_model::Model& model)
+{
+    asset.nodes = model.nodes;
+    if (asset.nodes.empty() || model.animations.empty()) {
+        return;
+    }
+    for (size_t i = 0; i < asset.nodes.size(); ++i) {
+        if (asset.nodes[i].name == "lidgroup") {
+            asset.lidNode = static_cast<int>(i);
+            break;
+        }
+    }
+    if (asset.lidNode < 0) {
+        // Fallback: first node driven by a rotation channel in any clip.
+        for (const ohos_model::AnimationClip& clip : model.animations) {
+            for (const ohos_model::AnimationChannel& channel : clip.channels) {
+                if (channel.path == 1) {
+                    asset.lidNode = static_cast<int>(channel.nodeIndex);
+                    break;
+                }
+            }
+            if (asset.lidNode >= 0) break;
+        }
+        if (asset.lidNode < 0) return;
+    }
+    auto inLidSubtree = [&asset](int nodeIndex) {
+        for (int steps = 0; nodeIndex >= 0 &&
+            nodeIndex < static_cast<int>(asset.nodes.size()) && steps < 64;
+            ++steps) {
+            if (nodeIndex == asset.lidNode) return true;
+            nodeIndex = asset.nodes[static_cast<size_t>(nodeIndex)].parent;
+        }
+        return false;
+    };
+    for (size_t i = 0; i < asset.meshes.size(); ++i) {
+        if (inLidSubtree(asset.meshes[i].nodeIndex)) {
+            asset.lidOrder.push_back(static_cast<int>(i));
+        } else {
+            asset.staticOrder.push_back(static_cast<int>(i));
+        }
+    }
+    auto abortProp = [&asset]() {
+        asset.lidNode = -1;
+        asset.lidOrder.clear();
+        asset.staticOrder.clear();
+        asset.hasOpenClip = false;
+    };
+    if (asset.lidOrder.empty() || asset.staticOrder.empty()) {
+        abortProp();  // whole-model animation is outside the static pipeline
+        return;
+    }
+    const ohos_model::AnimationClip* clip = nullptr;
+    for (const ohos_model::AnimationClip& candidate : model.animations) {
+        for (const ohos_model::AnimationChannel& channel : candidate.channels) {
+            if (channel.nodeIndex == static_cast<std::uint32_t>(asset.lidNode) &&
+                channel.path == 1) {
+                clip = &candidate;
+                break;
+            }
+        }
+        if (clip != nullptr) break;
+    }
+    if (clip == nullptr) {
+        abortProp();
+        return;
+    }
+    asset.openClip = *clip;
+    asset.hasOpenClip = true;
+
+    std::memcpy(asset.normaliseMat.value, model.normaliseMatrix,
+        sizeof(asset.normaliseMat.value));
+    Mat4Invert(model.normaliseMatrix, asset.normaliseInv.value);
+    float w0[16];
+    NodeWorldMatrix(asset.nodes, asset.lidNode, w0);
+    Mat4Invert(w0, asset.lidWorld0Inv.value);
+
+    const ohos_model::Node& lid = asset.nodes[static_cast<size_t>(asset.lidNode)];
+    std::memcpy(asset.lidRotation0, lid.rotation, sizeof(asset.lidRotation0));
+    asset.lidParentWorld = lid.parent >= 0
+        ? [&]() { Mat4 m{}; NodeWorldMatrix(asset.nodes, lid.parent, m.value); return m; }()
+        : Mat4Identity();
+    asset.lidTranslation = Mat4Identity();
+    for (int c = 0; c < 3; ++c) {
+        asset.lidTranslation.value[12 + c] = lid.translation[c];
+    }
+    asset.lidScale = Mat4Identity();
+    for (int c = 0; c < 3; ++c) {
+        asset.lidScale.value[c * 4 + c] = lid.scale[c];
+    }
+    SDL_Log("SDL3_GLES stage=openable_prop_ready path=%s lid_node=%d "
+        "lid_meshes=%zu static_meshes=%zu clip=%s duration=%.2f",
+        asset.path.c_str(), asset.lidNode, asset.lidOrder.size(),
+        asset.staticOrder.size(), asset.openClip.name.c_str(),
+        asset.openClip.duration);
+}
 
 // Per-instance payload follows MikanEngine's model renderer contract in a
 // GLES-compatible form: one model matrix and one material marker per actor.
@@ -2391,6 +2732,7 @@ public:
 
     bool WeaponAvailable() const override {return inventory_.HasPistol();}
     bool WeaponEquipped() const override { return pistol_.equipped; }
+    bool ChestPromptActive() const override { return !ChestOpened() && ChestNear(); }
 
     rhi::UiScreen CurrentScreen() const override
     {
@@ -2430,7 +2772,8 @@ public:
             SDL_Log("SDL3_GLES stage=context_ready version=%s renderer=%s",
                 version != nullptr ? version : "?", renderer != nullptr ? renderer : "?");
 
-            if (!CreatePrograms() || !CreateUniformBuffer() || !LoadSkybox()) {
+            if (!CreatePrograms() || !CreateUniformBuffer() || !LoadSkybox() ||
+                !CreateWaterNormalTexture()) {
                 return false;
             }
             CreateFallbackTexture();
@@ -2480,9 +2823,6 @@ public:
         overlayProgram_ = LinkProgram(kOverlayVertexSource, kOverlayFragmentSource, "overlay");
         if (overlayProgram_ != 0) {
             overlayResolutionLocation_ = glGetUniformLocation(overlayProgram_, "overlayResolution");
-            overlayColorLocation_ = glGetUniformLocation(overlayProgram_, "overlayColor");
-            glassShapeLocation_ = glGetUniformLocation(overlayProgram_, "glassShape");
-            glassRadiusLocation_ = glGetUniformLocation(overlayProgram_, "glassRadius");
             glassEnabledLocation_ = glGetUniformLocation(overlayProgram_, "glassEnabled");
             glUseProgram(overlayProgram_);
             glUniform1i(glGetUniformLocation(overlayProgram_, "glassBackground"), 7);
@@ -2491,8 +2831,18 @@ public:
             glGenVertexArrays(1, &overlayVao_);
             glBindVertexArray(overlayVao_);
             glBindBuffer(GL_ARRAY_BUFFER, overlayVbo_);
+            // Batched UiBatchVertex: pos(2) glassShape(4) glassRadius(1) color(4).
             glEnableVertexAttribArray(0);
-            glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+            glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 11 * sizeof(float), nullptr);
+            glEnableVertexAttribArray(1);
+            glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 11 * sizeof(float),
+                reinterpret_cast<const void*>(2 * sizeof(float)));
+            glEnableVertexAttribArray(2);
+            glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, 11 * sizeof(float),
+                reinterpret_cast<const void*>(6 * sizeof(float)));
+            glEnableVertexAttribArray(3);
+            glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, 11 * sizeof(float),
+                reinterpret_cast<const void*>(7 * sizeof(float)));
             glBindVertexArray(0);
         }
 
@@ -2576,7 +2926,6 @@ public:
             return;
         }
         textResolutionLocation_ = glGetUniformLocation(textProgram_, "textResolution");
-        textPxRangeLocation_ = glGetUniformLocation(textProgram_, "textScreenPxRange");
         textSamplerLocation_ = glGetUniformLocation(textProgram_, "textAtlas");
         glUseProgram(textProgram_);
         glUniform1i(glGetUniformLocation(textProgram_,"titleBackground"),7);
@@ -2611,46 +2960,166 @@ public:
         glGenVertexArrays(1, &textVao_);
         glBindVertexArray(textVao_);
         glBindBuffer(GL_ARRAY_BUFFER, textVbo_);
-        // Interleaved pos(2) uv(2) color(4), 8 floats per vertex.
+        // Batched TextBatchVertex: pos(2) uv(2) color(4) pxRange(1), 9 floats.
         glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), nullptr);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 9 * sizeof(float), nullptr);
         glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float),
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 9 * sizeof(float),
             reinterpret_cast<const void*>(2 * sizeof(float)));
         glEnableVertexAttribArray(2);
-        glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, 8 * sizeof(float),
+        glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, 9 * sizeof(float),
             reinterpret_cast<const void*>(4 * sizeof(float)));
+        glEnableVertexAttribArray(3);
+        glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, 9 * sizeof(float),
+            reinterpret_cast<const void*>(8 * sizeof(float)));
         glBindVertexArray(0);
         LogGlErrors("create_text");
         SDL_Log("SDL3_GLES stage=sdf_text_ready atlas=%d", textAtlasTexture_ != 0 ? 1 : 0);
     }
 
-    // Re-uploads one triangle-fan circle in window pixels (y down, matching
-    // the overlay vertex shader's clip mapping).
-    void SetGlassShape(float cx, float cy, float hw, float hh, float radius)
+    // Menu-family screens have large glass panels: they refresh the half-res
+    // background after the tonemap pass and sample it (4x smaller working
+    // set).  Gameplay's glass is a small joystick circle + corner buttons --
+    // the full-res direct bind is cheaper than the blit there.
+    bool GlassUsesHalfRes() const
     {
-        glUniform1i(glassEnabledLocation_,glassEnabled_?1:0);
-        glUniform4f(glassShapeLocation_, cx, cy, hw, hh);
-        glUniform1f(glassRadiusLocation_, std::min(radius, std::min(hw,hh)));
-        // Sample the completed LDR scene, never the active window attachment.
-        glActiveTexture(GL_TEXTURE7);
-        glBindTexture(GL_TEXTURE_2D, tonemapTex_);
-        glActiveTexture(GL_TEXTURE0);
+        return glassBgFbo_ != 0 &&
+            (uiScreen_ == rhi::UiScreen::MainMenu ||
+             uiScreen_ == rhi::UiScreen::Settings ||
+             uiScreen_ == rhi::UiScreen::GameplaySettings ||
+             uiScreen_ == rhi::UiScreen::GameplayRetry ||
+             uiScreen_ == rhi::UiScreen::GameplayInventory ||
+             uiScreen_ == rhi::UiScreen::GameplayShop);
     }
 
-    void UploadCircleFan(float centerX, float centerY, float radius)
+    // ---- batched UI submission ----------------------------------------------
+    // Rects, circles and glyph quads are accumulated on the CPU each frame and
+    // flushed as ONE draw per program (the DGLES bridge costs 20-40us per GL
+    // call, so collapsing ~300 calls/frame into ~2 draws is the whole point).
+    // Per-vertex glass shape/radius/color replace the old per-draw uniforms;
+    // every vertex of a primitive carries identical constants, so shading is
+    // bit-identical to the uniform path.
+
+    // pos(2) + glassShape(4) + glassRadius(1) + color(4), 11 floats / 44 bytes.
+    struct UiBatchVertex {
+        float pos[2];
+        float glassShape[4];
+        float glassRadius;
+        float color[4];
+    };
+    static_assert(sizeof(UiBatchVertex) == 11 * sizeof(float), "ui batch stride");
+    // pos(2) + uv(2) + color(4) + pxRange(1), 9 floats / 36 bytes.
+    struct TextBatchVertex {
+        float pos[2];
+        float uv[2];
+        float color[4];
+        float pxRange;
+    };
+    static_assert(sizeof(TextBatchVertex) == 9 * sizeof(float), "text batch stride");
+
+    std::vector<UiBatchVertex> uiBatch_;
+    std::vector<TextBatchVertex> textBatch_;
+
+    void UiPushVertex(float x, float y, const float shape[4], float radius,
+        const float color[4])
     {
-        SetGlassShape(centerX, centerY, radius, radius, radius);
-        float vertices[(kOverlaySegments + 2) * 2];
-        vertices[0] = centerX;
-        vertices[1] = centerY;
-        for (int i = 0; i <= kOverlaySegments; ++i) {
-            const float t = static_cast<float>(i) / static_cast<float>(kOverlaySegments) *
-                6.28318530717958647692f;
-            vertices[(i + 1) * 2] = centerX + std::cos(t) * radius;
-            vertices[(i + 1) * 2 + 1] = centerY + std::sin(t) * radius;
+        UiBatchVertex v;
+        v.pos[0] = x;
+        v.pos[1] = y;
+        std::memcpy(v.glassShape, shape, sizeof(v.glassShape));
+        v.glassRadius = radius;
+        std::memcpy(v.color, color, sizeof(v.color));
+        uiBatch_.push_back(v);
+    }
+
+    void UiFlushOverlay()
+    {
+        if (uiBatch_.empty()) {
+            return;
         }
-        glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_DYNAMIC_DRAW);
+        if (overlayProgram_ == 0) {
+            uiBatch_.clear();
+            return;
+        }
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glDisable(GL_DEPTH_TEST);
+        glUseProgram(overlayProgram_);
+        glUniform2f(overlayResolutionLocation_, static_cast<float>(width_),
+            static_cast<float>(height_));
+        glUniform1i(glassEnabledLocation_, glassEnabled_ ? 1 : 0);
+        // Sample the completed LDR scene, never the active window attachment.
+        glActiveTexture(GL_TEXTURE7);
+        glBindTexture(GL_TEXTURE_2D,
+            GlassUsesHalfRes() ? glassBgTex_ : tonemapTex_);
+        glActiveTexture(GL_TEXTURE0);
+        glBindVertexArray(overlayVao_);
+        glBindBuffer(GL_ARRAY_BUFFER, overlayVbo_);
+        glBufferData(GL_ARRAY_BUFFER,
+            static_cast<GLsizeiptr>(uiBatch_.size() * sizeof(UiBatchVertex)),
+            uiBatch_.data(), GL_STREAM_DRAW);
+        glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(uiBatch_.size()));
+        glBindVertexArray(0);
+        glUseProgram(0);
+        uiBatch_.clear();
+        LogGlErrors("ui_flush_overlay");
+    }
+
+    void UiFlushText()
+    {
+        if (textBatch_.empty()) {
+            return;
+        }
+        if (textProgram_ == 0 || textAtlasTexture_ == 0) {
+            textBatch_.clear();
+            return;
+        }
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glDisable(GL_DEPTH_TEST);
+        glUseProgram(textProgram_);
+        glUniform2f(textResolutionLocation_, static_cast<float>(width_),
+            static_cast<float>(height_));
+        glActiveTexture(GL_TEXTURE0);
+        glUniform1i(textSamplerLocation_, 0);
+        glBindTexture(GL_TEXTURE_2D, textAtlasTexture_);
+        glActiveTexture(GL_TEXTURE7);
+        glBindTexture(GL_TEXTURE_2D,
+            GlassUsesHalfRes() ? glassBgTex_ : tonemapTex_);
+        glActiveTexture(GL_TEXTURE0);
+        glBindVertexArray(textVao_);
+        glBindBuffer(GL_ARRAY_BUFFER, textVbo_);
+        glBufferData(GL_ARRAY_BUFFER,
+            static_cast<GLsizeiptr>(textBatch_.size() * sizeof(TextBatchVertex)),
+            textBatch_.data(), GL_STREAM_DRAW);
+        glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(textBatch_.size()));
+        glBindVertexArray(0);
+        glUseProgram(0);
+        textBatch_.clear();
+        LogGlErrors("ui_flush_text");
+    }
+
+    // Appends one window-pixel circle (y down) as a triangle list.  Same
+    // tessellation density as the old GL_TRIANGLE_FAN path.
+    void EmitUiCircle(float centerX, float centerY, float radius, const float color[4])
+    {
+        if (overlayProgram_ == 0) {
+            return;
+        }
+        const float shape[4] = {centerX, centerY, radius, radius};
+        for (int i = 0; i < kOverlaySegments; ++i) {
+            const float t0 = static_cast<float>(i) / static_cast<float>(kOverlaySegments) *
+                6.28318530717958647692f;
+            const float t1 = static_cast<float>(i + 1) / static_cast<float>(kOverlaySegments) *
+                6.28318530717958647692f;
+            const float x0 = centerX + std::cos(t0) * radius;
+            const float y0 = centerY + std::sin(t0) * radius;
+            const float x1 = centerX + std::cos(t1) * radius;
+            const float y1 = centerY + std::sin(t1) * radius;
+            UiPushVertex(centerX, centerY, shape, radius, color);
+            UiPushVertex(x0, y0, shape, radius, color);
+            UiPushVertex(x1, y1, shape, radius, color);
+        }
     }
 
     // ---- main menu / settings ------------------------------------------------
@@ -2662,12 +3131,9 @@ public:
     // corner radius r (r == hh gives a pill).
     struct MenuButtonPos { float cx; float cy; float hw; float hh; float r; };
 
-    // index meaning per screen -- MainMenu: 0 = START, 1 = SETTINGS;
-    // Settings: 0 = FPS toggle, 1 = sensitivity, 2 = bloom toggle,
-    // 3 = render scale, 4 = back (top-right corner button);
-    // Gameplay: 0 = SET, 1 = BAG (vertical stack on the right edge);
-    // GameplaySettings: 0 = close, 1 = FPS, 2 = bloom, 3 = render scale,
-    // 4 = return to title; GameplayRetry: 0 = RETRY, 5 = MENU.
+    // MainMenu: 0 = START, 1 = SETTINGS; settings screens share settings_ui
+    // (0 = close, 1..8 = options, 9 = return); Gameplay: 0 = SET, 1 = BAG;
+    // GameplayRetry: 0 = RETRY, 5 = MENU.
     MenuButtonPos MenuButtonLayout(int index) const
     {
         const float w = static_cast<float>(width_);
@@ -2685,18 +3151,23 @@ public:
                 mn * 0.040f};      // MENU
         }
         if (uiScreen_ == rhi::UiScreen::Gameplay) {
-            // Vertical stack along the right edge, above the action-button
-            // cluster: SET above, BAG below.  Easier to reach than the old
-            // top row and clear of the camera-drag heartland.
+            // Horizontal row along the top-right edge: SHOP, BAG, SET from
+            // left to right (SET hugs the corner).  touch_controller claims
+            // presses on this exact geometry before the camera layers.
+            const float r = mn * 0.055f;
             if (index == 0) {
-                return {w * 0.93f, h * 0.26f, mn * 0.055f, mn * 0.055f,
-                    mn * 0.055f};          // SET
+                return {w - mn * 0.075f, mn * 0.085f, r, r, r};   // SET
             }
-            return {w * 0.93f, h * 0.42f, mn * 0.055f, mn * 0.055f,
-                mn * 0.055f};              // BAG
+            if (index == 1) {
+                return {w - mn * 0.225f, mn * 0.085f, r, r, r};   // BAG
+            }
+            return {w - mn * 0.375f, mn * 0.085f, r, r, r};       // SHOP
         }
         if(uiScreen_==rhi::UiScreen::GameplayInventory){
             auto b=inventory_ui::Layout(index,w,h);return {b.cx,b.cy,b.hw,b.hh,b.r};
+        }
+        if(uiScreen_==rhi::UiScreen::GameplayShop){
+            auto b=shop_ui::Layout(index,w,h);return {b.cx,b.cy,b.hw,b.hh,b.r};
         }
         if (uiScreen_ == rhi::UiScreen::MainMenu) {
             if (index == 0) {
@@ -2753,6 +3224,14 @@ public:
         }
         if (uiScreen_ == rhi::UiScreen::Gameplay) {
             if(gameplay::HitPotionButton(x,y,static_cast<float>(width_),static_cast<float>(height_))){inventory_.UsePotion(playerHealth_,playerMaxHealth_);return;}
+            // Chest interaction: claim the tap before gameplay controls so a
+            // press on the prompt never doubles as a camera drag.
+            if (!ChestOpened() && ChestNear() && HitRect(x, y, ChestButtonRect())) {
+                chestOpenStartTicks_ = SDL_GetTicks();
+                gold_ += kChestGoldReward;
+                SDL_Log("SDL3_GLES stage=chest_open gold=%d", gold_);
+                return;
+            }
             const int weaponButton = gameplay::HitPistolButton(x,y,
                 static_cast<float>(width_),static_cast<float>(height_),pistol_.equipped,inventory_.HasPistol());
             if (weaponButton>=0) { pistol_.Button(weaponButton); return; }
@@ -2765,6 +3244,53 @@ public:
             } else if (HitRect(x, y, MenuButtonLayout(1))) {
                 uiScreen_ = rhi::UiScreen::GameplayInventory;
                 SDL_Log("SDL3_GLES stage=inventory_open");
+            } else if (HitRect(x, y, MenuButtonLayout(2))) {
+                uiScreen_ = rhi::UiScreen::GameplayShop;
+                SDL_Log("SDL3_GLES stage=shop_open gold=%d", gold_);
+            }
+            return;
+        }
+        if (uiScreen_ == rhi::UiScreen::GameplayShop) {
+            if (HitRect(x, y, MenuButtonLayout(0))) {
+                uiScreen_ = rhi::UiScreen::Gameplay;
+                SDL_Log("SDL3_GLES stage=shop_close gold=%d", gold_);
+                return;
+            }
+            for (int item = 0; item < shop_ui::kItemCount; ++item) {
+                if (!HitRect(x, y, MenuButtonLayout(10 + item))) {
+                    continue;
+                }
+                const int price = shop_ui::Def(item).price;
+                bool bought = false;
+                if (gold_ >= price) {
+                    switch (item) {
+                    case shop_ui::kPotion:
+                        bought = inventory_.AddItem(4);
+                        break;
+                    case shop_ui::kAmmo:
+                        pistol_.reserve += 12;
+                        bought = true;
+                        break;
+                    case shop_ui::kHelmet:
+                        bought = inventory_.AddItem(1);
+                        break;
+                    case shop_ui::kArmor:
+                        bought = inventory_.AddItem(2);
+                        break;
+                    case shop_ui::kRobe:
+                        bought = inventory_.AddItem(3);
+                        break;
+                    }
+                }
+                if (bought) {
+                    gold_ -= price;
+                    SDL_Log("SDL3_GLES stage=shop_buy item=%d price=%d gold=%d",
+                        item, price, gold_);
+                } else {
+                    SDL_Log("SDL3_GLES stage=shop_reject item=%d gold=%d",
+                        item, gold_);
+                }
+                return;
             }
             return;
         }
@@ -2795,7 +3321,7 @@ public:
             return;
         }
         if(uiScreen_==rhi::UiScreen::Settings || uiScreen_==rhi::UiScreen::GameplaySettings){
-            for(int i=0;i<=8;i++){
+            for(int i=0;i<=9;i++){
                 if(!settings_ui::Visible(i,static_cast<float>(width_),static_cast<float>(height_),settingsScroll_) || !HitRect(x,y,MenuButtonLayout(i)))continue;
                 switch(i){
                 case 0:uiScreen_=uiScreen_==rhi::UiScreen::GameplaySettings?rhi::UiScreen::Gameplay:rhi::UiScreen::MainMenu;settingsScroll_=0;break;
@@ -2806,7 +3332,8 @@ public:
                 case 5:uiOpacityIndex_=(uiOpacityIndex_+1)%5;uiOpacity_=kOpacityChoices[uiOpacityIndex_];break;
                 case 6:shadowQuality_=(shadowQuality_+1)%4;shadowMapSize_=shadowQuality_==1?1024:(shadowQuality_==3?4096:2048);DestroyShadowMapTarget();if(shadowQuality_!=0)CreateShadowMapTarget();break;
                 case 7:glassEnabled_=!glassEnabled_;break;
-                case 8:uiScreen_=rhi::UiScreen::MainMenu;settingsScroll_=0;break;
+                case 8:fxaaEnabled_=!fxaaEnabled_;break;
+                case 9:uiScreen_=rhi::UiScreen::MainMenu;settingsScroll_=0;break;
                 }return;
             }return;
         }
@@ -2861,14 +3388,7 @@ public:
 
     void DrawMenuCircle(const MenuButtonPos& b, const float color[4])
     {
-        glUseProgram(overlayProgram_);
-        glUniform2f(overlayResolutionLocation_, static_cast<float>(width_),
-            static_cast<float>(height_));
-        glBindVertexArray(overlayVao_);
-        glBindBuffer(GL_ARRAY_BUFFER, overlayVbo_);
-        UploadCircleFan(b.cx, b.cy, b.r);
-        glUniform4f(overlayColorLocation_, color[0], color[1], color[2], color[3]);
-        glDrawArrays(GL_TRIANGLE_FAN, 0, kOverlayFanCount);
+        EmitUiCircle(b.cx, b.cy, b.r, color);
     }
 
     // Rounded-rectangle fill as one non-overlapping triangle list: 3 straight
@@ -2877,23 +3397,27 @@ public:
     // as a seam.
     static constexpr int kRectCornerSegments = 12;
 
-    void UploadRoundedRect(const MenuButtonPos& b)
+    void EmitUiRoundedRect(const MenuButtonPos& b, const float color[4])
     {
-        SetGlassShape(b.cx, b.cy, b.hw, b.hh, b.r);
+        if (overlayProgram_ == 0) {
+            return;
+        }
+        const float shape[4] = {b.cx, b.cy, b.hw, b.hh};
+        const float radius = std::min(b.r, std::min(b.hw, b.hh));
+        const float tint[4] = {color[0], color[1], color[2], color[3] * uiOpacity_};
         const float x0 = b.cx - b.hw;
         const float x1 = b.cx + b.hw;
         const float y0 = b.cy - b.hh;
         const float y1 = b.cy + b.hh;
         const float r = b.r;
-        float v[3 * (6 + 6 + 6 + 4 * kRectCornerSegments * 3)];
-        int n = 0;
+        const auto pushTri = [&](float ax, float ay, float bx, float by, float cx2, float cy2) {
+            UiPushVertex(ax, ay, shape, radius, tint);
+            UiPushVertex(bx, by, shape, radius, tint);
+            UiPushVertex(cx2, cy2, shape, radius, tint);
+        };
         const auto pushQuad = [&](float ax, float ay, float bx, float by) {
-            v[n++] = ax; v[n++] = ay;  // triangle 1
-            v[n++] = bx; v[n++] = ay;
-            v[n++] = bx; v[n++] = by;
-            v[n++] = ax; v[n++] = ay;  // triangle 2
-            v[n++] = bx; v[n++] = by;
-            v[n++] = ax; v[n++] = by;
+            pushTri(ax, ay, bx, ay, bx, by);   // triangle 1
+            pushTri(ax, ay, bx, by, ax, by);   // triangle 2
         };
         const auto pushCorner = [&](float ccx, float ccy, float a0, float a1) {
             for (int i = 0; i < kRectCornerSegments; ++i) {
@@ -2901,9 +3425,9 @@ public:
                     static_cast<float>(kRectCornerSegments);
                 const float t1 = a0 + (a1 - a0) * static_cast<float>(i + 1) /
                     static_cast<float>(kRectCornerSegments);
-                v[n++] = ccx; v[n++] = ccy;
-                v[n++] = ccx + std::cos(t0) * r; v[n++] = ccy + std::sin(t0) * r;
-                v[n++] = ccx + std::cos(t1) * r; v[n++] = ccy + std::sin(t1) * r;
+                pushTri(ccx, ccy,
+                    ccx + std::cos(t0) * r, ccy + std::sin(t0) * r,
+                    ccx + std::cos(t1) * r, ccy + std::sin(t1) * r);
             }
         };
         // Straight regions (window coords, y down).
@@ -2915,22 +3439,11 @@ public:
         pushCorner(x1 - r, y0 + r, 4.71238898f, 6.28318531f);   // top-right
         pushCorner(x1 - r, y1 - r, 0.0f, 1.57079633f);          // bottom-right
         pushCorner(x0 + r, y1 - r, 1.57079633f, 3.14159265f);   // bottom-left
-        glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(n * sizeof(float)),
-            v, GL_DYNAMIC_DRAW);
-        rectIndexCount_ = n / 2;
     }
 
     void DrawMenuRect(const MenuButtonPos& b, const float color[4])
     {
-        glUseProgram(overlayProgram_);
-        glUniform2f(overlayResolutionLocation_, static_cast<float>(width_),
-            static_cast<float>(height_));
-        glBindVertexArray(overlayVao_);
-        glBindBuffer(GL_ARRAY_BUFFER, overlayVbo_);
-        UploadRoundedRect(b);
-        glUniform4f(overlayColorLocation_, color[0], color[1], color[2],
-            color[3] * uiOpacity_);
-        glDrawArrays(GL_TRIANGLES, 0, rectIndexCount_);
+        EmitUiRoundedRect(b, color);
     }
 
     void DrawActionIcon(int index, float centerX, float centerY, float radius, bool held)
@@ -2988,32 +3501,61 @@ public:
         constexpr int size=192;
         const float mn=static_cast<float>(std::min(width_,height_));
         const float extent=mn*.244f,left=mn*.155f-extent*.5f,top=mn*.17f-extent*.5f,scale=size/extent;
-        minimapPixels_.assign(size*size*4,0);
-        gameplay::DrawMinimap(static_cast<float>(width_),static_cast<float>(height_),
-            playerX_,playerZ_,playerYaw_,enemyX_,enemyZ_,enemyAlive_,sceneDefinition_,minimapTerrain_,
-            [&](float x,float y,float hw,float hh,float radius,const float* color){
-                int x0=std::max(0,int(std::floor((x-hw-left)*scale))),x1=std::min(size,int(std::ceil((x+hw-left)*scale)));
-                int y0=std::max(0,int(std::floor((y-hh-top)*scale))),y1=std::min(size,int(std::ceil((y+hh-top)*scale)));
-                float alpha=color[3];
-                for(int iy=y0;iy<y1;iy++)for(int ix=x0;ix<x1;ix++){
-                    float dx=std::max(0.f,std::abs(left+(ix+.5f)/scale-x)-(hw-radius));
-                    float dy=std::max(0.f,std::abs(top+(iy+.5f)/scale-y)-(hh-radius));
-                    if(radius>0 && dx*dx+dy*dy>radius*radius)continue;
-                    auto* pixel=&minimapPixels_[(iy*size+ix)*4];
-                    float oldAlpha=pixel[3]/255.f,newAlpha=alpha+oldAlpha*(1-alpha);
-                    if(newAlpha<=0)continue;
-                    for(int c=0;c<3;c++)pixel[c]=static_cast<unsigned char>(std::min(255.f,
-                        (color[c]*alpha*255.f+pixel[c]*oldAlpha*(1-alpha))/newAlpha));
-                    pixel[3]=static_cast<unsigned char>(newAlpha*255.f);
-                }
-            });
+        // The rasteriser is the single biggest ui-stage cost (~6.7ms of pure
+        // CPU at 60fps), but map content moves slowly: refresh the texture at
+        // 1/3 rate (20fps) and keep drawing the last texture every frame.
+        const bool refresh=(minimapFrameTick_++%3)==0;
+        if(refresh){
+            minimapPixels_.assign(size*size*4,0);
+            gameplay::DrawMinimap(static_cast<float>(width_),static_cast<float>(height_),
+                playerX_,playerZ_,playerYaw_,enemyX_,enemyZ_,enemyAlive_,sceneDefinition_,minimapTerrain_,
+                [&](float x,float y,float hw,float hh,float radius,const float* color){
+                    int x0=std::max(0,int(std::floor((x-hw-left)*scale))),x1=std::min(size,int(std::ceil((x+hw-left)*scale)));
+                    int y0=std::max(0,int(std::floor((y-hh-top)*scale))),y1=std::min(size,int(std::ceil((y+hh-top)*scale)));
+                    float alpha=color[3];
+                    if(radius<=0.f){
+                        // Fast path for the axis-aligned rectangles that
+                        // dominate the map (256 elevation blocks, grid, land,
+                        // props): constant alpha, no per-pixel distance math.
+                        for(int iy=y0;iy<y1;iy++){
+                            auto* pixel=&minimapPixels_[(iy*size+x0)*4];
+                            for(int ix=x0;ix<x1;ix++,pixel+=4){
+                                float oldAlpha=pixel[3]*(1.f/255.f);
+                                float newAlpha=alpha+oldAlpha*(1-alpha);
+                                if(newAlpha<=0.f)continue;
+                                const float inv=1.f/newAlpha;
+                                for(int c=0;c<3;c++){
+                                    pixel[c]=static_cast<unsigned char>(std::min(255.f,
+                                        (color[c]*alpha*255.f+pixel[c]*oldAlpha*(1-alpha))*inv));
+                                }
+                                pixel[3]=static_cast<unsigned char>(std::min(255.f,newAlpha*255.f));
+                            }
+                        }
+                        return;
+                    }
+                    for(int iy=y0;iy<y1;iy++)for(int ix=x0;ix<x1;ix++){
+                        float dx=std::max(0.f,std::abs(left+(ix+.5f)/scale-x)-(hw-radius));
+                        float dy=std::max(0.f,std::abs(top+(iy+.5f)/scale-y)-(hh-radius));
+                        if(dx*dx+dy*dy>radius*radius)continue;
+                        auto* pixel=&minimapPixels_[(iy*size+ix)*4];
+                        float oldAlpha=pixel[3]/255.f,newAlpha=alpha+oldAlpha*(1-alpha);
+                        if(newAlpha<=0)continue;
+                        for(int c=0;c<3;c++)pixel[c]=static_cast<unsigned char>(std::min(255.f,
+                            (color[c]*alpha*255.f+pixel[c]*oldAlpha*(1-alpha))/newAlpha));
+                        pixel[3]=static_cast<unsigned char>(newAlpha*255.f);
+                    }
+                });
+        }
         glActiveTexture(GL_TEXTURE0);
         if(minimapTexture_==0){
             glGenTextures(1,&minimapTexture_);glBindTexture(GL_TEXTURE_2D,minimapTexture_);
             glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
             glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,size,size,0,GL_RGBA,GL_UNSIGNED_BYTE,minimapPixels_.data());
-        }else{glBindTexture(GL_TEXTURE_2D,minimapTexture_);glTexSubImage2D(GL_TEXTURE_2D,0,0,0,size,size,GL_RGBA,GL_UNSIGNED_BYTE,minimapPixels_.data());}
+        }else{
+            glBindTexture(GL_TEXTURE_2D,minimapTexture_);
+            if(refresh)glTexSubImage2D(GL_TEXTURE_2D,0,0,0,size,size,GL_RGBA,GL_UNSIGNED_BYTE,minimapPixels_.data());
+        }
         const float right=left+extent,bottom=top+extent;
         const float v[6][4]={{left,top,0,0},{left,bottom,0,1},{right,bottom,1,1},{left,top,0,0},{right,bottom,1,1},{right,top,1,0}};
         glUseProgram(iconProgram_);glUniform1i(iconUseRgbLocation_,1);glUniform2f(iconResolutionLocation_,static_cast<float>(width_),static_cast<float>(height_));
@@ -3150,8 +3692,6 @@ public:
             DrawMenuRect(settings, panel);
             DrawTextCentered("设置", settings.cx, settings.cy,
                 settings.hh * 0.85f, white);
-            glEnable(GL_DEPTH_TEST);
-            glDisable(GL_BLEND);
             return;
         }
 
@@ -3167,8 +3707,6 @@ public:
             const MenuButtonPos menu = MenuButtonLayout(5);
             DrawMenuRect(menu, panel);
             DrawTextCentered("菜单", menu.cx, menu.cy, menu.hh * 0.52f, white);
-            glEnable(GL_DEPTH_TEST);
-            glDisable(GL_BLEND);
             return;
         }
 
@@ -3176,12 +3714,18 @@ public:
             inventory_ui::Draw(w,h,inventory_,
                 [this](float x,float y,float hw,float hh,float radius,const float* c){DrawMenuRect({x,y,hw,hh,radius},c);},
                 [this](const char* label,float x,float y,float em,const float* c){DrawTextCentered(label,x,y,em,c,true);});
-            glEnable(GL_DEPTH_TEST);glDisable(GL_BLEND);
+            return;
+        }
+
+        if(uiScreen_==rhi::UiScreen::GameplayShop){
+            shop_ui::Draw(w,h,gold_,
+                [this](float x,float y,float hw,float hh,float radius,const float* c){DrawMenuRect({x,y,hw,hh,radius},c);},
+                [this](const char* label,float x,float y,float em,const float* c){DrawTextCentered(label,x,y,em,c,true);});
             return;
         }
 
         if(uiScreen_==rhi::UiScreen::Settings || uiScreen_==rhi::UiScreen::GameplaySettings){
-            char values[7][32]{};
+            char values[8][32]{};
             std::snprintf(values[0],32,"%s",settingFps_?"开":"关");
             std::snprintf(values[1],32,"%.1f",lookSensitivityScale_);
             std::snprintf(values[2],32,"%s",bloomEnabled_?"开":"关");
@@ -3190,10 +3734,10 @@ public:
             const char* quality[]={"关闭","低 1024","中 2048","高 4096"};
             std::snprintf(values[5],32,"%s",quality[shadowQuality_]);
             std::snprintf(values[6],32,"%s",glassEnabled_?"开":"关");
+            std::snprintf(values[7],32,"%s",fxaaEnabled_?"开":"关");
             settings_ui::Draw(w,h,settingsScroll_,values,glassEnabled_,
                 [this](float x,float y,float hw,float hh,float radius,const float* c){DrawMenuRect({x,y,hw,hh,radius},c);},
                 [this](const char* label,float x,float y,float em,const float* c,bool center){if(center)DrawTextCentered(label,x,y,em,c,true);else DrawTextLeftAligned(label,x,y,em,c,true);});
-            glEnable(GL_DEPTH_TEST);glDisable(GL_BLEND);
             return;
         }
 
@@ -3204,48 +3748,37 @@ public:
         if (!cameraInput_.showOverlay || overlayProgram_ == 0) {
             return;
         }
-        glUseProgram(overlayProgram_);
-        glUniform2f(overlayResolutionLocation_, static_cast<float>(width_),
-            static_cast<float>(height_));
-        glBindVertexArray(overlayVao_);
-        glBindBuffer(GL_ARRAY_BUFFER, overlayVbo_);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         glDisable(GL_DEPTH_TEST);
-        UploadCircleFan(cameraInput_.stickBaseX, cameraInput_.stickBaseY, cameraInput_.stickRadius);
-        glUniform4f(overlayColorLocation_, 0.30f, 0.32f, 0.36f, 0.40f * uiOpacity_);
-        glDrawArrays(GL_TRIANGLE_FAN, 0, kOverlayFanCount);
-        UploadCircleFan(cameraInput_.stickKnobX, cameraInput_.stickKnobY, cameraInput_.knobRadius);
-        if (cameraInput_.stickActive) {
-            glUniform4f(overlayColorLocation_, 0.78f, 0.82f, 0.90f, 0.70f * uiOpacity_);
-        } else {
-            glUniform4f(overlayColorLocation_, 0.60f, 0.64f, 0.72f, 0.42f * uiOpacity_);
-        }
-        glDrawArrays(GL_TRIANGLE_FAN, 0, kOverlayFanCount);
+        const float baseColor[4] = {0.30f, 0.32f, 0.36f, 0.40f * uiOpacity_};
+        EmitUiCircle(cameraInput_.stickBaseX, cameraInput_.stickBaseY,
+            cameraInput_.stickRadius, baseColor);
+        const float knobColor[4] = {
+            cameraInput_.stickActive ? 0.78f : 0.60f,
+            cameraInput_.stickActive ? 0.82f : 0.64f,
+            cameraInput_.stickActive ? 0.90f : 0.72f,
+            (cameraInput_.stickActive ? 0.70f : 0.42f) * uiOpacity_};
+        EmitUiCircle(cameraInput_.stickKnobX, cameraInput_.stickKnobY,
+            cameraInput_.knobRadius, knobColor);
         // Action buttons use the same MikanEngine order and anchors as the
         // touch layer: Attack, Jump, Sprint, Crouch.  One circle per button
         // with the same panel gray and base alpha as the 背包/设置 buttons,
         // so every on-screen control shares one opacity scale.
         for (int i = 0; i < rhi::CameraInput::kActionButtonCount; ++i) {
-            glBindVertexArray(overlayVao_);
-            glBindBuffer(GL_ARRAY_BUFFER, overlayVbo_);
-            UploadCircleFan(cameraInput_.actionButtonX[i], cameraInput_.actionButtonY[i],
-                cameraInput_.actionButtonRadius + 5.0f);
-            if (cameraInput_.actionButtonHeld[i]) {
-                glUniform4f(overlayColorLocation_, 0.98f, 0.72f, 0.25f, 0.70f * uiOpacity_);
-            } else {
-                glUniform4f(overlayColorLocation_, 0.30f, 0.32f, 0.36f, 0.55f * uiOpacity_);
-            }
-            glDrawArrays(GL_TRIANGLE_FAN, 0, kOverlayFanCount);
+            const float btnColor[4] = {
+                cameraInput_.actionButtonHeld[i] ? 0.98f : 0.30f,
+                cameraInput_.actionButtonHeld[i] ? 0.72f : 0.32f,
+                cameraInput_.actionButtonHeld[i] ? 0.25f : 0.36f,
+                (cameraInput_.actionButtonHeld[i] ? 0.70f : 0.55f) * uiOpacity_};
+            EmitUiCircle(cameraInput_.actionButtonX[i], cameraInput_.actionButtonY[i],
+                cameraInput_.actionButtonRadius + 5.0f, btnColor);
+        }
+        // One overlay draw lands all circles; the icons must paint on top.
+        UiFlushOverlay();
+        for (int i = 0; i < rhi::CameraInput::kActionButtonCount; ++i) {
             DrawActionIcon(i, cameraInput_.actionButtonX[i], cameraInput_.actionButtonY[i],
                 cameraInput_.actionButtonRadius, cameraInput_.actionButtonHeld[i]);
-            // DrawActionIcon switches programs; restore the flat overlay
-            // before the next button updates its circle uniform/buffer.
-            glUseProgram(overlayProgram_);
-            glUniform2f(overlayResolutionLocation_, static_cast<float>(width_),
-                static_cast<float>(height_));
-            glBindVertexArray(overlayVao_);
-            glBindBuffer(GL_ARRAY_BUFFER, overlayVbo_);
         }
         DrawFpsText();
         if (settingFps_) {
@@ -3257,29 +3790,27 @@ public:
             DrawTextPx(stateName, 48.0f, 168.0f, emPx, shadow);
             DrawTextPx(stateName, 42.0f, 162.0f, emPx, color);
         }
-        glEnable(GL_DEPTH_TEST);
-        glDisable(GL_BLEND);
-        glBindVertexArray(0);
-        glUseProgram(0);
         LogGlErrors("draw_overlay");
     }
 
-    // One draw call per string.  Vertices are window pixels (y down); UVs
+    // Appends one string's glyph quads to the shared text batch (flushed once
+    // per frame by UiFlushText).  Vertices are window pixels (y down); UVs
     // address the ink sub-rect inside the glyph's atlas cell.
     void DrawTextPx(const char* text, float x, float y, float emPx, const float color[4])
     {
         if (textProgram_ == 0 || textAtlasTexture_ == 0 || text == nullptr) {
             return;
         }
-        constexpr int kMaxQuads = 96;
-        float vertices[kMaxQuads * 6 * 8];
         const float scale = emPx / static_cast<float>(rhi::kSdfFontEm);
         const float atlasW = static_cast<float>(rhi::kSdfAtlasWidth);
         const float atlasH = static_cast<float>(rhi::kSdfAtlasHeight);
         const float pad = static_cast<float>(rhi::kSdfCellSize - rhi::kSdfFontEm) * 0.5f;
+        const float textAlpha = color[3] * uiOpacity_;
+        // A negative range selects glass only for the main title; magnitude is AA range.
+        const float pxRange = rhi::kSdfPxRange * scale *
+            (glassEnabled_ && std::strcmp(text, "MikanEngine") == 0 ? -1.0f : 1.0f);
         float penX = x;
-        int quadCount = 0;
-        for (const char* p = text; *p != '\0' && quadCount < kMaxQuads;) {
+        for (const char* p = text; *p != '\0';) {
             const unsigned int codepoint = rhi::SdfNextCodepoint(&p);
             const rhi::SdfGlyph* glyph = rhi::SdfFindGlyph(codepoint);
             if (glyph == nullptr || glyph->w <= 0.0f) {
@@ -3294,47 +3825,19 @@ public:
             const float v0 = (static_cast<float>(glyph->cellY) + pad) / atlasH;
             const float u1 = (static_cast<float>(glyph->cellX) + pad + glyph->w) / atlasW;
             const float v1 = (static_cast<float>(glyph->cellY) + pad + glyph->h) / atlasH;
-            float* v = vertices + quadCount * 6 * 8;
-            const float textAlpha = color[3] * uiOpacity_;
-            const float quad[6][8] = {
-                {x0, y0, u0, v0, color[0], color[1], color[2], textAlpha},
-                {x0, y1, u0, v1, color[0], color[1], color[2], textAlpha},
-                {x1, y1, u1, v1, color[0], color[1], color[2], textAlpha},
-                {x0, y0, u0, v0, color[0], color[1], color[2], textAlpha},
-                {x1, y1, u1, v1, color[0], color[1], color[2], textAlpha},
-                {x1, y0, u1, v0, color[0], color[1], color[2], textAlpha},
+            const float quad[6][9] = {
+                {x0, y0, u0, v0, color[0], color[1], color[2], textAlpha, pxRange},
+                {x0, y1, u0, v1, color[0], color[1], color[2], textAlpha, pxRange},
+                {x1, y1, u1, v1, color[0], color[1], color[2], textAlpha, pxRange},
+                {x0, y0, u0, v0, color[0], color[1], color[2], textAlpha, pxRange},
+                {x1, y1, u1, v1, color[0], color[1], color[2], textAlpha, pxRange},
+                {x1, y0, u1, v0, color[0], color[1], color[2], textAlpha, pxRange},
             };
-            for (int vertex = 0; vertex < 6; ++vertex) {
-                for (int comp = 0; comp < 8; ++comp) {
-                    v[vertex * 8 + comp] = quad[vertex][comp];
-                }
-            }
+            const TextBatchVertex* quads =
+                reinterpret_cast<const TextBatchVertex*>(quad);
+            textBatch_.insert(textBatch_.end(), quads, quads + 6);
             penX += glyph->advance * scale;
-            ++quadCount;
         }
-        if (quadCount == 0) {
-            return;
-        }
-        glUseProgram(textProgram_);
-        glUniform2f(textResolutionLocation_, static_cast<float>(width_),
-            static_cast<float>(height_));
-        // A negative range selects glass only for the main title; magnitude is AA range.
-        glUniform1f(textPxRangeLocation_, rhi::kSdfPxRange * scale *
-            (glassEnabled_ && std::strcmp(text,"MikanEngine") == 0 ? -1.0f : 1.0f));
-        glActiveTexture(GL_TEXTURE7);
-        glBindTexture(GL_TEXTURE_2D, tonemapTex_);
-        glActiveTexture(GL_TEXTURE0);
-        glUniform1i(textSamplerLocation_, 0);
-        glBindTexture(GL_TEXTURE_2D, textAtlasTexture_);
-        glBindVertexArray(textVao_);
-        glBindBuffer(GL_ARRAY_BUFFER, textVbo_);
-        glBufferData(GL_ARRAY_BUFFER,
-            static_cast<GLsizeiptr>(quadCount) * 6 * 8 * sizeof(float), vertices,
-            GL_DYNAMIC_DRAW);
-        glDrawArrays(GL_TRIANGLES, 0, quadCount * 6);
-        glBindVertexArray(0);
-        glUseProgram(0);
-        LogGlErrors("draw_text");
     }
 
     void DrawFpsText()
@@ -3361,9 +3864,86 @@ public:
             const float dtMs = static_cast<float>(nowTicks - fpsLastTicks_);
             if (dtMs > 0.0f && dtMs < 1000.0f) {
                 fpsAvgMs_ = fpsAvgMs_ <= 0.0f ? dtMs : fpsAvgMs_ * 0.9f + dtMs * 0.1f;
+                // Stall detector: one 100ms frame is invisible in the EMA but
+                // is exactly the "UI jank" a user reports.
+                if (dtMs > profMaxFrameMs_) {
+                    profMaxFrameMs_ = dtMs;
+                }
             }
         }
         fpsLastTicks_ = nowTicks;
+        // Wall-clock start of this frame for the spike forensics dump.
+        profFrameStartT_ = SDL_GetPerformanceCounter();
+        // Periodic hilog breadcrumb so on-device A/B profiling reads straight
+        // from hilog without enabling the on-screen debug HUD.
+        if (++fpsLogFrames_ % 150 == 0 && fpsAvgMs_ > 0.0f) {
+            SDL_Log("SDL3_GLES fps=%.1f frame_ms=%.1f",
+                1000.0f / fpsAvgMs_, fpsAvgMs_);
+        }
+        // ---- profiling: probe GPU timer queries once, collect the previous
+        // frame's GPU stage times (never stalling), start the CPU clock. ----
+        if (!profGpuProbed_) {
+            profGpuProbed_ = true;
+            profGenQ_ = reinterpret_cast<PFN_ProfGenQueries>(
+                SDL_GL_GetProcAddress("glGenQueriesEXT"));
+            profDelQ_ = reinterpret_cast<PFN_ProfDeleteQueries>(
+                SDL_GL_GetProcAddress("glDeleteQueriesEXT"));
+            profBeginQ_ = reinterpret_cast<PFN_ProfBeginQuery>(
+                SDL_GL_GetProcAddress("glBeginQueryEXT"));
+            profEndQ_ = reinterpret_cast<PFN_ProfEndQuery>(
+                SDL_GL_GetProcAddress("glEndQueryEXT"));
+            profGetQ_ = reinterpret_cast<PFN_ProfGetQueryObjectuiv>(
+                SDL_GL_GetProcAddress("glGetQueryObjectuivEXT"));
+            profGpuQueries_ = profGenQ_ != nullptr && profDelQ_ != nullptr &&
+                profBeginQ_ != nullptr && profEndQ_ != nullptr && profGetQ_ != nullptr;
+            if (profGpuQueries_) {
+                profGenQ_(2 * kProfStages, &profQueries_[0][0]);
+                SDL_Log("SDL3_GLES prof gpu_timer=available");
+            } else {
+                SDL_Log("SDL3_GLES prof gpu_timer=unavailable cpu_only=1");
+            }
+        }
+        if (profGpuQueries_) {
+            if (profPendingSet_ >= 0) {
+                for (int s = 1; s < kProfStages; ++s) {
+                    GLuint available = 0;
+                    profGetQ_(profQueries_[profPendingSet_][s],
+                        GL_QUERY_RESULT_AVAILABLE_EXT, &available);
+                    if (available) {
+                        GLuint nanoseconds = 0;
+                        profGetQ_(profQueries_[profPendingSet_][s],
+                            GL_QUERY_RESULT_EXT, &nanoseconds);
+                        profGpuMs_[s] += double(nanoseconds) / 1e6;
+                    }
+                }
+            }
+            profPendingSet_ = profQuerySet_;
+            profQuerySet_ ^= 1;
+        }
+        const Uint64 profFreq = SDL_GetPerformanceFrequency();
+        Uint64 profLastT = SDL_GetPerformanceCounter();
+        int profActiveQueryStage = -1;
+        // Marks "stage just finished": accumulates the elapsed CPU interval,
+        // ends that stage's GPU query and starts the next stage's.
+        auto profMark = [&](int finishedStage) {
+            const Uint64 now = SDL_GetPerformanceCounter();
+            const double stageMs = 1000.0 *
+                double(now - profLastT) / double(profFreq);
+            profCpuMs_[finishedStage] += stageMs;
+            profFrameCpuMs_[finishedStage] += stageMs;
+            profLastT = now;
+            if (profGpuQueries_) {
+                if (profActiveQueryStage >= 0) {
+                    profEndQ_(GL_TIME_ELAPSED_EXT);
+                    profActiveQueryStage = -1;
+                }
+                if (finishedStage + 1 >= 1 && finishedStage + 1 <= 8) {
+                    profBeginQ_(GL_TIME_ELAPSED_EXT,
+                        profQueries_[profQuerySet_][finishedStage + 1]);
+                    profActiveQueryStage = finishedStage + 1;
+                }
+            }
+        };
         if (!sceneReady_ || context_ == nullptr || width_ == 0 || height_ == 0) {
             return false;
         }
@@ -3389,6 +3969,7 @@ public:
         }
         const int characterInstanceCount = UploadCharacterInstanceData();
 
+        profMark(0); // logic done (menu input, uniforms, animation upload)
         // ---- single scene shadow map: depth-only, before the G-buffer ----
         // The light camera and receiver matrix are shared with Vulkan.  The
         // shadow pass includes the animated character and both static props;
@@ -3396,7 +3977,8 @@ public:
         const bool renderGameplayScene = uiScreen_ == rhi::UiScreen::Gameplay ||
             uiScreen_ == rhi::UiScreen::GameplaySettings ||
             uiScreen_ == rhi::UiScreen::GameplayRetry ||
-            uiScreen_ == rhi::UiScreen::GameplayInventory;
+            uiScreen_ == rhi::UiScreen::GameplayInventory ||
+            uiScreen_ == rhi::UiScreen::GameplayShop;
         if (renderGameplayScene && shadowQuality_!=0 && shadowReady_ && shadowProgram_ != 0) {
             glBindFramebuffer(GL_FRAMEBUFFER, shadowFbo_);
             glViewport(0, 0, shadowMapSize_, shadowMapSize_);
@@ -3439,11 +4021,50 @@ public:
                 DrawShadowMeshList(groundMeshes_, false, groundTransform);
             }
             if (!groundMeshes_.empty() && sceneDefinition_ != nullptr) {
+                const terrain::Bounds cubeBounds = UnionMeshBounds(groundMeshes_);
+                const terrain::Frustum lightFrustum(shadowMatrix_.value, false);
                 for (const scene::Entity& entity : sceneDefinition_->entities) {
                     if (entity.importAsStaticCube && entity.castShadow) {
-                        DrawShadowMeshList(groundMeshes_, false,
-                            Mat4FromSceneEntity(*sceneDefinition_, entity));
+                        const Mat4 entityWorld =
+                            Mat4FromSceneEntity(*sceneDefinition_, entity);
+                        if (!lightFrustum.Intersects(
+                                terrain::TransformBounds(cubeBounds,
+                                    entityWorld.value))) {
+                            continue;
+                        }
+                        DrawShadowMeshList(groundMeshes_, false, entityWorld);
                     }
+                }
+            }
+            if (sceneDefinition_ != nullptr) {
+                const terrain::Frustum lightFrustum(shadowMatrix_.value, false);
+                for (const scene::Entity& entity : sceneDefinition_->entities) {
+                    if (!entity.importAsStaticModel || !entity.castShadow) {
+                        continue;
+                    }
+                        const GlesSceneModel* asset = FindSceneModel(entity.modelPath);
+                        if (asset != nullptr) {
+                            const Mat4 entityWorld =
+                                Mat4FromSceneEntity(*sceneDefinition_, entity);
+                            if (asset->boundsValid && !lightFrustum.Intersects(
+                                    terrain::TransformBounds(asset->bounds,
+                                        entityWorld.value))) {
+                                continue;
+                            }
+                            if (asset->hasOpenClip) {
+                                // Openable prop: hinge the lid sub-tree with
+                                // the sampled animation, static parts plain.
+                                const Mat4 lidWorld =
+                                    ChestLidWorld(*asset, entityWorld);
+                                DrawShadowMeshList(asset->meshes, false,
+                                    entityWorld, 0, &asset->staticOrder);
+                                DrawShadowMeshList(asset->meshes, false,
+                                    lidWorld, 0, &asset->lidOrder);
+                            } else {
+                                DrawShadowMeshList(asset->meshes, false,
+                                    entityWorld);
+                            }
+                        }
                 }
             }
             glUseProgram(0);
@@ -3454,6 +4075,7 @@ public:
             LogGlErrors("shadow_pass");
         }
 
+        profMark(1); // shadow pass done
         // G-buffer runs at the global render resolution: created lazily once,
         // independent of the drawable size (see kRenderWidth/Height).
         if (gbufferFbo_ == 0) {
@@ -3494,6 +4116,7 @@ public:
             glUniform1i(modelAoSampler_, 3);
             glActiveTexture(GL_TEXTURE4);
             glUniform1i(modelEmissiveSampler_, 4);
+            glUniform1f(materialAlphaCutoffLocation_, 0.0f);
             DrawCharacterMeshBatch(meshes_, characterInstanceCount);
 
             // ---- static props: helmet + ground slab.  Same program,
@@ -3529,10 +4152,54 @@ public:
                     groundTransform);
             }
             if (!groundMeshes_.empty() && sceneDefinition_ != nullptr) {
+                std::vector<Mat4> cubeWorlds;
                 for (const scene::Entity& entity : sceneDefinition_->entities) {
                     if (entity.importAsStaticCube) {
-                        DrawStaticMeshList(groundMeshes_, groundTextures_, groundMaterials_,
+                        cubeWorlds.push_back(
                             Mat4FromSceneEntity(*sceneDefinition_, entity));
+                    }
+                }
+                DrawStaticMeshBatch(groundMeshes_, groundTextures_,
+                    groundMaterials_, cubeWorlds, UnionMeshBounds(groundMeshes_));
+            }
+            if (sceneDefinition_ != nullptr) {
+                const terrain::Frustum viewFrustum(viewProj_.value, false);
+                for (const scene::Entity& entity : sceneDefinition_->entities) {
+                    if (!entity.importAsStaticModel) {
+                        continue;
+                    }
+                    const GlesSceneModel* asset = FindSceneModel(entity.modelPath);
+                    if (asset != nullptr) {
+                        const Mat4 entityWorld =
+                            Mat4FromSceneEntity(*sceneDefinition_, entity);
+                        // Whole-entity rejection: skip every per-mesh texture
+                        // bind and uniform for props the camera cannot see.
+                        if (asset->boundsValid && !viewFrustum.Intersects(
+                                terrain::TransformBounds(asset->bounds,
+                                    entityWorld.value))) {
+                            continue;
+                        }
+                        // Only known foliage assets opt into glTF alpha-mask
+                        // sampling here; other static-model draws stay unchanged.
+                        const bool applyFoliageAlphaMask =
+                            entity.modelPath == kEzTreeGrassModelPath ||
+                            entity.modelPath == kEzTreeTreeModelPath;
+                        if (asset->hasOpenClip) {
+                            // Openable prop: hinge the lid sub-tree with the
+                            // sampled animation, static parts plain.
+                            const Mat4 lidWorld =
+                                ChestLidWorld(*asset, entityWorld);
+                            DrawStaticMeshList(asset->meshes, asset->textures,
+                                asset->materials, entityWorld, false, 0,
+                                applyFoliageAlphaMask, &asset->staticOrder);
+                            DrawStaticMeshList(asset->meshes, asset->textures,
+                                asset->materials, lidWorld, false, 0,
+                                applyFoliageAlphaMask, &asset->lidOrder);
+                        } else {
+                            DrawStaticMeshList(asset->meshes, asset->textures,
+                                asset->materials, entityWorld, false, 0,
+                                applyFoliageAlphaMask);
+                        }
                     }
                 }
             }
@@ -3544,6 +4211,7 @@ public:
             LogGlErrors("geometry_pass");
         }
 
+        profMark(2); // g-buffer geometry pass done
         // ---- deferred lighting pass: G-buffer + IBL + sky -> post target ----
         // Rendered at the post target's (lower) resolution: all lighting
         // inputs are bound with normalized UVs, and the FXAA resolve
@@ -3604,6 +4272,7 @@ public:
         glUseProgram(0);
         LogGlErrors("lighting_pass");
 
+        profMark(3); // lighting pass done
         // Separate source/output targets: no attachment feedback. Keep the
         // opaque scene and depth intact until transmission has been resolved.
         if (renderGameplayScene && sceneDefinition_ != nullptr) {
@@ -3623,6 +4292,7 @@ public:
             glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, postColorTex_);
             glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, gbufferDepthTex_);
             glActiveTexture(GL_TEXTURE2); glBindTexture(GL_TEXTURE_CUBE_MAP, skyboxTexture_);
+            glActiveTexture(GL_TEXTURE3); glBindTexture(GL_TEXTURE_2D, waterNormalTexture_);
             glBindVertexArray(fullscreenVao_);
             glDrawArrays(GL_TRIANGLES, 0, 3);
             glActiveTexture(GL_TEXTURE0);
@@ -3633,6 +4303,7 @@ public:
             LogGlErrors("water_transmission_pass");
         }
 
+        profMark(4); // water transmission pass done (or skipped)
         // ---- bloom chain (engine postprocess_chain_mobile order) ----
         // ds[0]: soft-knee threshold at half res; ds[1..5]: dual-kernel /2;
         // up[4..0]: dual-kernel x2 fused with the previous up level.  The
@@ -3680,6 +4351,7 @@ public:
         LogGlErrors("bloom_chain");
         }  // bloomEnabled_
 
+        profMark(5); // bloom chain done
         // ---- tonemap: composite + bloom -> AgX (HDR) or passthrough (LDR) ----
         glUseProgram(tonemapProgram_);
         glUniform1i(tonemapBloomSampler_, 0);
@@ -3709,6 +4381,27 @@ public:
         glUseProgram(0);
         LogGlErrors("tonemap_pass");
 
+        // Glass panels read the tonemapped scene as their background.  On the
+        // menu family (large glass panels) refresh the half-res copy so the
+        // overlay's 7-tap dispersion/frost sampling works on a 4x smaller
+        // image; gameplay's tiny glass area keeps the full-res direct bind.
+        const bool glassHalfRes = uiScreen_ == rhi::UiScreen::MainMenu ||
+            uiScreen_ == rhi::UiScreen::Settings ||
+            uiScreen_ == rhi::UiScreen::GameplaySettings ||
+            uiScreen_ == rhi::UiScreen::GameplayRetry ||
+            uiScreen_ == rhi::UiScreen::GameplayInventory ||
+            uiScreen_ == rhi::UiScreen::GameplayShop;
+        if (glassHalfRes && glassBgFbo_ != 0) {
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, tonemapFbo_);
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, glassBgFbo_);
+            glBlitFramebuffer(0, 0, static_cast<GLint>(postWidth_),
+                static_cast<GLint>(postHeight_), 0, 0, glassBgW_, glassBgH_,
+                GL_COLOR_BUFFER_BIT, GL_LINEAR);
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            LogGlErrors("glass_bg_blit");
+        }
+
+        profMark(6); // tonemap (+ glass half-res blit on menus) done
         // ---- post-processing: FXAA resolves the LDR image to the screen ----
         // Runs in LDR/gamma space exactly like the engine chain (tonemap
         // happens in the lighting pass, FXAA only smooths edges).  The UI
@@ -3719,6 +4412,7 @@ public:
         glUseProgram(fxaaProgram_);
         glActiveTexture(GL_TEXTURE0);
         glUniform1i(fxaaSampler_, 0);
+        glUniform1i(fxaaEnabledLocation_, fxaaEnabled_ ? 1 : 0);
         glBindTexture(GL_TEXTURE_2D, tonemapTex_);
         glBindVertexArray(fullscreenVao_);
         glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -3727,21 +4421,39 @@ public:
         glUseProgram(0);
         LogGlErrors("fxaa_pass");
 
+        profMark(7); // fxaa resolve done
         if (uiScreen_ == rhi::UiScreen::MainMenu ||
             uiScreen_ == rhi::UiScreen::Settings ||
             uiScreen_ == rhi::UiScreen::GameplaySettings ||
             uiScreen_ == rhi::UiScreen::GameplayRetry ||
-            uiScreen_ == rhi::UiScreen::GameplayInventory) {
+            uiScreen_ == rhi::UiScreen::GameplayInventory ||
+            uiScreen_ == rhi::UiScreen::GameplayShop) {
             DrawMenuOverlay();
+            // One overlay draw + one text draw land the whole menu; the batch
+            // flushes re-enable blending themselves, then we restore depth.
+            UiFlushOverlay();
+            UiFlushText();
+            glEnable(GL_DEPTH_TEST);
+            glDisable(GL_BLEND);
         } else {
+            // ui-stage sub-timers: where does the ui segment actually go?
+            const Uint64 uiT0 = SDL_GetPerformanceCounter();
+            const double uiMsPerTick = 1000.0 /
+                static_cast<double>(SDL_GetPerformanceFrequency());
             glEnable(GL_BLEND);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
             glDisable(GL_DEPTH_TEST);
             DrawMinimapTexture();
             DrawPlayerHealthBar();
             DrawEnemyHealthBar();
+            const Uint64 uiT1 = SDL_GetPerformanceCounter();
+            // The fullscreen hit flash must cover the health labels, so land
+            // the pending text (below) before emitting the flash rect.
+            UiFlushText();
             DrawHitFlash();
+            UiFlushOverlay();
             DrawJoystickOverlay();
+            const Uint64 uiT2 = SDL_GetPerformanceCounter();
             // One enlarged top-right SET button; title navigation is inside
             // the settings sheet so the gameplay corner stays uncluttered.
             glEnable(GL_BLEND);
@@ -3763,7 +4475,7 @@ public:
             DrawMenuRect({potion.x,potion.y,potion.r,potion.r,potion.r},potionColor);
             char potionLabel[32];std::snprintf(potionLabel,sizeof(potionLabel),"药水×%d",inventory_.PotionCount());
             DrawTextCentered(potionLabel,potion.x,potion.y,mnF*.018f,whiteF);
-            if(pistol_.equipped){char ammo[32];std::snprintf(ammo,sizeof(ammo),pistol_.reloading?"换弹中":"弹量 %d/12",pistol_.ammo);
+            if(pistol_.equipped){char ammo[32];std::snprintf(ammo,sizeof(ammo),pistol_.reloading?"换弹中":"弹量 %d/%d 备弹 %d",pistol_.ammo,pistol_.capacity,pistol_.reserve);
                 DrawTextCentered(ammo,width_*.5f,height_-mnF*.115f,mnF*.026f,whiteF);}
             if(pistol_.equipped && !playerSwimming_) {
                 const float hit[4]={1.f,.25f,.15f,1.f};
@@ -3778,11 +4490,110 @@ public:
             DrawMenuRect(bagBtn, panelF);
             DrawTextCentered("背包", bagBtn.cx, bagBtn.cy, bagBtn.hh * 0.52f,
                 whiteF);
+            const MenuButtonPos shopBtn = MenuButtonLayout(2);
+            const float shopPanelF[4] = {0.55f, 0.42f, 0.12f, 0.60f};
+            DrawMenuRect(shopBtn, shopPanelF);
+            DrawTextCentered("商店", shopBtn.cx, shopBtn.cy, shopBtn.hh * 0.52f,
+                whiteF);
+            // Proximity prompt: floats above the ammo label while the player
+            // stands next to a closed treasure chest.
+            if (!ChestOpened() && ChestNear()) {
+                const MenuButtonPos chestBtn = ChestButtonRect();
+                const float chestPanelF[4] = {0.12f, 0.37f, 0.34f, 0.92f};
+                DrawMenuRect(chestBtn, chestPanelF);
+                DrawTextCentered("开启宝箱", chestBtn.cx, chestBtn.cy,
+                    chestBtn.hh * 0.52f, whiteF);
+            }
+            // Land everything the gameplay HUD emitted (buttons + labels) in
+            // two draws before restoring depth state.
+            UiFlushOverlay();
+            UiFlushText();
+            const Uint64 uiT3 = SDL_GetPerformanceCounter();
+            profUiSubMs_[0] += static_cast<double>(uiT1 - uiT0) * uiMsPerTick;
+            profUiSubMs_[1] += static_cast<double>(uiT2 - uiT1) * uiMsPerTick;
+            profUiSubMs_[2] += static_cast<double>(uiT3 - uiT2) * uiMsPerTick;
             glEnable(GL_DEPTH_TEST);
             glDisable(GL_BLEND);
         }
 
+        profMark(8); // ui overlay done
         SDL_GL_SwapWindow(window_);
+        profMark(9); // present/vsync wait done
+        // Spike forensics: a >50ms frame is exactly the "UI jank" users feel;
+        // dump which stage blew up before the window counters reset it.
+        {
+            const double spikeWallMs = 1000.0 *
+                double(SDL_GetPerformanceCounter() - profFrameStartT_) /
+                double(profFreq);
+            if (spikeWallMs > 50.0) {
+                SDL_Log("SDL3_GLES spike wall=%.1f cpu[logic=%.1f shadow=%.1f "
+                    "gbuf=%.1f light=%.1f water=%.1f bloom=%.1f tone=%.1f "
+                    "fxaa=%.1f ui=%.1f swap=%.1f]",
+                    spikeWallMs,
+                    profFrameCpuMs_[0], profFrameCpuMs_[1], profFrameCpuMs_[2],
+                    profFrameCpuMs_[3], profFrameCpuMs_[4], profFrameCpuMs_[5],
+                    profFrameCpuMs_[6], profFrameCpuMs_[7], profFrameCpuMs_[8],
+                    profFrameCpuMs_[9]);
+            }
+            for (int s = 0; s < kProfStages; ++s) profFrameCpuMs_[s] = 0.0;
+        }
+
+        // Periodic per-stage profile: CPU always, GPU when timer queries are
+        // available (they lag one frame; averages absorb that).
+        if (++profFrames_ >= 300) {
+            // Stubs guard: some bridges export the query entry points but
+            // never make results available.  One blocking drain per window;
+            // if even that yields nothing, stop issuing queries.
+            if (profGpuQueries_ && profPendingSet_ >= 0) {
+                bool anyGpu = false;
+                for (int s = 1; s < kProfStages; ++s) {
+                    anyGpu = anyGpu || profGpuMs_[s] > 0.0;
+                }
+                if (!anyGpu) {
+                    for (int s = 1; s < kProfStages; ++s) {
+                        GLuint nanoseconds = 0;
+                        profGetQ_(profQueries_[profPendingSet_][s],
+                            GL_QUERY_RESULT_EXT, &nanoseconds);
+                        profGpuMs_[s] += double(nanoseconds) / 1e6;
+                    }
+                    bool anyAfter = false;
+                    for (int s = 1; s < kProfStages; ++s) {
+                        anyAfter = anyAfter || profGpuMs_[s] > 0.0;
+                    }
+                    if (!anyAfter) {
+                        profGpuQueries_ = false;
+                        SDL_Log("SDL3_GLES prof gpu_timer=no_results disabled");
+                    }
+                }
+            }
+            double total = 0.0;
+            for (int s = 0; s < kProfStages; ++s) total += profCpuMs_[s];
+            SDL_Log("SDL3_GLES prof frames=%u cpu_total=%.2f cpu[logic=%.2f shadow=%.2f "
+                "gbuf=%.2f light=%.2f water=%.2f bloom=%.2f tone=%.2f fxaa=%.2f ui=%.2f swap=%.2f] "
+                "gpu[shadow=%.2f gbuf=%.2f light=%.2f water=%.2f bloom=%.2f tone=%.2f fxaa=%.2f ui=%.2f]",
+                profFrames_, total / profFrames_,
+                profCpuMs_[0] / profFrames_, profCpuMs_[1] / profFrames_,
+                profCpuMs_[2] / profFrames_, profCpuMs_[3] / profFrames_,
+                profCpuMs_[4] / profFrames_, profCpuMs_[5] / profFrames_,
+                profCpuMs_[6] / profFrames_, profCpuMs_[7] / profFrames_,
+                profCpuMs_[8] / profFrames_, profCpuMs_[9] / profFrames_,
+                profGpuMs_[1] / profFrames_, profGpuMs_[2] / profFrames_,
+                profGpuMs_[3] / profFrames_, profGpuMs_[4] / profFrames_,
+                profGpuMs_[5] / profFrames_, profGpuMs_[6] / profFrames_,
+                profGpuMs_[7] / profFrames_, profGpuMs_[8] / profFrames_);
+            SDL_Log("SDL3_GLES prof ui_sub frames=%u minimap_bars=%.2f "
+                "flash_joy=%.2f buttons=%.2f max_frame_ms=%.1f",
+                profFrames_, profUiSubMs_[0] / profFrames_,
+                profUiSubMs_[1] / profFrames_, profUiSubMs_[2] / profFrames_,
+                profMaxFrameMs_);
+            for (int s = 0; s < kProfStages; ++s) {
+                profCpuMs_[s] = 0.0;
+                profGpuMs_[s] = 0.0;
+            }
+            for (int s = 0; s < 4; ++s) profUiSubMs_[s] = 0.0;
+            profMaxFrameMs_ = 0.0;
+            profFrames_ = 0;
+        }
 
         if (!firstFrameLogged_) {
             firstFrameLogged_ = true;
@@ -3862,6 +4673,17 @@ public:
             }
         }
         groundMeshes_.clear();
+        for (GlesSceneModel& asset : sceneModels_) {
+            for (const GlesMesh& mesh : asset.meshes) {
+                if (mesh.vao != 0) glDeleteVertexArrays(1, &mesh.vao);
+                if (mesh.vertexBuffer != 0) glDeleteBuffers(1, &mesh.vertexBuffer);
+                if (mesh.indexBuffer != 0) glDeleteBuffers(1, &mesh.indexBuffer);
+            }
+            if (!asset.textures.empty()) {
+                glDeleteTextures(static_cast<GLsizei>(asset.textures.size()), asset.textures.data());
+            }
+        }
+        sceneModels_.clear();
         for (const GlesMesh& mesh : terrainMeshes_) {
             if (mesh.vao) glDeleteVertexArrays(1, &mesh.vao);
             if (mesh.vertexBuffer) glDeleteBuffers(1, &mesh.vertexBuffer);
@@ -3885,6 +4707,10 @@ public:
         if (brdfLutTexture_ != 0) {
             glDeleteTextures(1, &brdfLutTexture_);
             brdfLutTexture_ = 0;
+        }
+        if (waterNormalTexture_ != 0) {
+            glDeleteTextures(1, &waterNormalTexture_);
+            waterNormalTexture_ = 0;
         }
         if (overlayVbo_ != 0) {
             glDeleteBuffers(1, &overlayVbo_);
@@ -4165,6 +4991,7 @@ private:
         materialParamsLocation_ = glGetUniformLocation(gbufferProgram_, "materialParams");
         waterTimeLocation_ = glGetUniformLocation(gbufferProgram_, "waterTime");
         materialBaseColorFactorLocation_ = glGetUniformLocation(gbufferProgram_, "materialBaseColorFactor");
+        materialAlphaCutoffLocation_ = glGetUniformLocation(gbufferProgram_, "materialAlphaCutoff");
         hasNormalMapLocation_ = glGetUniformLocation(gbufferProgram_, "hasNormalMap");
         // Lighting pass (G-buffer reads + IBL + sky).
         lightingAlbedoSampler_ = glGetUniformLocation(lightingProgram_, "albedoTexture");
@@ -4193,13 +5020,16 @@ private:
         waterColorLocation_ = glGetUniformLocation(waterProgram_, "waterColor");
         waterMuzzleLocation_ = glGetUniformLocation(waterProgram_, "waterMuzzle");
         waterLdrLocation_ = glGetUniformLocation(waterProgram_, "waterLdr");
+        waterNormalSamplerLocation_ = glGetUniformLocation(waterProgram_, "waterNormalMap");
         glUseProgram(waterProgram_);
         glUniform1i(glGetUniformLocation(waterProgram_, "opaqueColor"), 0);
         glUniform1i(glGetUniformLocation(waterProgram_, "opaqueDepth"), 1);
         glUniform1i(glGetUniformLocation(waterProgram_, "waterSky"), 2);
+        glUniform1i(waterNormalSamplerLocation_, 3);
         glUseProgram(0);
         // Post-processing chain (FXAA).
         fxaaSampler_ = glGetUniformLocation(fxaaProgram_, "colorTex");
+        fxaaEnabledLocation_ = glGetUniformLocation(fxaaProgram_, "fxaaEnabled");
         // Bloom + AgX tonemap chain.
         bloomThSampler_ = glGetUniformLocation(bloomThProgram_, "inputTex");
         bloomThParams_ = glGetUniformLocation(bloomThProgram_, "uBloomParams");
@@ -4291,9 +5121,14 @@ private:
     }
 
     // MRT G-buffer, attachment layout following MikanEngine's RenderTarget:
-    //   0 albedo (RGBA8), 1 octahedral normal (RGBA8), 2 material (RGBA8),
+    //   0 albedo (RGBA8; alpha carries the water-surface flag for lighting),
+    //   1 octahedral normal (RG8 -- lighting reads only the octahedral xy),
+    //   2 material (RGB8: metallic/roughness/ao),
     //   3 RGBE emission (RGBA8; engine slot 3 is the TAA motion vector, skipped).
-    // RGBA8 everywhere because the DGLES bridge gives no float/SNORM renderable
+    // Compacted from the original all-RGBA8 layout: mobile GPUs are
+    // bandwidth-bound and the lighting pass never reads the dropped
+    // channels, saving 6 B/px across write + read.  RGBA8 everywhere else
+    // because the DGLES bridge gives no float/SNORM renderable
     // guarantee -- same Adreno-compat pragmatism as the engine's format chain.
     void DestroyGBufferTarget()
     {
@@ -4327,19 +5162,21 @@ private:
             return false;
         }
 
-        const auto makeColorTexture = [&](GLuint& texture) {
+        const auto makeColorTexture = [&](GLuint& texture, GLint internalFormat,
+            GLenum format) {
             glGenTextures(1, &texture);
             glBindTexture(GL_TEXTURE_2D, texture);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+            glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, w, h, 0, format,
+                GL_UNSIGNED_BYTE, nullptr);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         };
-        makeColorTexture(gbufferAlbedoTex_);
-        makeColorTexture(gbufferNormalTex_);
-        makeColorTexture(gbufferMaterialTex_);
-        makeColorTexture(gbufferEmissiveTex_);
+        makeColorTexture(gbufferAlbedoTex_, GL_RGBA8, GL_RGBA);
+        makeColorTexture(gbufferNormalTex_, GL_RG8, GL_RG);
+        makeColorTexture(gbufferMaterialTex_, GL_RGB8, GL_RGB);
+        makeColorTexture(gbufferEmissiveTex_, GL_RGBA8, GL_RGBA);
 
         glGenTextures(1, &gbufferDepthTex_);
         glBindTexture(GL_TEXTURE_2D, gbufferDepthTex_);
@@ -4527,6 +5364,41 @@ private:
             return false;
         }
 
+        // Half-resolution copy of the tonemapped scene used as the glass
+        // panels' background (menu family only, blitted after the tonemap
+        // pass).  Glass sampling is resolution-independent (normalized UVs),
+        // so the 7-tap dispersion/frost reads hit a 4x smaller working set
+        // and the frost gets a wider effective blur radius for free.
+        // Gameplay keeps sampling tonemapTex_ directly: its glass area
+        // (joystick + corner buttons) is too small to pay back the blit.
+        if (glassBgFbo_ == 0) {
+            const GLsizei gw = std::max<GLsizei>(w / 2, 1);
+            const GLsizei gh = std::max<GLsizei>(h / 2, 1);
+            glGenTextures(1, &glassBgTex_);
+            glBindTexture(GL_TEXTURE_2D, glassBgTex_);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, gw, gh, 0, GL_RGBA,
+                GL_UNSIGNED_BYTE, nullptr);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glGenFramebuffers(1, &glassBgFbo_);
+            glBindFramebuffer(GL_FRAMEBUFFER, glassBgFbo_);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                GL_TEXTURE_2D, glassBgTex_, 0);
+            if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+                SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                    "SDL3_GLES stage=glass_bg_incomplete");
+                glDeleteFramebuffers(1, &glassBgFbo_);
+                glassBgFbo_ = 0;
+                glDeleteTextures(1, &glassBgTex_);
+                glassBgTex_ = 0;
+            }
+            glassBgW_ = glassBgFbo_ != 0 ? gw : 0;
+            glassBgH_ = glassBgFbo_ != 0 ? gh : 0;
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        }
+
         postWidth_ = static_cast<uint32_t>(w);
         postHeight_ = static_cast<uint32_t>(h);
         LogGlErrors("create_post");
@@ -4577,6 +5449,16 @@ private:
             glDeleteTextures(1, &tonemapTex_);
             tonemapTex_ = 0;
         }
+        if (glassBgFbo_ != 0) {
+            glDeleteFramebuffers(1, &glassBgFbo_);
+            glassBgFbo_ = 0;
+        }
+        if (glassBgTex_ != 0) {
+            glDeleteTextures(1, &glassBgTex_);
+            glassBgTex_ = 0;
+        }
+        glassBgW_ = 0;
+        glassBgH_ = 0;
         postWidth_ = 0;
         postHeight_ = 0;
     }
@@ -4727,6 +5609,57 @@ private:
     // small cubemap with a matching roughness (level i -> i / (levels-1)), so
     // the model shader's textureLod(R, roughness * maxLevel) hits a real GGX
     // convolution instead of the far-too-sharp naive mip blur.
+    bool CreateWaterNormalTexture()
+    {
+        void* encoded = nullptr;
+        size_t encodedSize = 0;
+        if (!OHOS_ReadRawFile(water::kWaterNormalMapRawfile, &encoded, &encodedSize) ||
+            encoded == nullptr) {
+            if (encoded != nullptr) {
+                OHOS_FreeRawFile(encoded);
+            }
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                "SDL3_GLES stage=water_normal_rawfile_failed");
+            return false;
+        }
+
+        std::vector<std::vector<unsigned char>> levels;
+        const bool decoded = water::DecodeWaterNormalMipChain(encoded, encodedSize, levels);
+        OHOS_FreeRawFile(encoded);
+        if (!decoded) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                "SDL3_GLES stage=water_normal_decode_failed");
+            return false;
+        }
+
+        glActiveTexture(GL_TEXTURE0);
+        glGenTextures(1, &waterNormalTexture_);
+        glBindTexture(GL_TEXTURE_2D, waterNormalTexture_);
+        std::uint32_t width = water::kWaterNormalMapWidth;
+        for (std::size_t level = 0; level < levels.size(); ++level) {
+            glTexImage2D(GL_TEXTURE_2D, static_cast<GLint>(level), GL_RGBA8,
+                static_cast<GLsizei>(width), static_cast<GLsizei>(width), 0,
+                GL_RGBA, GL_UNSIGNED_BYTE, levels[level].data());
+            width = width > 1 ? width / 2 : 1;
+        }
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL,
+            static_cast<GLint>(levels.size()) - 1);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        LogGlErrors("create_water_normal_map");
+        if (waterNormalTexture_ == 0) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                "SDL3_GLES stage=water_normal_texture_create_failed");
+            return false;
+        }
+        SDL_Log("SDL3_GLES stage=water_normal_ready size=%ux%u mips=%zu",
+            water::kWaterNormalMapWidth, water::kWaterNormalMapWidth, levels.size());
+        return true;
+    }
+
     // Uploads the offline BRDF integration LUT shipped in the HAP rawfile.
     // Row 0 of the PNG is roughness 0 (verified against the analytic fit:
     // (NoV=1, rough=0) -> (0.969, 0.000)), so with GL's unflipped upload
@@ -4833,7 +5766,9 @@ private:
 
     // Uploads one RGBA8 image.  Samples never come from disk twice: the loader
     // already decoded them.
-    GLuint CreateTexture2D(const std::uint8_t* rgba, uint32_t width, uint32_t height)
+    GLuint CreateTexture2D(const std::uint8_t* rgba, uint32_t width, uint32_t height,
+        ohos_model::Image::WrapMode wrapS = ohos_model::Image::WrapMode::Repeat,
+        ohos_model::Image::WrapMode wrapT = ohos_model::Image::WrapMode::Repeat)
     {
         GLuint texture = 0;
         glGenTextures(1, &texture);
@@ -4843,11 +5778,19 @@ private:
         glGenerateMipmap(GL_TEXTURE_2D);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        // REPEAT, not CLAMP_TO_EDGE: glTF's implicit sampler wraps, and
-        // DamagedHelmet ships UVs in v [1,2] that rely on exactly that.  Clamping
-        // pins every fragment to the edge row and smears it into streaks.
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        const auto ToGlWrap = [](ohos_model::Image::WrapMode mode) {
+            switch (mode) {
+            case ohos_model::Image::WrapMode::ClampToEdge:
+                return GL_CLAMP_TO_EDGE;
+            case ohos_model::Image::WrapMode::MirroredRepeat:
+                return GL_MIRRORED_REPEAT;
+            case ohos_model::Image::WrapMode::Repeat:
+            default:
+                return GL_REPEAT;
+            }
+        };
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, ToGlWrap(wrapS));
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, ToGlWrap(wrapT));
         return texture;
     }
 
@@ -4941,7 +5884,8 @@ private:
                 modelTextures_.push_back(0);
                 continue;
             }
-            modelTextures_.push_back(CreateTexture2D(image.rgba.data(), image.width, image.height));
+            modelTextures_.push_back(CreateTexture2D(image.rgba.data(), image.width, image.height,
+                image.wrapS, image.wrapT));
         }
 
         meshes_.reserve(model.meshes.size());
@@ -4981,6 +5925,9 @@ private:
             mesh.indexCount = static_cast<GLuint>(source.indices.size());
             mesh.indexType = source.indexBytes == 4 ? GL_UNSIGNED_INT : GL_UNSIGNED_SHORT;
             mesh.materialIndex = static_cast<int32_t>(materialIndex);
+            mesh.doubleSided = materialIndex >= 0 &&
+                static_cast<size_t>(materialIndex) < materials_.size() &&
+                materials_[static_cast<size_t>(materialIndex)].doubleSided;
 
             glGenVertexArrays(1, &mesh.vao);
             glBindVertexArray(mesh.vao);
@@ -5050,6 +5997,7 @@ private:
         LoadPistolModel();
         LoadHelmetModel();
         LoadGroundModel();
+        LoadSceneModels();
         if (sceneDefinition_ != nullptr) {
             ohos_model::Model terrainModel;
             std::string terrainError;
@@ -5146,12 +6094,26 @@ private:
                 out.push_back(0);
                 continue;
             }
-            out.push_back(CreateTexture2D(image.rgba.data(), image.width, image.height));
+            out.push_back(CreateTexture2D(image.rgba.data(), image.width, image.height,
+                image.wrapS, image.wrapT));
         }
     }
 
     void BuildStaticMeshes(const ohos_model::Model& model, std::vector<GlesMesh>& out)
     {
+        // Static geometry packs 32 bytes/vertex (position/normal/uv only).
+        // The shared ohos_model::Vertex spends 8 B on joints/weights that are
+        // always zero for unskinned meshes; mobile GPUs are vertex-bandwidth
+        // bound and the scene is dominated by static props/terrain, so the
+        // static path uploads and fetches a compact interleaved layout
+        // (-20% vertex traffic).  The skinned character keeps the full 40 B
+        // ohos_model::Vertex layout (see LoadModel).
+        struct StaticVertex {
+            float position[3];
+            float normal[3];
+            float uv[2];
+        };
+        static_assert(sizeof(StaticVertex) == 32, "static vertex layout drifted");
         out.reserve(model.meshes.size());
         for (const ohos_model::Mesh& source : model.meshes) {
             if (source.vertices.empty() || source.indices.empty()) {
@@ -5159,6 +6121,9 @@ private:
             }
             GlesMesh mesh;
             mesh.castShadow = source.castShadow;
+            mesh.nodeIndex = source.nodeIndex;
+            mesh.doubleSided = source.materialIndex < model.materials.size() &&
+                model.materials[source.materialIndex].doubleSided;
             for (const auto& vertex : source.vertices) mesh.bounds.Add(vertex.position);
             mesh.indexCount = static_cast<GLuint>(source.indices.size());
             mesh.indexType = source.indexBytes == 4 ? GL_UNSIGNED_INT : GL_UNSIGNED_SHORT;
@@ -5169,23 +6134,30 @@ private:
 
             glGenBuffers(1, &mesh.vertexBuffer);
             glBindBuffer(GL_ARRAY_BUFFER, mesh.vertexBuffer);
+            std::vector<StaticVertex> packed;
+            packed.reserve(source.vertices.size());
+            for (const auto& vertex : source.vertices) {
+                packed.push_back({{vertex.position[0], vertex.position[1], vertex.position[2]},
+                    {vertex.normal[0], vertex.normal[1], vertex.normal[2]},
+                    {vertex.uv[0], vertex.uv[1]}});
+            }
             glBufferData(GL_ARRAY_BUFFER,
-                static_cast<GLsizeiptr>(source.vertices.size() * sizeof(ohos_model::Vertex)),
-                source.vertices.data(), GL_STATIC_DRAW);
+                static_cast<GLsizeiptr>(packed.size() * sizeof(StaticVertex)),
+                packed.data(), GL_STATIC_DRAW);
 
-            const GLsizei stride = static_cast<GLsizei>(sizeof(ohos_model::Vertex));
+            const GLsizei stride = static_cast<GLsizei>(sizeof(StaticVertex));
             // Locations 0/1/2 only: no joints/weights streams for static
             // geometry (the vertex shader's skinningOn gate is 0 anyway, but
             // leaving the generic attribs unbound keeps the intent clear).
             glEnableVertexAttribArray(0);
             glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride,
-                reinterpret_cast<const void*>(offsetof(ohos_model::Vertex, position)));
+                reinterpret_cast<const void*>(offsetof(StaticVertex, position)));
             glEnableVertexAttribArray(1);
             glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride,
-                reinterpret_cast<const void*>(offsetof(ohos_model::Vertex, normal)));
+                reinterpret_cast<const void*>(offsetof(StaticVertex, normal)));
             glEnableVertexAttribArray(2);
             glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride,
-                reinterpret_cast<const void*>(offsetof(ohos_model::Vertex, uv)));
+                reinterpret_cast<const void*>(offsetof(StaticVertex, uv)));
 
             glGenBuffers(1, &mesh.indexBuffer);
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.indexBuffer);
@@ -5232,6 +6204,138 @@ private:
         LogGlErrors("load_ground");
         SDL_Log("SDL3_GLES stage=ground_ready meshes=%zu textures=%zu",
             groundMeshes_.size(), groundTextures_.size());
+    }
+
+    void LoadSceneModels()
+    {
+        if (sceneDefinition_ == nullptr) {
+            return;
+        }
+        for (const scene::Entity& entity : sceneDefinition_->entities) {
+            if (!entity.importAsStaticModel) {
+                continue;
+            }
+            const auto existing = std::find_if(sceneModels_.begin(), sceneModels_.end(),
+                [&entity](const GlesSceneModel& candidate) {
+                    return candidate.path == entity.modelPath;
+                });
+            if (existing != sceneModels_.end()) {
+                continue;
+            }
+
+            ohos_model::Model model;
+            std::string error;
+            if (!ohos_model::LoadModelFromRawFile(entity.modelPath.c_str(), model, error)) {
+                SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                    "SDL3_GLES stage=scene_model_load_failed path=%s error=%s",
+                    entity.modelPath.c_str(), error.c_str());
+                continue;
+            }
+            if (model.skinned) {
+                SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                    "SDL3_GLES stage=scene_model_load_failed path=%s error=skinned_scene_model_unsupported",
+                    entity.modelPath.c_str());
+                continue;
+            }
+
+            GlesSceneModel asset;
+            asset.path = entity.modelPath;
+            asset.materials = model.materials;
+            LoadStaticTextures(model, asset.textures);
+            BuildStaticMeshes(model, asset.meshes);
+            if (asset.meshes.empty()) {
+                SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                    "SDL3_GLES stage=scene_model_load_failed path=%s error=no_meshes",
+                    entity.modelPath.c_str());
+                continue;
+            }
+            for (const GlesMesh& mesh : asset.meshes) {
+                if (mesh.bounds.minimum[0] > mesh.bounds.maximum[0]) {
+                    continue;  // empty bounds
+                }
+                for (int axis = 0; axis < 3; ++axis) {
+                    asset.bounds.minimum[axis] = std::min(asset.bounds.minimum[axis],
+                        mesh.bounds.minimum[axis]);
+                    asset.bounds.maximum[axis] = std::max(asset.bounds.maximum[axis],
+                        mesh.bounds.maximum[axis]);
+                }
+            }
+            asset.boundsValid = asset.bounds.minimum[0] <= asset.bounds.maximum[0];
+            InitOpenableProp(asset, model);
+            SDL_Log("SDL3_GLES stage=scene_model_ready path=%s meshes=%zu textures=%zu",
+                asset.path.c_str(), asset.meshes.size(), asset.textures.size());
+            sceneModels_.push_back(std::move(asset));
+        }
+    }
+
+    const GlesSceneModel* FindSceneModel(const std::string& path) const
+    {
+        const auto found = std::find_if(sceneModels_.begin(), sceneModels_.end(),
+            [&path](const GlesSceneModel& asset) { return asset.path == path; });
+        return found == sceneModels_.end() ? nullptr : &*found;
+    }
+
+    // ---- treasure chest interaction --------------------------------------
+    const scene::Entity* FindChestEntity() const
+    {
+        if (sceneDefinition_ == nullptr) return nullptr;
+        for (const scene::Entity& entity : sceneDefinition_->entities) {
+            if (entity.importAsStaticModel && entity.modelPath == kChestModelPath) {
+                return &entity;
+            }
+        }
+        return nullptr;
+    }
+
+    bool ChestOpened() const { return chestOpenStartTicks_ != 0; }
+
+    bool ChestNear() const
+    {
+        const scene::Entity* chest = FindChestEntity();
+        if (chest == nullptr) return false;
+        const Mat4 world = Mat4FromSceneEntity(*sceneDefinition_, *chest);
+        const float dx = world.value[12] - playerX_;
+        const float dz = world.value[14] - playerZ_;
+        return dx * dx + dz * dz <= kChestInteractDistance * kChestInteractDistance;
+    }
+
+    MenuButtonPos ChestButtonRect() const
+    {
+        const float w = static_cast<float>(width_);
+        const float h = static_cast<float>(height_);
+        const float mn = w < h ? w : h;
+        return {w * 0.5f, h - mn * 0.205f, mn * 0.095f, mn * 0.036f, mn * 0.036f};
+    }
+
+    // Lid world matrix for the current animation progress: rebuilds the lid
+    // node world with the sampled rotation and re-expresses it against the
+    // baked (centred/normalised) vertices.
+    Mat4 ChestLidWorld(const GlesSceneModel& asset, const Mat4& entityWorld) const
+    {
+        Mat4 delta = Mat4Identity();
+        if (asset.hasOpenClip) {
+            const float elapsed = chestOpenStartTicks_ == 0 ? 0.0f :
+                static_cast<float>(SDL_GetTicks() - chestOpenStartTicks_) * 0.001f;
+            const float t = std::min(elapsed, asset.openClip.duration);
+            float q[4];
+            SampleNodeRotation(asset.openClip, asset.lidNode, t,
+                asset.lidRotation0, q);
+            const float r0conj[4] = {-asset.lidRotation0[0],
+                -asset.lidRotation0[1], -asset.lidRotation0[2],
+                asset.lidRotation0[3]};
+            float deltaQ[4];
+            QuatMultiply(q, r0conj, deltaQ);
+            float deltaM[16];
+            QuatToMat4(deltaQ, deltaM);
+            std::memcpy(delta.value, deltaM, sizeof(delta.value));
+        }
+        Mat4 wt = Mat4Multiply(asset.lidParentWorld, asset.lidTranslation);
+        wt = Mat4Multiply(wt, delta);
+        wt = Mat4Multiply(wt, asset.lidScale);
+        Mat4 c = Mat4Multiply(asset.normaliseMat, wt);
+        c = Mat4Multiply(c, asset.lidWorld0Inv);
+        c = Mat4Multiply(c, asset.normaliseInv);
+        return Mat4Multiply(entityWorld, c);
     }
 
     // Picks the clip to play: Walk_Loop reads best on a static camera, with
@@ -5925,11 +7029,14 @@ private:
             if (mesh.indexCount == 0) {
                 continue;
             }
+            if (mesh.doubleSided) glDisable(GL_CULL_FACE);
+            else glEnable(GL_CULL_FACE);
             glBindVertexArray(mesh.vao);
             SetCharacterInstanceOffset(base);
             glDrawElementsInstanced(GL_TRIANGLES, static_cast<GLsizei>(mesh.indexCount),
                 mesh.indexType, nullptr, instanceCount);
         }
+        glEnable(GL_CULL_FACE);
         glBindVertexArray(0);
     }
 
@@ -5952,6 +7059,8 @@ private:
                 continue;
             }
             const ohos_model::Material* material = ResolveMaterial(mesh.materialIndex);
+            if (mesh.doubleSided) glDisable(GL_CULL_FACE);
+            else glEnable(GL_CULL_FACE);
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D,
                 TextureForImageIn(modelTextures_, material->baseColorImage));
@@ -5960,7 +7069,8 @@ private:
                 TextureForImageIn(modelTextures_, material->metallicRoughnessImage,
                     neutralMrTexture_));
             glActiveTexture(GL_TEXTURE2);
-            glBindTexture(GL_TEXTURE_2D, TextureForImageIn(modelTextures_, material->normalImage));
+            glBindTexture(GL_TEXTURE_2D, material->waterSurface ? waterNormalTexture_
+                : TextureForImageIn(modelTextures_, material->normalImage));
             glActiveTexture(GL_TEXTURE3);
             glBindTexture(GL_TEXTURE_2D, TextureForImageIn(modelTextures_, material->aoImage));
             glActiveTexture(GL_TEXTURE4);
@@ -5969,6 +7079,8 @@ private:
 
             glUniform3fv(modelEmissiveFactorLocation_, 1, material->emissiveFactor);
             glUniform4fv(materialBaseColorFactorLocation_, 1, material->baseColorFactor);
+            const bool alphaCutout = material->alphaMode != ohos_model::Material::AlphaMode::Opaque;
+            glUniform1f(materialAlphaCutoffLocation_, alphaCutout ? material->alphaCutoff : 0.0f);
             const float materialParams[4] = {material->metallicFactor,
                 material->roughnessFactor, material->normalScale, material->worldSpaceUv ? 2.0f : (material->waterSurface ? 1.0f : 0.0f)};
             glUniform4fv(materialParamsLocation_, 1, materialParams);
@@ -5981,11 +7093,98 @@ private:
             glDrawElementsInstanced(GL_TRIANGLES, static_cast<GLsizei>(mesh.indexCount),
                 mesh.indexType, nullptr, instanceCount);
         }
+        glEnable(GL_CULL_FACE);
+        glActiveTexture(GL_TEXTURE0);
+    }
+
+    // Batched path for the N scene copies of one static asset (the ground
+    // cube entities): they share meshes, materials and textures, so the
+    // whole material/texture/uniform state is issued once per material and
+    // only the modelMvp/modelMatrix UBO slots change per instance.  Cuts the
+    // per-entity cost from ~30 GL calls to ~3 on the DGLES bridge.
+    void DrawStaticMeshBatch(const std::vector<GlesMesh>& meshes,
+        const std::vector<GLuint>& textures,
+        const std::vector<ohos_model::Material>& materials,
+        const std::vector<Mat4>& worlds, const terrain::Bounds& modelBounds,
+        bool applyAlphaMask = false)
+    {
+        if (worlds.empty() || meshes.empty()) {
+            return;
+        }
+        glUniform1i(skinningOnLocation_, 0);
+        glUniform1i(instancingOnLocation_, 0);
+        glUniform1i(instanceBaseLocation_, 0);
+        glUniform1f(enemyDissolveLocation_, 0.0f);
+        glUniform1f(waterTimeLocation_,
+            static_cast<float>(SDL_GetTicks() % 3600000U) * 0.001f);
+        const terrain::Frustum viewFrustum(viewProj_.value, false);
+        glBindBuffer(GL_UNIFORM_BUFFER, uniformBuffer_);
+        int lastMaterialIndex = -1;
+        for (const Mat4& world : worlds) {
+            if (!viewFrustum.Intersects(
+                    terrain::TransformBounds(modelBounds, world.value))) {
+                continue;
+            }
+            const Mat4 mvp = Mat4Multiply(viewProj_, world);
+            glBufferSubData(GL_UNIFORM_BUFFER, 128, sizeof(Mat4), mvp.value);
+            glBufferSubData(GL_UNIFORM_BUFFER, 192, sizeof(Mat4), world.value);
+            for (const GlesMesh& mesh : meshes) {
+                if (mesh.indexCount == 0) {
+                    continue;
+                }
+                if (mesh.doubleSided) glDisable(GL_CULL_FACE);
+                else glEnable(GL_CULL_FACE);
+                if (mesh.materialIndex != lastMaterialIndex) {
+                    lastMaterialIndex = mesh.materialIndex;
+                    const ohos_model::Material* material =
+                        ResolveStaticMaterial(materials, mesh.materialIndex);
+                    glActiveTexture(GL_TEXTURE0);
+                    glBindTexture(GL_TEXTURE_2D,
+                        TextureForImageIn(textures, material->baseColorImage));
+                    glActiveTexture(GL_TEXTURE1);
+                    glBindTexture(GL_TEXTURE_2D,
+                        TextureForImageIn(textures, material->metallicRoughnessImage,
+                            neutralMrTexture_));
+                    glActiveTexture(GL_TEXTURE2);
+                    glBindTexture(GL_TEXTURE_2D,
+                        material->waterSurface ? waterNormalTexture_
+                            : TextureForImageIn(textures, material->normalImage));
+                    glActiveTexture(GL_TEXTURE3);
+                    glBindTexture(GL_TEXTURE_2D,
+                        TextureForImageIn(textures, material->aoImage));
+                    glActiveTexture(GL_TEXTURE4);
+                    glBindTexture(GL_TEXTURE_2D,
+                        TextureForImageIn(textures, material->emissiveImage));
+                    glUniform3fv(modelEmissiveFactorLocation_, 1,
+                        material->emissiveFactor);
+                    glUniform4fv(materialBaseColorFactorLocation_, 1,
+                        material->baseColorFactor);
+                    const bool useAlphaMask = applyAlphaMask &&
+                        material->alphaMode == ohos_model::Material::AlphaMode::Mask;
+                    glUniform1f(materialAlphaCutoffLocation_,
+                        useAlphaMask ? material->alphaCutoff : 0.0f);
+                    const float materialParams[4] = {material->metallicFactor,
+                        material->roughnessFactor, material->normalScale,
+                        material->worldSpaceUv ? 2.0f
+                            : (material->waterSurface ? 1.0f : 0.0f)};
+                    glUniform4fv(materialParamsLocation_, 1, materialParams);
+                    glUniform1i(hasNormalMapLocation_,
+                        material->normalImage >= 0 ? 1 : 0);
+                }
+                glBindVertexArray(mesh.vao);
+                glDrawElements(GL_TRIANGLES,
+                    static_cast<GLsizei>(mesh.indexCount),
+                    mesh.indexType, nullptr);
+            }
+        }
+        glBindBuffer(GL_UNIFORM_BUFFER, 0);
+        glEnable(GL_CULL_FACE);
         glActiveTexture(GL_TEXTURE0);
     }
 
     void DrawShadowMeshList(const std::vector<GlesMesh>& meshes, bool skinned,
-        const Mat4& world, GLuint skinBuffer = 0)
+        const Mat4& world, GLuint skinBuffer = 0,
+        const std::vector<int>* order = nullptr)
     {
         glUniform1i(shadowSkinningOnLocation_, skinned ? 1 : 0);
         glUniform1i(shadowInstancingOnLocation_, 0);
@@ -5997,16 +7196,24 @@ private:
         const Mat4 shadowMvp = Mat4Multiply(shadowMatrix_, world);
         glUniformMatrix4fv(shadowMvpLocation_, 1, GL_FALSE, shadowMvp.value);
         const terrain::Frustum frustum(shadowMvp.value, false);
-        for (const GlesMesh& mesh : meshes) {
+        for (size_t mi = 0; mi < meshes.size(); ++mi) {
+            if (order != nullptr && std::find(order->begin(), order->end(),
+                static_cast<int>(mi)) == order->end()) {
+                continue;
+            }
+            const GlesMesh& mesh = meshes[mi];
             if (!frustum.Intersects(mesh.bounds)) continue;
             if (!mesh.castShadow) continue;
             if (mesh.indexCount == 0) {
                 continue;
             }
+            if (mesh.doubleSided) glDisable(GL_CULL_FACE);
+            else glEnable(GL_CULL_FACE);
             glBindVertexArray(mesh.vao);
             glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(mesh.indexCount),
                 mesh.indexType, nullptr);
         }
+        glEnable(GL_CULL_FACE);
         glBindVertexArray(0);
     }
 
@@ -6017,7 +7224,9 @@ private:
     void DrawStaticMeshList(const std::vector<GlesMesh>& meshes,
         const std::vector<GLuint>& textures,
         const std::vector<ohos_model::Material>& materials,
-        const Mat4& world, bool skinned = false, GLuint skinBuffer = 0)
+        const Mat4& world, bool skinned = false, GLuint skinBuffer = 0,
+        bool applyAlphaMask = false,
+        const std::vector<int>* order = nullptr)
     {
         glUniform1i(skinningOnLocation_, skinned ? 1 : 0);
         glUniform1i(instancingOnLocation_, 0);
@@ -6032,13 +7241,20 @@ private:
         glBufferSubData(GL_UNIFORM_BUFFER, 192, sizeof(Mat4), world.value);
         glBindBuffer(GL_UNIFORM_BUFFER, 0);
         const terrain::Frustum frustum(mvp.value, false);
-        for (const GlesMesh& mesh : meshes) {
+        for (size_t mi = 0; mi < meshes.size(); ++mi) {
+            if (order != nullptr && std::find(order->begin(), order->end(),
+                static_cast<int>(mi)) == order->end()) {
+                continue;
+            }
+            const GlesMesh& mesh = meshes[mi];
             if (!frustum.Intersects(mesh.bounds)) continue;
             if (mesh.indexCount == 0) {
                 continue;
             }
             const ohos_model::Material* material =
                 ResolveStaticMaterial(materials, mesh.materialIndex);
+            if (mesh.doubleSided) glDisable(GL_CULL_FACE);
+            else glEnable(GL_CULL_FACE);
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D,
                 TextureForImageIn(textures, material->baseColorImage));
@@ -6047,8 +7263,8 @@ private:
                 TextureForImageIn(textures, material->metallicRoughnessImage,
                     neutralMrTexture_));
             glActiveTexture(GL_TEXTURE2);
-            glBindTexture(GL_TEXTURE_2D,
-                TextureForImageIn(textures, material->normalImage));
+            glBindTexture(GL_TEXTURE_2D, material->waterSurface ? waterNormalTexture_
+                : TextureForImageIn(textures, material->normalImage));
             glActiveTexture(GL_TEXTURE3);
             glBindTexture(GL_TEXTURE_2D,
                 TextureForImageIn(textures, material->aoImage));
@@ -6058,6 +7274,10 @@ private:
 
             glUniform3fv(modelEmissiveFactorLocation_, 1, material->emissiveFactor);
             glUniform4fv(materialBaseColorFactorLocation_, 1, material->baseColorFactor);
+            const bool useAlphaMask = applyAlphaMask &&
+                material->alphaMode == ohos_model::Material::AlphaMode::Mask;
+            glUniform1f(materialAlphaCutoffLocation_,
+                useAlphaMask ? material->alphaCutoff : 0.0f);
             const float materialParams[4] = {material->metallicFactor,
                 material->roughnessFactor, material->normalScale, material->worldSpaceUv ? 2.0f : (material->waterSurface ? 1.0f : 0.0f)};
             glUniform4fv(materialParamsLocation_, 1, materialParams);
@@ -6068,6 +7288,7 @@ private:
             glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(mesh.indexCount),
                 mesh.indexType, nullptr);
         }
+        glEnable(GL_CULL_FACE);
         glActiveTexture(GL_TEXTURE0);
     }
 
@@ -6165,7 +7386,8 @@ private:
                 enemyDeathPlaying_ = true;
                 enemyVisible_ = true;
                 enemyDeathTime_ = 0.0f;
-                SDL_Log("SDL3_GLES stage=enemy_defeated");
+                gold_ += 25;
+                SDL_Log("SDL3_GLES stage=enemy_defeated gold=%d", gold_);
             } else {
                 enemyHitLockTimer_ = kPlayerHitDuration;
                 SDL_Log("SDL3_GLES stage=enemy_hit health=%.0f/%.0f",
@@ -6500,6 +7722,7 @@ private:
     GLuint shadowProgram_ = 0;
     GLuint lightingProgram_ = 0;
     GLuint waterProgram_ = 0;
+    GLuint waterNormalTexture_ = 0;
     GLuint waterFbo_ = 0;
     GLuint waterColorTex_ = 0;
     GLint waterInverseLocation_ = -1;
@@ -6508,6 +7731,7 @@ private:
     GLint waterColorLocation_ = -1;
     GLint waterMuzzleLocation_ = -1;
     GLint waterLdrLocation_ = -1;
+    GLint waterNormalSamplerLocation_ = -1;
     GLuint shadowFbo_ = 0;
     GLuint shadowDepthTexture_ = 0;
     bool shadowReady_ = false;
@@ -6524,6 +7748,7 @@ private:
     // to the default framebuffer (see CreatePostTarget).
     GLuint fxaaProgram_ = 0;
     GLint fxaaSampler_ = -1;
+    GLint fxaaEnabledLocation_ = -1;
     GLuint postFbo_ = 0;
     GLuint postColorTex_ = 0;
     uint32_t postWidth_ = 0;
@@ -6557,6 +7782,12 @@ private:
     GLsizei bloomDsH_[kBloomDsLevels] = {};
     GLuint tonemapTex_ = 0;
     GLuint tonemapFbo_ = 0;
+    // Half-res glass background (see CreatePostTarget): menu-family screens
+    // blit tonemapTex_ here and the overlay/text shaders sample this instead.
+    GLuint glassBgTex_ = 0;
+    GLuint glassBgFbo_ = 0;
+    GLsizei glassBgW_ = 0;
+    GLsizei glassBgH_ = 0;
     // Inverse proj*view for depth -> world reconstruction, refreshed per frame.
     Mat4 invViewProj_;
     Mat4 viewProj_;  // proj*view, kept for per-prop modelMvp uploads
@@ -6599,6 +7830,7 @@ private:
     GLint waterTimeLocation_ = -1;
     GLint materialParamsLocation_ = -1;
     GLint materialBaseColorFactorLocation_ = -1;
+    GLint materialAlphaCutoffLocation_ = -1;
     GLint hasNormalMapLocation_ = -1;
     GLint skyboxMaxLodLocation_ = -1;
     float skyboxMaxLod_ = 0.0f;
@@ -6686,6 +7918,8 @@ private:
     GLuint minimapTexture_=0;
     std::vector<unsigned char> minimapPixels_;
     gameplay::MinimapTerrain minimapTerrain_;
+    // Rasterise the map at half frame rate; the GL quad keeps drawing it.
+    Uint32 minimapFrameTick_ = 0;
     const scene::Definition* sceneDefinition_ = nullptr;
     physics::JoltGameplayPhysics* physicsWorld_ = nullptr;
     bool physicsReset_ = false;
@@ -6755,8 +7989,15 @@ private:
     // Applied by destroying the scene targets; the gameplay path lazily
     // rebuilds them at the new scale (menus never touch the targets).
     bool bloomEnabled_ = true;            // runtime bloom chain toggle
+    bool fxaaEnabled_ = true;             // runtime FXAA toggle
     float renderScale_ = 1.0f;            // index into kScaleChoices
     inventory::State inventory_;          // bag grid + equipment slots
+    // Kill-earned wallet for the shop; intentionally persists across retry
+    // resets so a death never wipes purchases.
+    int gold_ = 100;
+    // Treasure chest interaction: 0 = closed, otherwise the SDL tick the
+    // open animation started (the lid hinges open over its clip duration).
+    Uint64 chestOpenStartTicks_ = 0;
     int resIndex_ = 0;
     static constexpr float kScaleChoices[4] = {1.0f, 0.75f, 0.5f, 0.25f};
     float lookSensitivityScale_ = 1.0f;
@@ -6780,13 +8021,8 @@ private:
     GLuint overlayVao_ = 0;
     GLuint overlayVbo_ = 0;
     GLint overlayResolutionLocation_ = -1;
-    GLint overlayColorLocation_ = -1;
-    GLint glassShapeLocation_ = -1;
-    GLint glassRadiusLocation_ = -1;
     GLint glassEnabledLocation_ = -1;
     static constexpr int kOverlaySegments = 48;
-    int rectIndexCount_ = 0;  // vertices of the last UploadRoundedRect
-    static constexpr int kOverlayFanCount = kOverlaySegments + 2;
     GLuint iconProgram_ = 0;
     GLuint iconVao_ = 0;
     GLuint iconVbo_ = 0;
@@ -6800,11 +8036,36 @@ private:
     GLuint textVao_ = 0;
     GLuint textVbo_ = 0;
     GLint textResolutionLocation_ = -1;
-    GLint textPxRangeLocation_ = -1;
     GLint textSamplerLocation_ = -1;
     GLuint textAtlasTexture_ = 0;
     Uint64 fpsLastTicks_ = 0;
     float fpsAvgMs_ = 0.0f;
+    Uint64 fpsLogFrames_ = 0;
+    // Profiling probes (see the file-scope note near kBloomStrength).
+    // Stage order: 0 logic, 1 shadow, 2 gbuffer, 3 lighting, 4 water,
+    // 5 bloom, 6 tonemap, 7 fxaa, 8 ui, 9 swap(present).
+    static constexpr int kProfStages = 10;
+    double profCpuMs_[kProfStages] = {};
+    double profGpuMs_[kProfStages] = {};
+    // Current frame's per-stage CPU split, for the spike forensics dump.
+    double profFrameCpuMs_[kProfStages] = {};
+    Uint64 profFrameStartT_ = 0;
+    // ui-stage internals (gameplay): minimap / bars / flash+joystick / buttons.
+    double profUiSubMs_[4] = {};
+    // Worst single-frame interval (ms) inside the current 300-frame window:
+    // averages hide the stalls behind "UI feels janky" reports.
+    double profMaxFrameMs_ = 0.0;
+    Uint32 profFrames_ = 0;
+    GLuint profQueries_[2][kProfStages] = {};
+    int profQuerySet_ = 0;
+    int profPendingSet_ = -1;
+    bool profGpuQueries_ = false;
+    bool profGpuProbed_ = false;
+    PFN_ProfGenQueries profGenQ_ = nullptr;
+    PFN_ProfDeleteQueries profDelQ_ = nullptr;
+    PFN_ProfBeginQuery profBeginQ_ = nullptr;
+    PFN_ProfEndQuery profEndQ_ = nullptr;
+    PFN_ProfGetQueryObjectuiv profGetQ_ = nullptr;
     // 1x1 opaque white, used whenever a mesh has no resolvable base colour
     // texture: sampling an unbound texture is undefined, this is not.
     GLuint whiteTexture_ = 0;
@@ -6837,6 +8098,7 @@ private:
     std::vector<ohos_model::Material> terrainMaterials_;
     std::vector<GLuint> groundTextures_;
     std::vector<ohos_model::Material> groundMaterials_;
+    std::vector<GlesSceneModel> sceneModels_;
 };
 
 } // namespace

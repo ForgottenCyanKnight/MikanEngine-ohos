@@ -62,6 +62,10 @@ enum class UiScreen {
     // Gameplay frozen behind the inventory sheet (equipment slots + item
     // grid); the touch layer routes this screen as menu input.
     GameplayInventory,
+    // Gameplay frozen behind the shop sheet (potions / ammo / equipment
+    // purchased with kill-earned gold); routed as menu input like the
+    // inventory sheet.
+    GameplayShop,
 };
 
 const char* BackendName(Backend backend);
@@ -135,6 +139,9 @@ public:
     virtual const char* Name() const = 0;
     virtual bool WeaponAvailable() const { return false; }
     virtual bool WeaponEquipped() const { return false; }
+    // True while the chest interaction prompt is on screen (player near a
+    // closed chest); the touch layer claims presses on the prompt region.
+    virtual bool ChestPromptActive() const { return false; }
 
     // Called once at start-up and then every frame with the current drawable
     // size.  Implementations must be idempotent and cheap when nothing changed.

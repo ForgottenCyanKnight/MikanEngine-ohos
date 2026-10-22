@@ -19,10 +19,19 @@ inline int HitPistolButton(float x,float y,float w,float h,bool equipped,bool av
 }
 inline WeaponButton PotionButton(float w,float h){float mn=std::min(w,h);return {w*.5f-mn*.25f,h-mn*.06f,mn*.040f};}
 inline bool HitPotionButton(float x,float y,float w,float h){auto b=PotionButton(w,h);return (x-b.x)*(x-b.x)+(y-b.y)*(y-b.y)<=b.r*b.r;}
+// Chest interaction prompt (wide capsule, bottom-centre).  The renderer only
+// shows it near a closed chest; touch claims the press only while active.
+inline bool HitChestButton(float x,float y,float w,float h){
+    float mn=std::min(w,h);
+    return std::fabs(x-w*.5f)<=mn*.14f && std::fabs(y-(h-mn*.205f))<=mn*.055f;
+}
 struct PistolState {
     static constexpr int capacity=12;
     bool equipped=false,aiming=false,pendingFire=false,fired=false,hit=false,reloading=false,pendingReload=false;
     int ammo=capacity;
+    // Reserve magazines bought from the shop; a reload consumes from here and
+    // may end partially filled once the reserve runs dry.
+    int reserve=24;
     float cooldown=0,shotAge=10,hitFlash=0,reloadAge=0,reloadDuration=1.6666667f;
     void Reset(){*this=PistolState{};}
     void Holster(){equipped=aiming=pendingFire=pendingReload=reloading=false;shotAge=10;reloadAge=0;}
@@ -35,9 +44,9 @@ struct PistolState {
     void Tick(float dt,bool allowed){
         cooldown=std::max(0.f,cooldown-dt);shotAge+=dt;hitFlash=std::max(0.f,hitFlash-dt);fired=hit=false;
         if(!equipped){pendingFire=pendingReload=false;return;}
-        if(!reloading && allowed && ammo<capacity && (pendingReload || (ammo==0 && shotAge>=.30f))){reloading=true;reloadAge=0;shotAge=10;}
+        if(!reloading && allowed && ammo<capacity && reserve>0 && (pendingReload || (ammo==0 && shotAge>=.30f))){reloading=true;reloadAge=0;shotAge=10;}
         pendingReload=false;
-        if(reloading){if(allowed)reloadAge+=dt;if(reloadAge>=reloadDuration){ammo=capacity;reloading=false;reloadAge=0;}pendingFire=false;return;}
+        if(reloading){if(allowed)reloadAge+=dt;if(reloadAge>=reloadDuration){int need=capacity-ammo;int take=need<reserve?need:reserve;ammo+=take;reserve-=take;reloading=false;reloadAge=0;}pendingFire=false;return;}
         if(pendingFire && allowed && cooldown<=0 && ammo>0){--ammo;fired=true;cooldown=.35f;shotAge=0;}
         pendingFire=false;
     }

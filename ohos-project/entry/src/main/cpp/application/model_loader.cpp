@@ -36,6 +36,10 @@ constexpr const char* kLogTag = "SDL3_MODEL";
 // already uses for its built-in cube (60 degree vertical FOV at distance
 // 4.5), so the model lands comfortably inside the frame.
 constexpr float kNormalizedExtent = 2.0f;
+// The deferred GLES path has no general translucent-model pass, so BLEND
+// materials are currently rendered as cutouts. Preserve more antialiased
+// foliage coverage than glTF's default MASK cutoff of 0.5.
+constexpr float kBlendMaterialCutoutThreshold = 0.08f;
 
 // Mirrors cgltf_combine_paths(): keep the directory part of `base` and append
 // `uri`.  cgltf uses this internally for buffers; images need the same rule.
@@ -131,6 +135,49 @@ const cgltf_accessor* FindAttribute(const cgltf_primitive& primitive, cgltf_attr
         }
     }
     return nullptr;
+}
+
+const cgltf_image* ResolveTextureImage(const cgltf_texture* texture)
+{
+    if (texture == nullptr) {
+        return nullptr;
+    }
+    if (texture->image != nullptr) {
+        return texture->image;
+    }
+    if (texture->has_webp && texture->webp_image != nullptr) {
+        return texture->webp_image;
+    }
+    if (texture->has_basisu && texture->basisu_image != nullptr) {
+        return texture->basisu_image;
+    }
+    return nullptr;
+}
+
+std::int32_t TextureImageIndex(const cgltf_data& data, const cgltf_texture* texture)
+{
+    const cgltf_image* image = ResolveTextureImage(texture);
+    if (image == nullptr || data.images == nullptr) {
+        return -1;
+    }
+    const std::ptrdiff_t index = image - data.images;
+    if (index < 0 || static_cast<cgltf_size>(index) >= data.images_count) {
+        return -1;
+    }
+    return static_cast<std::int32_t>(index);
+}
+
+Image::WrapMode ConvertWrapMode(cgltf_wrap_mode mode)
+{
+    switch (mode) {
+    case cgltf_wrap_mode_clamp_to_edge:
+        return Image::WrapMode::ClampToEdge;
+    case cgltf_wrap_mode_mirrored_repeat:
+        return Image::WrapMode::MirroredRepeat;
+    case cgltf_wrap_mode_repeat:
+    default:
+        return Image::WrapMode::Repeat;
+    }
 }
 
 // General column-major 4x4 inverse (adjugate method) -- used for computing
@@ -314,39 +361,41 @@ bool LoadModelFromRawFile(const char* gltfPath, Model& model, std::string& error
         if (source.name != nullptr) {
             material.name = source.name;
         }
+        switch (source.alpha_mode) {
+        case cgltf_alpha_mode_mask:
+            material.alphaMode = Material::AlphaMode::Mask;
+            break;
+        case cgltf_alpha_mode_blend:
+            material.alphaMode = Material::AlphaMode::Blend;
+            break;
+        case cgltf_alpha_mode_opaque:
+        default:
+            material.alphaMode = Material::AlphaMode::Opaque;
+            break;
+        }
+        material.alphaCutoff = source.alpha_mode == cgltf_alpha_mode_blend
+            ? kBlendMaterialCutoutThreshold : source.alpha_cutoff;
+        material.doubleSided = source.double_sided;
         for (int c = 0; c < 4; ++c) {
             material.baseColorFactor[c] = source.pbr_metallic_roughness.base_color_factor[c];
         }
         const cgltf_texture_view& baseColor =
             source.pbr_metallic_roughness.base_color_texture;
-        if (baseColor.texture != nullptr && baseColor.texture->image != nullptr) {
-            material.baseColorImage = static_cast<std::int32_t>(
-                baseColor.texture->image - data->images);
-        }
+        material.baseColorImage = TextureImageIndex(*data, baseColor.texture);
         const cgltf_texture_view& metalRough =
             source.pbr_metallic_roughness.metallic_roughness_texture;
-        if (metalRough.texture != nullptr && metalRough.texture->image != nullptr) {
-            material.metallicRoughnessImage = static_cast<std::int32_t>(
-                metalRough.texture->image - data->images);
-        }
+        material.metallicRoughnessImage = TextureImageIndex(*data, metalRough.texture);
         material.metallicFactor = source.pbr_metallic_roughness.metallic_factor;
         material.roughnessFactor = source.pbr_metallic_roughness.roughness_factor;
         const cgltf_texture_view& normalTex = source.normal_texture;
-        if (normalTex.texture != nullptr && normalTex.texture->image != nullptr) {
-            material.normalImage = static_cast<std::int32_t>(
-                normalTex.texture->image - data->images);
+        material.normalImage = TextureImageIndex(*data, normalTex.texture);
+        if (material.normalImage >= 0) {
             material.normalScale = normalTex.scale;
         }
         const cgltf_texture_view& occlusionTex = source.occlusion_texture;
-        if (occlusionTex.texture != nullptr && occlusionTex.texture->image != nullptr) {
-            material.aoImage = static_cast<std::int32_t>(
-                occlusionTex.texture->image - data->images);
-        }
+        material.aoImage = TextureImageIndex(*data, occlusionTex.texture);
         const cgltf_texture_view& emissiveTex = source.emissive_texture;
-        if (emissiveTex.texture != nullptr && emissiveTex.texture->image != nullptr) {
-            material.emissiveImage = static_cast<std::int32_t>(
-                emissiveTex.texture->image - data->images);
-        }
+        material.emissiveImage = TextureImageIndex(*data, emissiveTex.texture);
         for (int c = 0; c < 3; ++c) {
             material.emissiveFactor[c] = source.emissive_factor[c] *
                 (source.has_emissive_strength ? source.emissive_strength.emissive_strength : 1.0f);
@@ -359,6 +408,18 @@ bool LoadModelFromRawFile(const char* gltfPath, Model& model, std::string& error
         ok = LoadImage(data->images[i], gltfPath, model.images[i]);
         if (!ok) {
             error = "image load failed";
+        }
+    }
+    if (ok) {
+        for (cgltf_size i = 0; i < data->textures_count; ++i) {
+            const cgltf_texture& texture = data->textures[i];
+            const std::int32_t imageIndex = TextureImageIndex(*data, &texture);
+            if (imageIndex < 0 || texture.sampler == nullptr) {
+                continue;
+            }
+            Image& image = model.images[static_cast<std::size_t>(imageIndex)];
+            image.wrapS = ConvertWrapMode(texture.sampler->wrap_s);
+            image.wrapT = ConvertWrapMode(texture.sampler->wrap_t);
         }
     }
 
@@ -588,6 +649,9 @@ bool LoadModelFromRawFile(const char* gltfPath, Model& model, std::string& error
         std::vector<const cgltf_node*> nodes;
         CollectSceneNodes(*data, nodes);
         for (const cgltf_node* node : nodes) {
+            if (!ok) {
+                break;
+            }
             if (node->mesh == nullptr) {
                 continue;
             }
@@ -599,6 +663,14 @@ bool LoadModelFromRawFile(const char* gltfPath, Model& model, std::string& error
             const cgltf_size meshIndex = static_cast<cgltf_size>(node->mesh - data->meshes);
             for (cgltf_size p = 0; p < node->mesh->primitives_count; ++p) {
                 const cgltf_primitive& primitive = node->mesh->primitives[p];
+                if (primitive.has_draco_mesh_compression) {
+                    error = "KHR_draco_mesh_compression must be decoded before loading";
+                    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                        "%s unsupported_draco_mesh mesh=%u", kLogTag,
+                        static_cast<unsigned int>(meshIndex));
+                    ok = false;
+                    break;
+                }
                 if (primitive.type != cgltf_primitive_type_triangles) {
                     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "%s primitive_skipped mesh=%u mode=%d",
                         kLogTag, static_cast<unsigned int>(meshIndex), static_cast<int>(primitive.type));
@@ -634,6 +706,11 @@ bool LoadModelFromRawFile(const char* gltfPath, Model& model, std::string& error
                 Mesh mesh;
                 mesh.materialIndex = primitive.material != nullptr ?
                     static_cast<std::uint32_t>(primitive.material - data->materials) : 0;
+                // Remember which scene-graph node instantiates this mesh so
+                // the renderer can animate sub-trees (chest lid hinge).
+                if (const auto it = nodeLookup.find(node); it != nodeLookup.end()) {
+                    mesh.nodeIndex = static_cast<std::int32_t>(it->second);
+                }
                 mesh.vertices.resize(positions->count);
                 for (cgltf_size v = 0; v < positions->count; ++v) {
                     float position[3] = {0.0f, 0.0f, 0.0f};

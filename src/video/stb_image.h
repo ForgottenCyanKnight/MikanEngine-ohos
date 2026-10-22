@@ -894,7 +894,16 @@ static void stbi__refill_buffer(stbi__context *s);
 // initialize a memory-decode context
 static void stbi__start_mem(stbi__context *s, stbi_uc const *buffer, int len)
 {
+   // The IEND handler below calls (s->io.skip) when it is non-NULL to rewind
+   // buffered bytes on stream-based loads.  stbi__context lives on the caller's
+   // stack, so leaving io.skip/io.eof uninitialized here made that guard test
+   // stack garbage: on some calls it happened to be zero (small PNGs decoded
+   // fine), on others it was stale non-zero data and the "function pointer"
+   // jumped into the heap -> SIGSEGV(SEGV_ACCERR) with rip inside
+   // [anon:native_heap:brk].  Zero the whole callback table for memory loads.
    s->io.read = NULL;
+   s->io.skip = NULL;
+   s->io.eof = NULL;
    s->read_from_callbacks = 0;
    s->callback_already_read = 0;
    s->img_buffer = s->img_buffer_original = (stbi_uc *) buffer;
