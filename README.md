@@ -119,7 +119,7 @@ ArkTS / EntryAbility          应用宿主与平台生命周期
    ```
 
 2. 在 DevEco Studio 中打开 **`ohos-project/`**，完成 SDK 设置与依赖同步。
-3. 选择 `default` 产品与 `entry` 模块，构建 HAP。
+3. 选择 `default` 产品、`entry` 模块和 `release` 构建模式，构建 HAP。
 4. 如需安装到设备，在 IDE 中配置自己的签名，再连接设备运行。
 
 上传版本的 `build-profile.json5` 将 `signingConfigs` 留空，未绑定签名。无签名构建可用于检查编译与打包；设备安装需要有效签名。IDE 自动生成的证书路径和密码应保留在本机，提交前检查配置差异。
@@ -134,7 +134,7 @@ $env:Path = "$env:DEVECO_INSTALL_DIR\tools\ohpm\bin;$env:Path"
 cd ohos-project
 
 ohpm install
-.\hvigorw.bat --mode module -p product=default -p module=entry@default assembleHap --no-daemon
+.\hvigorw.bat --mode module -p product=default -p module=entry@default -p buildMode=release assembleHap --no-daemon
 ```
 
 仓库的 `hvigorw.bat` 会从 `DEVECO_INSTALL_DIR` 查找 DevEco 自带的 Node、Hvigor、JBR 和 SDK。当前没有随仓库提供独立的 `hvigor-wrapper.js`，因此命令行也需要安装 DevEco Studio。

@@ -93,6 +93,7 @@ struct Terrain {
 enum class MeshKind {
     None,
     UnitCube,
+    StaticModel,
     Unsupported,
 };
 
@@ -112,6 +113,7 @@ struct Entity {
     ColliderSettings collider{};
     bool groundSurface = false;
     bool importAsStaticCube = false;
+    bool importAsStaticModel = false;
     Material material{};
     Terrain terrain{};
 };
@@ -170,6 +172,7 @@ struct Definition {
     std::size_t unsupportedVisibleMeshCount = 0;
 
     std::size_t StaticCubeCount() const;
+    std::size_t StaticModelCount() const;
 };
 
 // Strict, bounded reader for Mikan SceneSerializer formatVersion 1. It only

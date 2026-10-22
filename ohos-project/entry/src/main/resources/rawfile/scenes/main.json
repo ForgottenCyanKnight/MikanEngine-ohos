@@ -1779,7 +1779,7 @@
       "transform": {
         "position": [
           6,
-          -0.02,
+          1.31,
           1
         ],
         "rotation": [
@@ -1789,9 +1789,9 @@
           0
         ],
         "scale": [
-          0.1,
-          0.1,
-          0.1
+          1.28,
+          1.28,
+          1.28
         ]
       },
       "hierarchy": {
@@ -1802,7 +1802,7 @@
       },
       "mesh": {
         "type": 4,
-        "modelPath": "models/2.0/Lantern/glTF/Lantern.gltf"
+        "modelPath": "models/2.0/Lantern/glTF-Binary/Lantern.glb"
       },
       "render": {
         "visible": true,
@@ -1812,35 +1812,6 @@
         "showOBB": false,
         "doubleSided": false,
         "wireframe": false
-      },
-      "material": {
-        "albedoPath": "models/2.0/Lantern/glTF/Lantern_baseColor.png",
-        "normalPath": "models/2.0/Lantern/glTF/Lantern_normal.png",
-        "roughnessPath": "models/2.0/Lantern/glTF/Lantern_roughnessMetallic.png",
-        "metallicPath": "models/2.0/Lantern/glTF/Lantern_roughnessMetallic.png",
-        "aoPath": "",
-        "emissivePath": "models/2.0/Lantern/glTF/Lantern_emissive.png",
-        "albedoColor": [
-          1,
-          1,
-          1
-        ],
-        "metallic": 0.2,
-        "roughness": 0.5,
-        "ao": 1,
-        "emissiveIntensity": 0,
-        "useAlbedoTexture": true,
-        "useNormalTexture": true,
-        "useRoughnessTexture": true,
-        "useMetallicTexture": true,
-        "useAOTexture": false,
-        "useEmissiveTexture": true,
-        "albedoSamplerType": 0,
-        "normalSamplerType": 0,
-        "roughnessSamplerType": 0,
-        "metallicSamplerType": 0,
-        "aoSamplerType": 0,
-        "emissiveSamplerType": 0
       },
       "rigidBody": {
         "type": 0,
@@ -1862,7 +1833,7 @@
         "useOBB": false,
         "syncWithModel": true,
         "autoFitToModel": false,
-        "collisionModelPath": "models/2.0/Lantern/glTF/Lantern.gltf",
+        "collisionModelPath": "models/2.0/Lantern/glTF-Binary/Lantern.glb",
         "collisionPrecision": 0.01,
         "useConvexHull": false,
         "maxConvexHullVertices": 256,
@@ -2018,6 +1989,114 @@
         "layer1Path": "terrain/island_rock.png",
         "layer2Path": "terrain/island_soil.png"
       }
+    },
+    {
+      "id": 9101,
+      "name": { "name": "EZTree Grass Clump" },
+      "transform": {
+        "position": [-1.45, 0.35, -1.2],
+        "rotation": [1, 0, 0, 0],
+        "scale": [0.32, 0.32, 0.32]
+      },
+      "hierarchy": { "parent": 4294967295, "children": [] },
+      "mesh": { "type": 4, "modelPath": "models/EZTree/grass.glb" },
+      "render": { "visible": true, "castShadow": true, "receiveShadow": true }
+    },
+    {
+      "id": 9102,
+      "name": { "name": "EZTree Rock 1" },
+      "transform": {
+        "position": [-2.2, 0.363, -1.9],
+        "rotation": [1, 0, 0, 0],
+        "scale": [0.35, 0.35, 0.35]
+      },
+      "hierarchy": { "parent": 4294967295, "children": [] },
+      "mesh": { "type": 4, "modelPath": "models/EZTree/rock1.glb" },
+      "render": { "visible": true, "castShadow": true, "receiveShadow": true }
+    },
+    {
+      "id": 9103,
+      "name": { "name": "EZTree Rock 2" },
+      "transform": {
+        "position": [1.3, 0.193, -2.6],
+        "rotation": [1, 0, 0, 0],
+        "scale": [0.34, 0.34, 0.34]
+      },
+      "hierarchy": { "parent": 4294967295, "children": [] },
+      "mesh": { "type": 4, "modelPath": "models/EZTree/rock2.glb" },
+      "render": { "visible": true, "castShadow": true, "receiveShadow": true }
+    },
+    {
+      "id": 9104,
+      "name": { "name": "EZTree Rock 3" },
+      "transform": {
+        "position": [0.0, 0.313, -4.2],
+        "rotation": [1, 0, 0, 0],
+        "scale": [0.38, 0.38, 0.38]
+      },
+      "hierarchy": { "parent": 4294967295, "children": [] },
+      "mesh": { "type": 4, "modelPath": "models/EZTree/rock3.glb" },
+      "render": { "visible": true, "castShadow": true, "receiveShadow": true }
+    },
+    {
+      "id": 9105,
+      "name": { "name": "EZTree Blue Flower" },
+      "transform": {
+        "position": [7.3, 0.35, -1.4],
+        "rotation": [1, 0, 0, 0],
+        "scale": [0.32, 0.32, 0.32]
+      },
+      "hierarchy": { "parent": 4294967295, "children": [] },
+      "mesh": { "type": 4, "modelPath": "models/EZTree/flower_blue.glb" },
+      "render": { "visible": true, "castShadow": true, "receiveShadow": true }
+    },
+    {
+      "id": 9106,
+      "name": { "name": "EZTree White Flower" },
+      "transform": {
+        "position": [9.1, 0.35, 0.2],
+        "rotation": [1, 0, 0, 0],
+        "scale": [0.32, 0.32, 0.32]
+      },
+      "hierarchy": { "parent": 4294967295, "children": [] },
+      "mesh": { "type": 4, "modelPath": "models/EZTree/flower_white.glb" },
+      "render": { "visible": true, "castShadow": true, "receiveShadow": true }
+    },
+    {
+      "id": 9107,
+      "name": { "name": "EZTree Yellow Flower" },
+      "transform": {
+        "position": [9.7, 0.35, 1.3],
+        "rotation": [1, 0, 0, 0],
+        "scale": [0.32, 0.32, 0.32]
+      },
+      "hierarchy": { "parent": 4294967295, "children": [] },
+      "mesh": { "type": 4, "modelPath": "models/EZTree/flower_yellow.glb" },
+      "render": { "visible": true, "castShadow": true, "receiveShadow": true }
+    },
+    {
+      "id": 9108,
+      "name": { "name": "EZTree Tree" },
+      "transform": {
+        "position": [12.0, 1.63, -4.5],
+        "rotation": [1, 0, 0, 0],
+        "scale": [1.6, 1.6, 1.6]
+      },
+      "hierarchy": { "parent": 4294967295, "children": [] },
+      "mesh": { "type": 4, "modelPath": "models/EZTree/tree.glb" },
+      "render": { "visible": true, "castShadow": true, "receiveShadow": true }
+    },
+    {
+      "id": 9109,
+      "name": { "name": "Treasure Chest" },
+      "transform": {
+        "position": [1.8, 0.3, 1.2],
+        "rotation": [1, 0, 0, 0],
+        "scale": [0.5, 0.5, 0.5]
+      },
+      "hierarchy": { "parent": 4294967295, "children": [] },
+      "mesh": { "type": 4, "modelPath": "models/Chest/chest.glb" },
+      "render": { "visible": true, "castShadow": true, "receiveShadow": true }
     }
   ]
 }

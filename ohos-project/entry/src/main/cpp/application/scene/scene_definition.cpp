@@ -16,7 +16,7 @@ namespace {
 
 constexpr std::size_t kMaxJsonBytes = 8u * 1024u * 1024u;
 constexpr std::size_t kMaxEntities = 4096;
-constexpr std::size_t kMaxStaticCubeRenderables = 256;
+constexpr std::size_t kMaxStaticRenderables = 256;
 constexpr unsigned kMaxJsonDepth = 64;
 
 struct JsonValue {
@@ -451,6 +451,14 @@ std::string NormalizePath(std::string path)
     return path;
 }
 
+bool HasSupportedModelExtension(const std::string& normalizedPath)
+{
+    return (normalizedPath.size() >= 4 &&
+        normalizedPath.compare(normalizedPath.size() - 4, 4, ".glb") == 0) ||
+        (normalizedPath.size() >= 5 &&
+        normalizedPath.compare(normalizedPath.size() - 5, 5, ".gltf") == 0);
+}
+
 bool IsGroundSurface(const Entity& entity)
 {
     if (entity.meshKind != MeshKind::UnitCube ||
@@ -629,6 +637,12 @@ std::size_t Definition::StaticCubeCount() const
         [](const Entity& entity) { return entity.importAsStaticCube; }));
 }
 
+std::size_t Definition::StaticModelCount() const
+{
+    return static_cast<std::size_t>(std::count_if(entities.begin(), entities.end(),
+        [](const Entity& entity) { return entity.importAsStaticModel; }));
+}
+
 Transform RuntimeTransform(const Definition& definition, const Entity& entity,
     float runtimeGroundTopY)
 {
@@ -753,6 +767,7 @@ bool ParseMikanScene(const char* json, std::size_t size, Definition& output,
 
     bool hasCameraCandidate = false;
     std::size_t importedStaticCubes = 0;
+    std::size_t importedStaticModels = 0;
     parsed.entities.reserve(entities->array.size());
     for (const JsonValue& source : entities->array) {
         if (source.type != JsonValue::Type::Object) {
@@ -775,6 +790,8 @@ bool ParseMikanScene(const char* json, std::size_t size, Definition& output,
             if (normalized.find("base model/cube.glb") != std::string::npos ||
                 normalized.find("basemodel/cube.glb") != std::string::npos) {
                 entity.meshKind = MeshKind::UnitCube;
+            } else if (HasSupportedModelExtension(normalized)) {
+                entity.meshKind = MeshKind::StaticModel;
             } else {
                 entity.meshKind = MeshKind::Unsupported;
             }
@@ -866,7 +883,7 @@ bool ParseMikanScene(const char* json, std::size_t size, Definition& output,
             entity.parentId == kNoParent && entity.meshKind == MeshKind::UnitCube &&
             !entity.groundSurface;
         entity.importAsStaticCube = staticCubeCandidate &&
-            importedStaticCubes < kMaxStaticCubeRenderables;
+            importedStaticCubes < kMaxStaticRenderables;
         if (entity.importAsStaticCube) {
             if (!entity.collider.present) {
                 // The Mikan cube model has local bounds [-1, 1]. OHOS has no
@@ -880,8 +897,16 @@ bool ParseMikanScene(const char* json, std::size_t size, Definition& output,
             }
             ++importedStaticCubes;
         }
+        const bool staticModelCandidate = entity.hasMesh && entity.visible && staticBody &&
+            entity.parentId == kNoParent && entity.meshKind == MeshKind::StaticModel &&
+            !entity.groundSurface;
+        entity.importAsStaticModel = staticModelCandidate &&
+            importedStaticModels < kMaxStaticRenderables;
+        if (entity.importAsStaticModel) {
+            ++importedStaticModels;
+        }
         if (entity.hasMesh && entity.visible && !entity.groundSurface &&
-            !entity.importAsStaticCube) {
+            !entity.importAsStaticCube && !entity.importAsStaticModel) {
             ++parsed.unsupportedVisibleMeshCount;
         }
         parsed.entities.push_back(std::move(entity));
