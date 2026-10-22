@@ -1,10 +1,12 @@
 #include "inventory_ui.h"
+#include "shop_ui.h"
 #include "settings_ui.h"
 #include "minimap_hud.h"
 #define LOG_DOMAIN 0xD001530
 #define LOG_TAG "NativeVulkan"
 
 #include "water/water_surface.h"
+#include "water/water_normal_map.h"
 #include <ace/xcomponent/native_interface_xcomponent.h>
 #include <hilog/log.h>
 
@@ -525,6 +527,7 @@ struct ModelVertexGpu {
     float roughnessFactor;
     float normalScale;
     float waterSurface; // materialParams0.w
+    float alphaCutoff;
     float emissiveR;
     float emissiveG;
     float emissiveB;
@@ -533,7 +536,7 @@ struct ModelVertexGpu {
     float weights[4];
 };
 
-static_assert(sizeof(ModelVertexGpu) == sizeof(float) * 28,
+static_assert(sizeof(ModelVertexGpu) == sizeof(float) * 29,
     "ModelVertexGpu must stay tightly packed");
 
 // Which vertex input layout a pipeline should declare.
@@ -615,9 +618,10 @@ struct PostProcessPushConstants {
     float bloomStrength;
     float texelSizeX;
     float texelSizeY;
+    int32_t fxaaEnabled;
 };
 
-static_assert(sizeof(PostProcessPushConstants) == 16,
+static_assert(sizeof(PostProcessPushConstants) == 20,
     "post-process push constants must match std430 layout");
 
 struct BufferResource {
@@ -634,6 +638,15 @@ struct TextureResource {
     VkImageView view = VK_NULL_HANDLE;
     uint32_t layerCount = 1;
     uint32_t mipLevels = 1;
+    // Non-owning sampler selected from the source glTF sampler; the renderer
+    // keeps cached sampler handles alive until all material descriptors die.
+    VkSampler sampler = VK_NULL_HANDLE;
+};
+
+struct ModelSamplerResource {
+    ohos_model::Image::WrapMode wrapS = ohos_model::Image::WrapMode::Repeat;
+    ohos_model::Image::WrapMode wrapT = ohos_model::Image::WrapMode::Repeat;
+    VkSampler sampler = VK_NULL_HANDLE;
 };
 
 // GPU residency for one loaded glTF mesh.
@@ -658,9 +671,11 @@ struct ModelMaterialResource {
     float metallicFactor = 1.0f;
     float roughnessFactor = 1.0f;
     float normalScale = 1.0f;
+    float alphaCutoff = 0.0f;
     float emissiveFactor[3] = {0.0f, 0.0f, 0.0f};
     bool waterSurface = false;
     bool worldSpaceUv = false;
+    bool doubleSided = false;
     float aoStrength = 1.0f;
 };
 
@@ -695,6 +710,11 @@ struct ModelGpuAsset {
     std::vector<ohos_model::AnimationClip> animationClips;
     Mat4 animationNormalise = Mat4Identity();
     std::vector<Mat4> jointMatrices;
+    // Per-asset animation scratch retains capacity between frames.
+    std::vector<float> animationTranslations;
+    std::vector<float> animationRotations;
+    std::vector<float> animationScales;
+    std::vector<Mat4> animationGlobals;
     int animationClipIndex = -1;
     int idleClip = -1;
     int walkClip = -1;
@@ -719,6 +739,11 @@ struct ModelGpuAsset {
     // the swapchain changes.  All three scene assets share the same layout.
     std::vector<VkDescriptorSet> materialSets;
     bool loaded = false;
+};
+
+struct SceneModelGpuAsset {
+    std::string path;
+    ModelGpuAsset asset;
 };
 
 constexpr std::size_t kMaxJoints = 256;
@@ -1063,18 +1088,21 @@ public:
             UpdateEnemyAnimation();
         }
 
-        std::vector<OverlayVertex> overlayVertices;
-        std::vector<IconVertex> iconVertices;
-        std::vector<TextVertex> textVertices;
-        BuildUiGeometry(overlayVertices, iconVertices, textVertices);
+        // Keep the CPU-side UI staging capacity across frames. Geometry is
+        // rebuilt each frame, but repeatedly allocating/freeing these vectors
+        // adds avoidable allocator jitter to the present cadence.
+        overlayVertices_.clear();
+        iconVertices_.clear();
+        textVertices_.clear();
+        BuildUiGeometry(overlayVertices_, iconVertices_, textVertices_);
 
-        if (!UploadUiGeometry(uiVertexBuffers_[imageIndex], overlayVertices, iconVertices,
-            textVertices)) {
+        if (!UploadUiGeometry(uiVertexBuffers_[imageIndex], overlayVertices_, iconVertices_,
+            textVertices_)) {
             return false;
         }
         if (!RecordFrameCommands(static_cast<size_t>(imageIndex),
-            static_cast<uint32_t>(overlayVertices.size()), static_cast<uint32_t>(iconVertices.size()),
-            static_cast<uint32_t>(textVertices.size()))) {
+            static_cast<uint32_t>(overlayVertices_.size()), static_cast<uint32_t>(iconVertices_.size()),
+            static_cast<uint32_t>(textVertices_.size()))) {
             return false;
         }
 
@@ -1384,10 +1412,17 @@ private:
             vkDestroySampler(device_, sampler_, nullptr);
         }
         sampler_ = VK_NULL_HANDLE;
+        for (const ModelSamplerResource& sampler : modelSamplers_) {
+            if (sampler.sampler != VK_NULL_HANDLE) {
+                vkDestroySampler(device_, sampler.sampler, nullptr);
+            }
+        }
+        modelSamplers_.clear();
         DestroyTexture(cubeTexture_);
         DestroyTexture(whiteTexture_);
         DestroyTexture(neutralMrTexture_);
         DestroyTexture(neutralNormalTexture_);
+        DestroyTexture(waterNormalTexture_);
         DestroyTexture(neutralAoTexture_);
         DestroyTexture(blackTexture_);
         DestroyTexture(skyboxTexture_);
@@ -1433,6 +1468,10 @@ private:
         destroyAsset(helmetAsset_);
         destroyAsset(groundAsset_);
         destroyAsset(terrainAsset_);
+        for (SceneModelGpuAsset& sceneAsset : sceneModelAssets_) {
+            destroyAsset(sceneAsset.asset);
+        }
+        sceneModelAssets_.clear();
         DestroyBuffer(identityJointBuffer_);
         sceneReady_ = false;
     }
@@ -1459,6 +1498,7 @@ private:
             (!descriptorSets_.empty() || !playerAsset_.materialSets.empty() ||
                 !enemyAsset_.materialSets.empty() || !helmetAsset_.materialSets.empty() ||
                 !groundAsset_.materialSets.empty() || !terrainAsset_.materialSets.empty() ||
+                !sceneModelAssets_.empty() ||
                 !postDescriptorSets_.empty() || bloomThresholdDescriptorSet_ != VK_NULL_HANDLE)) {
             vkResetDescriptorPool(device_, descriptorPool_, 0);
         }
@@ -1475,6 +1515,9 @@ private:
         helmetAsset_.materialSets.clear();
         groundAsset_.materialSets.clear();
         terrainAsset_.materialSets.clear();
+        for (SceneModelGpuAsset& sceneAsset : sceneModelAssets_) {
+            sceneAsset.asset.materialSets.clear();
+        }
         overlayDescriptorSet_ = VK_NULL_HANDLE;
         actionIconDescriptorSets_.fill(VK_NULL_HANDLE);
 
@@ -1518,6 +1561,10 @@ private:
                 vkDestroyPipeline(device_, modelPipeline_, nullptr);
             }
             modelPipeline_ = VK_NULL_HANDLE;
+            if (modelDoubleSidedPipeline_ != VK_NULL_HANDLE) {
+                vkDestroyPipeline(device_, modelDoubleSidedPipeline_, nullptr);
+            }
+            modelDoubleSidedPipeline_ = VK_NULL_HANDLE;
             if (overlayPipeline_ != VK_NULL_HANDLE) {
                 vkDestroyPipeline(device_, overlayPipeline_, nullptr);
             }
@@ -1552,6 +1599,10 @@ private:
                 vkDestroyPipeline(device_, shadowPipeline_, nullptr);
             }
             shadowPipeline_ = VK_NULL_HANDLE;
+            if (shadowDoubleSidedPipeline_ != VK_NULL_HANDLE) {
+                vkDestroyPipeline(device_, shadowDoubleSidedPipeline_, nullptr);
+            }
+            shadowDoubleSidedPipeline_ = VK_NULL_HANDLE;
             if (pipelineLayout_ != VK_NULL_HANDLE) {
                 vkDestroyPipelineLayout(device_, pipelineLayout_, nullptr);
             }
@@ -2345,6 +2396,34 @@ private:
             CreateTextureResource(normalLayers, 1, 1, false, neutralNormalTexture_) &&
             CreateTextureResource(aoLayers, 1, 1, false, neutralAoTexture_) &&
             CreateTextureResource(emissiveLayers, 1, 1, false, blackTexture_);
+    }
+
+    bool CreateWaterNormalTexture()
+    {
+        void* encoded = nullptr;
+        size_t encodedSize = 0;
+        if (!OHOS_ReadRawFile(water::kWaterNormalMapRawfile, &encoded, &encodedSize) ||
+            encoded == nullptr) {
+            if (encoded != nullptr) {
+                OHOS_FreeRawFile(encoded);
+            }
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                "SDL3_VULKAN stage=water_normal_rawfile_failed");
+            return false;
+        }
+
+        std::vector<std::vector<unsigned char>> levels;
+        const bool decoded = water::DecodeWaterNormalMipChain(encoded, encodedSize, levels);
+        OHOS_FreeRawFile(encoded);
+        if (!decoded || !CreateTextureResourceMipChain(levels, water::kWaterNormalMapWidth,
+                water::kWaterNormalMapWidth, false, waterNormalTexture_)) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                "SDL3_VULKAN stage=water_normal_upload_failed");
+            return false;
+        }
+        SDL_Log("SDL3_VULKAN stage=water_normal_ready size=%ux%u mips=%zu",
+            water::kWaterNormalMapWidth, water::kWaterNormalMapWidth, levels.size());
+        return true;
     }
 
     bool CreateVulkanIblResources(const std::array<stbi_uc*, 6>& faces, uint32_t width,
@@ -3167,32 +3246,73 @@ private:
 
     bool CreateSampler()
     {
+        return CreateSamplerForAddressModes(sampler_, VK_SAMPLER_ADDRESS_MODE_REPEAT,
+            VK_SAMPLER_ADDRESS_MODE_REPEAT, "create_texture_sampler");
+    }
+
+    bool CreateSamplerForAddressModes(VkSampler& output, VkSamplerAddressMode addressModeU,
+        VkSamplerAddressMode addressModeV, const char* operation)
+    {
         VkSamplerCreateInfo samplerInfo{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
         samplerInfo.magFilter = VK_FILTER_LINEAR;
         samplerInfo.minFilter = VK_FILTER_LINEAR;
         samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-        // REPEAT, matching glTF's implicit sampler: DamagedHelmet ships its UVs
-        // in v [1,2] and relies on wrap to fold them back into [0,1].  Clamping
-        // pins every fragment to the edge row and smears it into streaks.  The
-        // cube and skybox never leave [0,1]/direction space, so this is safe.
-        samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-        samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        samplerInfo.addressModeU = addressModeU;
+        samplerInfo.addressModeV = addressModeV;
         samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
         samplerInfo.anisotropyEnable = VK_FALSE;
         samplerInfo.maxAnisotropy = 1.0f;
         samplerInfo.compareEnable = VK_FALSE;
         samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
         samplerInfo.minLod = 0.0f;
-        samplerInfo.maxLod = skyboxTexture_.mipLevels > 0
-            ? static_cast<float>(skyboxTexture_.mipLevels - 1) : 0.0f;
+        // Image views clamp the usable LOD to their own mip range. A large
+        // sampler maxLod lets model textures use the full chain even when the
+        // skybox and water textures have fewer levels.
+        samplerInfo.maxLod = VK_LOD_CLAMP_NONE;
         samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
         samplerInfo.unnormalizedCoordinates = VK_FALSE;
-        const VkResult result = vkCreateSampler(device_, &samplerInfo, nullptr, &sampler_);
+        const VkResult result = vkCreateSampler(device_, &samplerInfo, nullptr, &output);
         if (result != VK_SUCCESS) {
-            LogVkError("create_texture_sampler", result);
+            LogVkError(operation, result);
             return false;
         }
         return true;
+    }
+
+    VkSampler GetModelSampler(ohos_model::Image::WrapMode wrapS,
+        ohos_model::Image::WrapMode wrapT)
+    {
+        if (wrapS == ohos_model::Image::WrapMode::Repeat &&
+            wrapT == ohos_model::Image::WrapMode::Repeat) {
+            return sampler_;
+        }
+        const auto found = std::find_if(modelSamplers_.begin(), modelSamplers_.end(),
+            [wrapS, wrapT](const ModelSamplerResource& sampler) {
+                return sampler.wrapS == wrapS && sampler.wrapT == wrapT;
+            });
+        if (found != modelSamplers_.end()) {
+            return found->sampler;
+        }
+        const auto toVulkanAddressMode = [](ohos_model::Image::WrapMode mode) {
+            switch (mode) {
+            case ohos_model::Image::WrapMode::ClampToEdge:
+                return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            case ohos_model::Image::WrapMode::MirroredRepeat:
+                return VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
+            case ohos_model::Image::WrapMode::Repeat:
+            default:
+                return VK_SAMPLER_ADDRESS_MODE_REPEAT;
+            }
+        };
+        ModelSamplerResource resource;
+        resource.wrapS = wrapS;
+        resource.wrapT = wrapT;
+        if (!CreateSamplerForAddressModes(resource.sampler, toVulkanAddressMode(wrapS),
+                toVulkanAddressMode(wrapT), "create_model_texture_sampler")) {
+            return VK_NULL_HANDLE;
+        }
+        modelSamplers_.push_back(resource);
+        return resource.sampler;
     }
 
     // The OHOS emulator's Vulkan implementation forwards every call to a
@@ -3259,9 +3379,9 @@ private:
 
     bool CreateModelInstanceBuffer()
     {
-        const std::size_t staticCubeCount = sceneDefinition_ != nullptr
-            ? sceneDefinition_->StaticCubeCount() : 0;
-        modelInstanceData_.assign(6 + staticCubeCount, CharacterInstanceData{});
+        const std::size_t staticRenderableCount = sceneDefinition_ != nullptr
+            ? sceneDefinition_->StaticCubeCount() + sceneDefinition_->StaticModelCount() : 0;
+        modelInstanceData_.assign(6 + staticRenderableCount, CharacterInstanceData{});
         return CreateBuffer(sizeof(CharacterInstanceData) * modelInstanceData_.size(),
             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
@@ -3327,7 +3447,7 @@ private:
             descriptorSetLayout_ = VK_NULL_HANDLE;
             return false;
         }
-        VkDescriptorSetLayoutBinding postBindings[3]{};
+        VkDescriptorSetLayoutBinding postBindings[4]{};
         postBindings[0].binding = 0;
         postBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         postBindings[0].descriptorCount = 1;
@@ -3338,8 +3458,10 @@ private:
         postBindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
         postBindings[2] = postBindings[1];
         postBindings[2].binding = 2;
+        postBindings[3] = postBindings[1];
+        postBindings[3].binding = 3;
         VkDescriptorSetLayoutCreateInfo postLayoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-        postLayoutInfo.bindingCount = 3;
+        postLayoutInfo.bindingCount = 4;
         postLayoutInfo.pBindings = postBindings;
         result = vkCreateDescriptorSetLayout(device_, &postLayoutInfo, nullptr,
             &postDescriptorSetLayout_);
@@ -3442,8 +3564,12 @@ private:
     // reading.
     bool CreateModelDescriptorSets()
     {
-        const std::array<ModelGpuAsset*, 6> assets = {
+        std::vector<ModelGpuAsset*> assets = {
             &playerAsset_, &enemyAsset_, &helmetAsset_, &groundAsset_, &terrainAsset_, &pistolAsset_};
+        assets.reserve(assets.size() + sceneModelAssets_.size());
+        for (SceneModelGpuAsset& sceneAsset : sceneModelAssets_) {
+            assets.push_back(&sceneAsset.asset);
+        }
         size_t totalSets = 0;
         for (const ModelGpuAsset* asset : assets) {
             if (asset->loaded) {
@@ -3474,17 +3600,23 @@ private:
         skyboxImageInfo.sampler = sampler_;
         skyboxImageInfo.imageView = skyboxTexture_.view;
         skyboxImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        const auto resolveTextureView = [](const ModelGpuAsset& asset, int32_t imageIndex,
-            const TextureResource& fallback) {
+        const auto resolveTexture = [](const ModelGpuAsset& asset, int32_t imageIndex,
+            const TextureResource& fallback) -> const TextureResource& {
             if (imageIndex >= 0 && static_cast<size_t>(imageIndex) < asset.textures.size() &&
                 asset.textures[imageIndex].view != VK_NULL_HANDLE) {
-                return asset.textures[imageIndex].view;
+                return asset.textures[imageIndex];
             }
-            return fallback.view;
+            return fallback;
         };
         const auto setImageInfo = [this](VkDescriptorImageInfo& info, VkImageView view) {
             info.sampler = sampler_;
             info.imageView = view;
+            info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        };
+        const auto setModelImageInfo = [this](VkDescriptorImageInfo& info,
+            const TextureResource& texture) {
+            info.sampler = texture.sampler != VK_NULL_HANDLE ? texture.sampler : sampler_;
+            info.imageView = texture.view;
             info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         };
 
@@ -3531,16 +3663,20 @@ private:
                 alternateJointBufferInfos[slot].range = sizeof(Mat4) * kMaxJoints;
                 const ModelMaterialResource& materialInfo = asset->materials.empty() ? defaultMaterial
                     : asset->materials[material];
-                setImageInfo(baseColorInfos[slot], resolveTextureView(*asset,
+                setModelImageInfo(baseColorInfos[slot], resolveTexture(*asset,
                     materialInfo.baseColorTexture, whiteTexture_));
                 skyboxInfos[slot] = skyboxImageInfo;
-                setImageInfo(metallicRoughnessInfos[slot], resolveTextureView(*asset,
+                setModelImageInfo(metallicRoughnessInfos[slot], resolveTexture(*asset,
                     materialInfo.metallicRoughnessTexture, neutralMrTexture_));
-                setImageInfo(normalInfos[slot], resolveTextureView(*asset,
-                    materialInfo.normalTexture, neutralNormalTexture_));
-                setImageInfo(aoInfos[slot], resolveTextureView(*asset,
+                if (materialInfo.waterSurface) {
+                    setImageInfo(normalInfos[slot], waterNormalTexture_.view);
+                } else {
+                    setModelImageInfo(normalInfos[slot], resolveTexture(*asset,
+                        materialInfo.normalTexture, neutralNormalTexture_));
+                }
+                setModelImageInfo(aoInfos[slot], resolveTexture(*asset,
                     materialInfo.aoTexture, neutralAoTexture_));
-                setImageInfo(emissiveInfos[slot], resolveTextureView(*asset,
+                setModelImageInfo(emissiveInfos[slot], resolveTexture(*asset,
                     materialInfo.emissiveTexture, whiteTexture_));
                 setImageInfo(irradianceInfos[slot], irradianceTexture_.view != VK_NULL_HANDLE
                     ? irradianceTexture_.view : skyboxTexture_.view);
@@ -3717,12 +3853,13 @@ private:
         allocate.descriptorSetCount = 1;
         allocate.pSetLayouts = &postDescriptorSetLayout_;
         if (vkAllocateDescriptorSets(device_, &allocate, &waterDescriptorSet_) != VK_SUCCESS) return false;
-        VkDescriptorImageInfo images[3]{};
+        VkDescriptorImageInfo images[4]{};
         images[0] = {sampler_, sceneColorTarget_.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
         images[1] = {sampler_, depthSampleView_, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL};
         images[2] = {sampler_, skyboxTexture_.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        VkWriteDescriptorSet writes[3]{};
-        for (uint32_t i = 0; i < 3; ++i) {
+        images[3] = {sampler_, waterNormalTexture_.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet writes[4]{};
+        for (uint32_t i = 0; i < 4; ++i) {
             writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             writes[i].dstSet = waterDescriptorSet_;
             writes[i].dstBinding = i;
@@ -3730,7 +3867,7 @@ private:
             writes[i].descriptorCount = 1;
             writes[i].pImageInfo = &images[i];
         }
-        vkUpdateDescriptorSets(device_, 3, writes, 0, nullptr);
+        vkUpdateDescriptorSets(device_, 4, writes, 0, nullptr);
         return true;
     }
 
@@ -3959,7 +4096,9 @@ private:
                 continue;
             }
             const std::vector<const unsigned char*> layers = {image.rgba.data()};
-            if (!CreateTextureResource(layers, image.width, image.height, false, texture)) {
+            texture.sampler = GetModelSampler(image.wrapS, image.wrapT);
+            if (texture.sampler == VK_NULL_HANDLE ||
+                !CreateTextureResource(layers, image.width, image.height, false, texture, true)) {
                 SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                     "SDL3_MODEL stage=texture_upload_failed path=%s uri=%s", path, image.uri.c_str());
             }
@@ -3978,6 +4117,9 @@ private:
             resource.metallicFactor = material.metallicFactor;
             resource.roughnessFactor = material.roughnessFactor;
             resource.normalScale = material.normalScale;
+            resource.alphaCutoff = material.alphaMode != ohos_model::Material::AlphaMode::Opaque
+                ? material.alphaCutoff : 0.0f;
+            resource.doubleSided = material.doubleSided;
             resource.waterSurface = material.waterSurface;
             resource.worldSpaceUv = material.worldSpaceUv;
             std::memcpy(resource.emissiveFactor, material.emissiveFactor,
@@ -4056,6 +4198,7 @@ private:
                 destination.emissiveB = materialInfo.emissiveFactor[2];
                 destination.aoStrength = materialInfo.aoStrength;
                 destination.waterSurface = materialInfo.worldSpaceUv ? 2.0f : (materialInfo.waterSurface ? 1.0f : 0.0f);
+                destination.alphaCutoff = materialInfo.alphaCutoff;
                 for (int slot = 0; slot < 4; ++slot) {
                     destination.joints[slot] = source.joints[slot];
                     destination.weights[slot] = static_cast<float>(source.weights[slot]) / 255.0f;
@@ -4163,6 +4306,22 @@ private:
         (void)LoadModelAsset(kHelmetPath, helmetAsset_, false);
         (void)LoadModelAsset(kCubePath, groundAsset_, false);
         if (sceneDefinition_ != nullptr) {
+            for (const scene::Entity& entity : sceneDefinition_->entities) {
+                if (!entity.importAsStaticModel) {
+                    continue;
+                }
+                const auto existing = std::find_if(sceneModelAssets_.begin(), sceneModelAssets_.end(),
+                    [&entity](const SceneModelGpuAsset& candidate) {
+                        return candidate.path == entity.modelPath;
+                    });
+                if (existing != sceneModelAssets_.end()) {
+                    continue;
+                }
+                sceneModelAssets_.push_back(SceneModelGpuAsset{});
+                SceneModelGpuAsset& sceneAsset = sceneModelAssets_.back();
+                sceneAsset.path = entity.modelPath;
+                (void)LoadModelAsset(sceneAsset.path.c_str(), sceneAsset.asset, false);
+            }
             ohos_model::Model model;
             std::string error;
             if (!terrain::BuildModel(*sceneDefinition_, physics::kGroundCollider.centerY +
@@ -4177,9 +4336,17 @@ private:
         }
     }
 
+    const ModelGpuAsset* FindSceneModelAsset(const std::string& path) const
+    {
+        const auto found = std::find_if(sceneModelAssets_.begin(), sceneModelAssets_.end(),
+            [&path](const SceneModelGpuAsset& asset) { return asset.path == path; });
+        return found == sceneModelAssets_.end() ? nullptr : &found->asset;
+    }
+
     bool CreateSceneResources()
     {
         if (!CreateCheckerTexture() || !CreateWhiteTexture() || !CreateMaterialFallbackTextures() ||
+            !CreateWaterNormalTexture() ||
             !CreateSkyboxTexture() || !CreateSampler() ||
             !CreateCubeVertexBuffer() ||
             !CreateDescriptorSetLayout() || !CreateDescriptorPool()) {
@@ -4269,7 +4436,7 @@ private:
         VkPipelineVertexInputStateCreateInfo vertexInput{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
         VkVertexInputBindingDescription vertexBindings[2]{};
         VkVertexInputBindingDescription& vertexBinding = vertexBindings[0];
-        VkVertexInputAttributeDescription vertexAttributes[14]{};
+        VkVertexInputAttributeDescription vertexAttributes[15]{};
         uint32_t vertexAttributeCount = 0;
         uint32_t vertexBindingCount = 1;
         if (vertexLayout != VertexLayout::kNone) {
@@ -4319,6 +4486,8 @@ private:
                         offsetof(ModelVertexGpu, metallicFactor)};
                     vertexAttributes[5] = {5, 0, VK_FORMAT_R32G32B32A32_SFLOAT,
                         offsetof(ModelVertexGpu, emissiveR)};
+                    vertexAttributes[14] = {14, 0, VK_FORMAT_R32_SFLOAT,
+                        offsetof(ModelVertexGpu, alphaCutoff)};
                     vertexAttributes[6] = {6, 0, VK_FORMAT_R32G32B32A32_UINT,
                         offsetof(ModelVertexGpu, joints)};
                     vertexAttributes[7] = {7, 0, VK_FORMAT_R32G32B32A32_SFLOAT,
@@ -4337,7 +4506,7 @@ private:
                     vertexAttributes[13] = {13, 1, VK_FORMAT_R32_UINT,
                         offsetof(CharacterInstanceData, skinIndex)};
                 }
-                vertexAttributeCount = model ? 14 : 3;
+                vertexAttributeCount = model ? 15 : 3;
                 vertexBindingCount = model ? 2 : 1;
                 break;
             }
@@ -4514,9 +4683,14 @@ private:
             // does not, so these passes require opposite front-face states.
             modelPipeline_ = CreatePipeline(modelVertex, modelFragment, VK_CULL_MODE_BACK_BIT, VK_TRUE, VK_TRUE,
                 VertexLayout::kModel);
+            modelDoubleSidedPipeline_ = CreatePipeline(modelVertex, modelFragment, VK_CULL_MODE_NONE,
+                VK_TRUE, VK_TRUE, VertexLayout::kModel);
             shadowPipeline_ = CreatePipeline(shadowVertex, shadowFragment, VK_CULL_MODE_BACK_BIT, VK_TRUE, VK_TRUE,
                 VertexLayout::kModel, VK_FALSE, shadowRenderPass_, pipelineLayout_, VK_FALSE, VK_TRUE,
                 VK_FRONT_FACE_CLOCKWISE);
+            shadowDoubleSidedPipeline_ = CreatePipeline(shadowVertex, shadowFragment, VK_CULL_MODE_NONE,
+                VK_TRUE, VK_TRUE, VertexLayout::kModel, VK_FALSE, shadowRenderPass_, pipelineLayout_,
+                VK_FALSE, VK_TRUE, VK_FRONT_FACE_CLOCKWISE);
             overlayPipeline_ = CreatePipeline(overlayVertex, overlayFragment, VK_CULL_MODE_NONE, VK_FALSE, VK_FALSE,
                 VertexLayout::kOverlay, VK_TRUE);
             iconPipeline_ = CreatePipeline(iconVertex, iconFragment, VK_CULL_MODE_NONE, VK_FALSE, VK_FALSE,
@@ -4534,7 +4708,8 @@ private:
             bloomUpPipeline_ = CreatePipeline(postVertex, bloomUpFragment,
                 VK_CULL_MODE_NONE, VK_FALSE, VK_FALSE, VertexLayout::kNone, VK_FALSE, bloomRenderPass_);
             if (pipeline_ == VK_NULL_HANDLE || skyboxPipeline_ == VK_NULL_HANDLE ||
-                modelPipeline_ == VK_NULL_HANDLE || shadowPipeline_ == VK_NULL_HANDLE ||
+                modelPipeline_ == VK_NULL_HANDLE || modelDoubleSidedPipeline_ == VK_NULL_HANDLE ||
+                shadowPipeline_ == VK_NULL_HANDLE || shadowDoubleSidedPipeline_ == VK_NULL_HANDLE ||
                 overlayPipeline_ == VK_NULL_HANDLE ||
                 iconPipeline_ == VK_NULL_HANDLE ||
                 textPipeline_ == VK_NULL_HANDLE || postPipeline_ == VK_NULL_HANDLE || waterPipeline_ == VK_NULL_HANDLE ||
@@ -4576,9 +4751,17 @@ private:
                 vkDestroyPipeline(device_, modelPipeline_, nullptr);
                 modelPipeline_ = VK_NULL_HANDLE;
             }
+            if (modelDoubleSidedPipeline_ != VK_NULL_HANDLE) {
+                vkDestroyPipeline(device_, modelDoubleSidedPipeline_, nullptr);
+                modelDoubleSidedPipeline_ = VK_NULL_HANDLE;
+            }
             if (shadowPipeline_ != VK_NULL_HANDLE) {
                 vkDestroyPipeline(device_, shadowPipeline_, nullptr);
                 shadowPipeline_ = VK_NULL_HANDLE;
+            }
+            if (shadowDoubleSidedPipeline_ != VK_NULL_HANDLE) {
+                vkDestroyPipeline(device_, shadowDoubleSidedPipeline_, nullptr);
+                shadowDoubleSidedPipeline_ = VK_NULL_HANDLE;
             }
             if (overlayPipeline_ != VK_NULL_HANDLE) {
                 vkDestroyPipeline(device_, overlayPipeline_, nullptr);
@@ -4799,6 +4982,11 @@ private:
                 mesh.indexBuffer.buffer == VK_NULL_HANDLE) {
                 continue;
             }
+            const bool doubleSided = mesh.materialIndex < asset.materials.size() &&
+                asset.materials[mesh.materialIndex].doubleSided;
+            const VkPipeline meshPipeline = doubleSided && modelDoubleSidedPipeline_ != VK_NULL_HANDLE
+                ? modelDoubleSidedPipeline_ : modelPipeline_;
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipeline);
             VkDescriptorSet set = VK_NULL_HANDLE;
             const size_t slot = static_cast<size_t>(imageIndex) * materialCount + mesh.materialIndex;
             if (slot < asset.materialSets.size()) {
@@ -4865,6 +5053,11 @@ private:
                 mesh.indexBuffer.buffer == VK_NULL_HANDLE) {
                 continue;
             }
+            const bool doubleSided = mesh.materialIndex < asset.materials.size() &&
+                asset.materials[mesh.materialIndex].doubleSided;
+            const VkPipeline meshPipeline = doubleSided && shadowDoubleSidedPipeline_ != VK_NULL_HANDLE
+                ? shadowDoubleSidedPipeline_ : shadowPipeline_;
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipeline);
             VkDescriptorSet set = VK_NULL_HANDLE;
             const size_t slot = static_cast<size_t>(imageIndex) * materialCount + mesh.materialIndex;
             if (slot < asset.materialSets.size()) {
@@ -4939,15 +5132,24 @@ private:
             return {w * 0.95f, h * 0.085f, mn * 0.040f, mn * 0.040f, mn * 0.040f};
         }
         if (uiScreen_ == rhi::UiScreen::Gameplay) {
-            // Vertical stack on the right edge, matching the GLES layout:
-            // SET above, BAG below, above the action-button cluster.
+            // Horizontal row along the top-right edge, matching the GLES
+            // layout: SHOP, BAG, SET from left to right (SET hugs the
+            // corner).  touch_controller claims presses on this exact
+            // geometry before the camera layers.
+            const float r = mn * 0.055f;
             if (index == 0) {
-                return {w * 0.93f, h * 0.26f, mn * 0.055f, mn * 0.055f, mn * 0.055f};
+                return {w - mn * 0.075f, mn * 0.085f, r, r, r};   // SET
             }
-            return {w * 0.93f, h * 0.42f, mn * 0.055f, mn * 0.055f, mn * 0.055f};
+            if (index == 1) {
+                return {w - mn * 0.225f, mn * 0.085f, r, r, r};   // BAG
+            }
+            return {w - mn * 0.375f, mn * 0.085f, r, r, r};       // SHOP
         }
         if(uiScreen_==rhi::UiScreen::GameplayInventory){
             auto b=inventory_ui::Layout(index,w,h);return {b.cx,b.cy,b.hw,b.hh,b.r};
+        }
+        if(uiScreen_==rhi::UiScreen::GameplayShop){
+            auto b=shop_ui::Layout(index,w,h);return {b.cx,b.cy,b.hw,b.hh,b.r};
         }
         if (uiScreen_ == rhi::UiScreen::MainMenu) {
             if (index == 0) {
@@ -5009,6 +5211,53 @@ private:
             } else if (HitRect(uiX, uiY, MenuButtonLayout(1))) {
                 uiScreen_ = rhi::UiScreen::GameplayInventory;
                 SDL_Log("SDL3_VULKAN stage=inventory_open");
+            } else if (HitRect(uiX, uiY, MenuButtonLayout(2))) {
+                uiScreen_ = rhi::UiScreen::GameplayShop;
+                SDL_Log("SDL3_VULKAN stage=shop_open gold=%d", gold_);
+            }
+            return;
+        }
+        if (uiScreen_ == rhi::UiScreen::GameplayShop) {
+            if (HitRect(uiX, uiY, MenuButtonLayout(0))) {
+                uiScreen_ = rhi::UiScreen::Gameplay;
+                SDL_Log("SDL3_VULKAN stage=shop_close gold=%d", gold_);
+                return;
+            }
+            for (int item = 0; item < shop_ui::kItemCount; ++item) {
+                if (!HitRect(uiX, uiY, MenuButtonLayout(10 + item))) {
+                    continue;
+                }
+                const int price = shop_ui::Def(item).price;
+                bool bought = false;
+                if (gold_ >= price) {
+                    switch (item) {
+                    case shop_ui::kPotion:
+                        bought = inventory_.AddItem(4);
+                        break;
+                    case shop_ui::kAmmo:
+                        pistol_.reserve += 12;
+                        bought = true;
+                        break;
+                    case shop_ui::kHelmet:
+                        bought = inventory_.AddItem(1);
+                        break;
+                    case shop_ui::kArmor:
+                        bought = inventory_.AddItem(2);
+                        break;
+                    case shop_ui::kRobe:
+                        bought = inventory_.AddItem(3);
+                        break;
+                    }
+                }
+                if (bought) {
+                    gold_ -= price;
+                    SDL_Log("SDL3_VULKAN stage=shop_buy item=%d price=%d gold=%d",
+                        item, price, gold_);
+                } else {
+                    SDL_Log("SDL3_VULKAN stage=shop_reject item=%d gold=%d",
+                        item, gold_);
+                }
+                return;
             }
             return;
         }
@@ -5039,7 +5288,7 @@ private:
             return;
         }
         if(uiScreen_==rhi::UiScreen::Settings || uiScreen_==rhi::UiScreen::GameplaySettings){
-            for(int i=0;i<=8;i++){
+            for(int i=0;i<=9;i++){
                 if(!settings_ui::Visible(i,UiWidth(),UiHeight(),settingsScroll_) || !HitRect(uiX,uiY,MenuButtonLayout(i)))continue;
                 switch(i){
                 case 0:uiScreen_=uiScreen_==rhi::UiScreen::GameplaySettings?rhi::UiScreen::Gameplay:rhi::UiScreen::MainMenu;settingsScroll_=0;break;
@@ -5050,7 +5299,8 @@ private:
                 case 5:uiOpacityIndex_=(uiOpacityIndex_+1)%5;uiOpacity_=kOpacityChoices[uiOpacityIndex_];break;
                 case 6:shadowQuality_=(shadowQuality_+1)%4;shadowMapSize_=shadowQuality_==1?1024:(shadowQuality_==3?4096:2048);renderTargetsDirty_=true;break;
                 case 7:glassEnabled_=!glassEnabled_;break;
-                case 8:uiScreen_=rhi::UiScreen::MainMenu;settingsScroll_=0;break;
+                case 8:fxaaEnabled_=!fxaaEnabled_;break;
+                case 9:uiScreen_=rhi::UiScreen::MainMenu;settingsScroll_=0;break;
                 }return;
             }return;
         }
@@ -5418,7 +5668,7 @@ private:
         }
 
         if(uiScreen_==rhi::UiScreen::Settings || uiScreen_==rhi::UiScreen::GameplaySettings){
-            char values[7][32]{};
+            char values[8][32]{};
             std::snprintf(values[0],32,"%s",settingFps_?"开":"关");
             std::snprintf(values[1],32,"%.1f",lookSensitivityScale_);
             std::snprintf(values[2],32,"%s",bloomEnabled_?"开":"关");
@@ -5427,6 +5677,7 @@ private:
             const char* quality[]={"关闭","低 1024","中 2048","高 4096"};
             std::snprintf(values[5],32,"%s",quality[shadowQuality_]);
             std::snprintf(values[6],32,"%s",glassEnabled_?"开":"关");
+            std::snprintf(values[7],32,"%s",fxaaEnabled_?"开":"关");
             settings_ui::Draw(w,h,settingsScroll_,values,glassEnabled_,
                 [this,&overlay,&text](float x,float y,float hw,float hh,float radius,const float* c){AppendRoundedRect(overlay,{x,y,hw,hh,radius},c);},
                 [this,&overlay,&text](const char* label,float x,float y,float em,const float* c,bool center){if(center)AppendTextCentered(text,label,x,y,em,c,true);else AppendTextLeftAligned(text,label,x,y,em,c,true);});
@@ -5436,6 +5687,14 @@ private:
 
         if(uiScreen_==rhi::UiScreen::GameplayInventory){
             inventory_ui::Draw(w,h,inventory_,
+                [this,&overlay,&text](float x,float y,float hw,float hh,float radius,const float* c){AppendRoundedRect(overlay,{x,y,hw,hh,radius},c);},
+                [this,&overlay,&text](const char* label,float x,float y,float em,const float* c){AppendTextCentered(text,label,x,y,em,c,true);});
+
+            return;
+        }
+
+        if(uiScreen_==rhi::UiScreen::GameplayShop){
+            shop_ui::Draw(w,h,gold_,
                 [this,&overlay,&text](float x,float y,float hw,float hh,float radius,const float* c){AppendRoundedRect(overlay,{x,y,hw,hh,radius},c);},
                 [this,&overlay,&text](const char* label,float x,float y,float em,const float* c){AppendTextCentered(text,label,x,y,em,c,true);});
 
@@ -5454,7 +5713,7 @@ private:
         AppendRoundedRect(overlay,{potion.x,potion.y,potion.r,potion.r,potion.r},potionColor);
         char potionLabel[32];std::snprintf(potionLabel,sizeof(potionLabel),"药水×%d",inventory_.PotionCount());
         AppendTextCentered(text,potionLabel,potion.x,potion.y,mn*.018f,white,true);
-        if(pistol_.equipped){char ammo[32];std::snprintf(ammo,sizeof(ammo),pistol_.reloading?"换弹中":"弹量 %d/12",pistol_.ammo);
+        if(pistol_.equipped){char ammo[32];std::snprintf(ammo,sizeof(ammo),pistol_.reloading?"换弹中":"弹量 %d/%d 备弹 %d",pistol_.ammo,pistol_.capacity,pistol_.reserve);
             AppendTextCentered(text,ammo,w*.5f,h-mn*.115f,mn*.026f,white,true);}
         if(pistol_.equipped && !playerSwimming_) {
             const float hit[4]={1.f,.25f,.15f,1.f};
@@ -5520,6 +5779,10 @@ private:
         const MenuButtonPos bag = MenuButtonLayout(1);
         AppendRoundedRect(overlay, bag, panel);
         AppendTextCentered(text, "背包", bag.cx, bag.cy, bag.hh * 0.52f, white);
+        const MenuButtonPos shop = MenuButtonLayout(2);
+        const float shopPanel[4] = {0.55f, 0.42f, 0.12f, 0.60f};
+        AppendRoundedRect(overlay, shop, shopPanel);
+        AppendTextCentered(text, "商店", shop.cx, shop.cy, shop.hh * 0.52f, white);
     }
 
     bool UploadUiGeometry(BufferResource& target, const std::vector<OverlayVertex>& overlay,
@@ -5638,7 +5901,8 @@ private:
         std::size_t nextStaticInstance = 4;
         if (sceneDefinition_ != nullptr) {
             for (const scene::Entity& entity : sceneDefinition_->entities) {
-                if (!entity.importAsStaticCube || nextStaticInstance >= modelInstanceData_.size()) {
+                if ((!entity.importAsStaticCube && !entity.importAsStaticModel) ||
+                    nextStaticInstance >= modelInstanceData_.size()) {
                     continue;
                 }
                 instances[nextStaticInstance].model = Mat4FromSceneEntity(*sceneDefinition_, entity);
@@ -5658,7 +5922,8 @@ private:
         const bool renderGameplayScene = uiScreen_ == rhi::UiScreen::Gameplay ||
             uiScreen_ == rhi::UiScreen::GameplaySettings ||
             uiScreen_ == rhi::UiScreen::GameplayRetry ||
-            uiScreen_ == rhi::UiScreen::GameplayInventory;
+            uiScreen_ == rhi::UiScreen::GameplayInventory ||
+            uiScreen_ == rhi::UiScreen::GameplayShop;
         if (renderGameplayScene && shadowQuality_!=0 && shadowFramebuffer_ != VK_NULL_HANDLE &&
             shadowPipeline_ != VK_NULL_HANDLE) {
             VkClearValue shadowClear{};
@@ -5691,15 +5956,21 @@ private:
                 RecordShadowDraw(commandBuffer, static_cast<uint32_t>(index), groundAsset_,
                     shadowMatrix_, sizeof(CharacterInstanceData) * 3, 1);
             }
-            if (groundAsset_.loaded && sceneDefinition_ != nullptr) {
+            if (sceneDefinition_ != nullptr) {
                 std::size_t staticInstance = 4;
                 for (const scene::Entity& entity : sceneDefinition_->entities) {
-                    if (!entity.importAsStaticCube) {
+                    if (!entity.importAsStaticCube && !entity.importAsStaticModel) {
                         continue;
                     }
-                    if (entity.castShadow) {
+                    if (entity.importAsStaticCube && groundAsset_.loaded && entity.castShadow) {
                         RecordShadowDraw(commandBuffer, static_cast<uint32_t>(index), groundAsset_,
                             shadowMatrix_, sizeof(CharacterInstanceData) * staticInstance, 1);
+                    } else if (entity.importAsStaticModel && entity.castShadow) {
+                        const ModelGpuAsset* asset = FindSceneModelAsset(entity.modelPath);
+                        if (asset != nullptr && asset->loaded) {
+                            RecordShadowDraw(commandBuffer, static_cast<uint32_t>(index), *asset,
+                                shadowMatrix_, sizeof(CharacterInstanceData) * staticInstance, 1);
+                        }
                     }
                     ++staticInstance;
                 }
@@ -5737,8 +6008,10 @@ private:
                 0, 1, &descriptorSets_[index], 0, nullptr);
             vkCmdDraw(commandBuffer, 3, 1, 0, 0);
             if (renderGameplayScene) {
+                const bool hasSceneModel = std::any_of(sceneModelAssets_.begin(), sceneModelAssets_.end(),
+                    [](const SceneModelGpuAsset& asset) { return asset.asset.loaded; });
                 if (playerAsset_.loaded || (enemyVisible_ && enemyAsset_.loaded) ||
-                    helmetAsset_.loaded || groundAsset_.loaded || terrainAsset_.loaded) {
+                    helmetAsset_.loaded || groundAsset_.loaded || terrainAsset_.loaded || hasSceneModel) {
                     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, modelPipeline_);
                     if (terrainAsset_.loaded) {
                         RecordModelDraw(commandBuffer, static_cast<uint32_t>(index), terrainAsset_,
@@ -5759,15 +6032,24 @@ private:
                         RecordModelDraw(commandBuffer, static_cast<uint32_t>(index), groundAsset_,
                             viewProj_, sizeof(CharacterInstanceData) * 3, 1);
                     }
-                    if (groundAsset_.loaded && sceneDefinition_ != nullptr) {
+                    if (sceneDefinition_ != nullptr) {
                         std::size_t staticInstance = 4;
                         for (const scene::Entity& entity : sceneDefinition_->entities) {
-                            if (!entity.importAsStaticCube) {
+                            if (!entity.importAsStaticCube && !entity.importAsStaticModel) {
                                 continue;
                             }
-                            RecordModelDraw(commandBuffer, static_cast<uint32_t>(index),
-                                groundAsset_, viewProj_,
-                                sizeof(CharacterInstanceData) * staticInstance, 1);
+                            if (entity.importAsStaticCube && groundAsset_.loaded) {
+                                RecordModelDraw(commandBuffer, static_cast<uint32_t>(index),
+                                    groundAsset_, viewProj_,
+                                    sizeof(CharacterInstanceData) * staticInstance, 1);
+                            } else if (entity.importAsStaticModel) {
+                                const ModelGpuAsset* asset = FindSceneModelAsset(entity.modelPath);
+                                if (asset != nullptr && asset->loaded) {
+                                    RecordModelDraw(commandBuffer, static_cast<uint32_t>(index),
+                                        *asset, viewProj_,
+                                        sizeof(CharacterInstanceData) * staticInstance, 1);
+                                }
+                            }
                             ++staticInstance;
                         }
                     }
@@ -5922,7 +6204,7 @@ private:
             // swapchain: the FXAA-style resolve offsets sample sceneTexture,
             // which lives at the scaled offscreen resolution.
             1.0f / static_cast<float>(sceneExtent.width),
-            1.0f / static_cast<float>(sceneExtent.height)};
+            1.0f / static_cast<float>(sceneExtent.height), fxaaEnabled_ ? 1 : 0};
         vkCmdPushConstants(commandBuffer, pipelineLayout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
             sizeof(postConstants), &postConstants);
         vkCmdDraw(commandBuffer, 3, 1, 0, 0);
@@ -6473,9 +6755,12 @@ private:
         }
 
         const size_t nodeCount = asset.animationNodes.size();
-        std::vector<float> translations(nodeCount * 3, 0.0f);
-        std::vector<float> rotations(nodeCount * 4, 0.0f);
-        std::vector<float> scales(nodeCount * 3, 1.0f);
+        std::vector<float>& translations = asset.animationTranslations;
+        std::vector<float>& rotations = asset.animationRotations;
+        std::vector<float>& scales = asset.animationScales;
+        translations.assign(nodeCount * 3, 0.0f);
+        rotations.assign(nodeCount * 4, 0.0f);
+        scales.assign(nodeCount * 3, 1.0f);
         for (size_t nodeIndex = 0; nodeIndex < nodeCount; ++nodeIndex) {
             const ohos_model::Node& node = asset.animationNodes[nodeIndex];
             for (int component = 0; component < 3; ++component) {
@@ -6515,7 +6800,8 @@ private:
             }
         }
 
-        std::vector<Mat4> globals(nodeCount, Mat4Identity());
+        std::vector<Mat4>& globals = asset.animationGlobals;
+        globals.assign(nodeCount, Mat4Identity());
         for (size_t nodeIndex = 0; nodeIndex < nodeCount; ++nodeIndex) {
             const ohos_model::Node& node = asset.animationNodes[nodeIndex];
             const Mat4 local = Mat4ComposeTrs(&translations[nodeIndex * 3],
@@ -6717,9 +7003,12 @@ private:
         }
 
         const size_t nodeCount = asset.animationNodes.size();
-        std::vector<float> translations(nodeCount * 3, 0.0f);
-        std::vector<float> rotations(nodeCount * 4, 0.0f);
-        std::vector<float> scales(nodeCount * 3, 1.0f);
+        std::vector<float>& translations = asset.animationTranslations;
+        std::vector<float>& rotations = asset.animationRotations;
+        std::vector<float>& scales = asset.animationScales;
+        translations.assign(nodeCount * 3, 0.0f);
+        rotations.assign(nodeCount * 4, 0.0f);
+        scales.assign(nodeCount * 3, 1.0f);
         for (size_t nodeIndex = 0; nodeIndex < nodeCount; ++nodeIndex) {
             const ohos_model::Node& node = asset.animationNodes[nodeIndex];
             for (int component = 0; component < 3; ++component) {
@@ -6745,7 +7034,8 @@ private:
             }
         }
 
-        std::vector<Mat4> globals(nodeCount, Mat4Identity());
+        std::vector<Mat4>& globals = asset.animationGlobals;
+        globals.assign(nodeCount, Mat4Identity());
         for (size_t nodeIndex = 0; nodeIndex < nodeCount; ++nodeIndex) {
             const ohos_model::Node& node = asset.animationNodes[nodeIndex];
             const Mat4 local = Mat4ComposeTrs(&translations[nodeIndex * 3],
@@ -6853,7 +7143,8 @@ private:
                 enemyDeathPlaying_ = true;
                 enemyVisible_ = true;
                 enemyDeathTime_ = 0.0f;
-                SDL_Log("SDL3_VULKAN stage=enemy_defeated");
+                gold_ += 25;
+                SDL_Log("SDL3_VULKAN stage=enemy_defeated gold=%d", gold_);
             } else {
                 enemyHitLockTimer_ = kPlayerHitDuration;
                 SDL_Log("SDL3_VULKAN stage=enemy_hit health=%.0f/%.0f",
@@ -7695,6 +7986,7 @@ private:
     VkPipeline bloomDownPipeline_ = VK_NULL_HANDLE;
     VkPipeline bloomUpPipeline_ = VK_NULL_HANDLE;
     VkPipeline shadowPipeline_ = VK_NULL_HANDLE;
+    VkPipeline shadowDoubleSidedPipeline_ = VK_NULL_HANDLE;
     std::vector<VkFramebuffer> framebuffers_;
     std::vector<VkFramebuffer> postFramebuffers_;
     std::vector<VkFramebuffer> bloomDsFramebuffers_;
@@ -7715,6 +8007,7 @@ private:
     TextureResource whiteTexture_;
     TextureResource neutralMrTexture_;
     TextureResource neutralNormalTexture_;
+    TextureResource waterNormalTexture_;
     TextureResource neutralAoTexture_;
     TextureResource blackTexture_;
     TextureResource skyboxTexture_;
@@ -7734,6 +8027,7 @@ private:
     std::array<uint32_t, kBloomDsLevels> bloomDsWidths_{};
     std::array<uint32_t, kBloomDsLevels> bloomDsHeights_{};
     VkSampler sampler_ = VK_NULL_HANDLE;
+    std::vector<ModelSamplerResource> modelSamplers_;
     BufferResource cubeVertexBuffer_;
     VkDescriptorSetLayout descriptorSetLayout_ = VK_NULL_HANDLE;
     VkDescriptorSetLayout overlayDescriptorSetLayout_ = VK_NULL_HANDLE;
@@ -7753,16 +8047,21 @@ private:
     std::array<VkDescriptorSet, rhi::CameraInput::kActionButtonCount> actionIconDescriptorSets_{};
     BufferResource modelInstanceBuffer_;
     std::vector<CharacterInstanceData> modelInstanceData_;
+    std::vector<OverlayVertex> overlayVertices_;
+    std::vector<IconVertex> iconVertices_;
+    std::vector<TextVertex> textVertices_;
     BufferResource identityJointBuffer_;
     // glTF model residency.  The three assets are loaded once from the HAP's
     // rawfile bundle; if one fails to load the remaining scene stays usable.
     VkPipeline modelPipeline_ = VK_NULL_HANDLE;
+    VkPipeline modelDoubleSidedPipeline_ = VK_NULL_HANDLE;
     ModelGpuAsset playerAsset_;
     ModelGpuAsset enemyAsset_;
     ModelGpuAsset pistolAsset_;
     ModelGpuAsset helmetAsset_;
     ModelGpuAsset groundAsset_;
     ModelGpuAsset terrainAsset_;
+    std::vector<SceneModelGpuAsset> sceneModelAssets_;
     static constexpr const char* kModelPath =
         "models/Quaternius/AnimationLibrary_Standard.glb";
     static constexpr const char* kHelmetPath =
@@ -7850,6 +8149,7 @@ private:
     float lookSensitivityScale_ = 1.0f;
     static constexpr float kSensitivityChoices[3] = {0.5f, 1.0f, 2.0f};
     bool bloomEnabled_ = true;
+    bool fxaaEnabled_ = true;
     float renderScale_ = 1.0f;
     int resIndex_ = 0;
     // Global UI alpha multiplier: every overlay append primitive scales its
@@ -7859,6 +8159,8 @@ private:
     int uiOpacityIndex_ = 1;              // index into kOpacityChoices
     static constexpr float kOpacityChoices[5] = {1.0f, 0.8f, 0.6f, 0.4f, 0.2f};
     inventory::State inventory_;  // bag grid + equipment slots
+    // Kill-earned wallet for the shop; persists across retry resets.
+    int gold_ = 100;
     // Set by the settings RES tap; consumed at the top of DrawOnce, before
     // the next image acquire, by RecreateSwapchain().
     bool renderTargetsDirty_ = false;

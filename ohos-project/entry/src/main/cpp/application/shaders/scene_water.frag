@@ -4,6 +4,7 @@ precision highp int;
 layout(set = 2, binding = 0) uniform sampler2D opaqueColor;
 layout(set = 2, binding = 1) uniform sampler2D opaqueDepth;
 layout(set = 2, binding = 2) uniform samplerCube waterSky;
+layout(set = 2, binding = 3) uniform sampler2D waterNormalMap;
 layout(push_constant) uniform WaterPush {
     mat4 invViewProj;
     vec4 camera;
@@ -21,36 +22,13 @@ layout(location = 0) out vec4 outColor;
 #define WATER_UV vTexCoord
 #define DEPTH_NDC depth
 #define WATER_LDR false
-// Four advected noise octaves with analytic height gradients. Geometry stays
-// at the fixed sea level; only the reflection normal changes.
-float WaterHash(vec2 p)
-{
-    vec3 q = fract(vec3(p.xyx) * 0.1031);
-    q += dot(q, q.yzx + 33.33);
-    return fract((q.x + q.y) * q.z);
-}
-
-vec2 WaterNoiseGradient(vec2 p)
-{
-    vec2 cell = floor(p);
-    vec2 f = fract(p);
-    // Quintic interpolation gives continuous first and second derivatives
-    // across lattice boundaries, without finite-difference texture samples.
-    vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
-    vec2 du = 30.0 * f * f * (f * (f - 2.0) + 1.0);
-    float a = WaterHash(cell);
-    float b = WaterHash(cell + vec2(1.0, 0.0));
-    float c = WaterHash(cell + vec2(0.0, 1.0));
-    float d = WaterHash(cell + vec2(1.0, 1.0));
-    return vec2(mix(b - a, d - c, u.y) * du.x,
-                mix(c - a, d - b, u.x) * du.y);
-}
-
-vec3 WaterNormal(vec3 worldPosition, float time)
+// The packed repeating gradient tile replaces four layers of runtime hashes.
+vec3 WaterNormal(vec3 worldPosition, float time, vec2 positionDx, vec2 positionDy)
 {
     vec2 p = worldPosition.xz;
-    float footprint = max(length(dFdx(p)), length(dFdy(p)));
+    float footprint = max(length(positionDx), length(positionDy));
     const mat2 turn = mat2(0.8, 0.6, -0.6, 0.8);
+    const float inverseTilePeriod = 1.0 / 32.0;
     mat2 basis = mat2(1.0);
     vec2 drift = vec2(0.12, -0.08);
     vec2 offset = vec2(17.3, -9.2);
@@ -61,7 +39,12 @@ vec3 WaterNormal(vec3 worldPosition, float time)
         // Each layer has its own scale, orientation, origin and flow direction.
         vec2 q = basis * p * frequency + drift * (time * 3.0) + offset;
         float filterWeight = 1.0 - smoothstep(0.25, 0.85, footprint * frequency);
-        slope += transpose(basis) * WaterNoiseGradient(q)
+        vec4 packedGradient = textureGrad(waterNormalMap, q * inverseTilePeriod,
+            basis * positionDx * (frequency * inverseTilePeriod),
+            basis * positionDy * (frequency * inverseTilePeriod));
+        vec2 encodedGradient = (octave % 2 == 0) ? packedGradient.rg : packedGradient.ba;
+        vec2 noiseGradient = (encodedGradient * 2.0 - 1.0) * 1.875;
+        slope += transpose(basis) * noiseGradient
             * (amplitude * frequency * filterWeight);
         basis = turn * basis;
         drift = turn * drift * 1.19;
@@ -162,7 +145,8 @@ void main()
     bool insideSea = abs(surface.x) <= WATER_PARAMS.y && abs(surface.z) <= WATER_PARAMS.y;
     bool hitsWater = WATER_CAMERA.w < 1.5 && insideSea && surfaceDistance > 0.0 && surfaceDistance < bottomDistance - 0.001;
     bool underwater = WATER_CAMERA.w < 1.5 && camera.y < WATER_PARAMS.x && abs(camera.x) <= WATER_PARAMS.y && abs(camera.z) <= WATER_PARAMS.y;
-    vec3 waveNormal = WaterNormal(surface, WATER_PARAMS.w);
+    vec2 surfaceDx = dFdx(surface.xz);
+    vec2 surfaceDy = dFdy(surface.xz);
     if (!hitsWater && !underwater) {
         outColor = FinishScene(background, camera, ray, bottomDistance); return;
     }
@@ -176,7 +160,7 @@ void main()
     vec3 throughWater = background * transmission + body * (vec3(1.0) - transmission);
     vec3 color = throughWater;
     if (hitsWater) {
-        vec3 N = waveNormal;
+        vec3 N = WaterNormal(surface, WATER_PARAMS.w, surfaceDx, surfaceDy);
         vec3 V = -ray;
         if (dot(N, V) < 0.0) N = -N;
         float NoV = clamp(dot(N, V), 0.0, 1.0);

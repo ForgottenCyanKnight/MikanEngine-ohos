@@ -35,6 +35,7 @@ layout(location = 5) in vec4 vMaterialParams1;
 layout(location = 6) in vec4 vInstanceMarker;
 layout(location = 7) in flat float vDissolve;
 layout(location = 8) in flat float vWaterTime;
+layout(location = 9) in flat float vAlphaCutoff;
 
 layout(location = 0) out vec4 outColor;
 
@@ -72,6 +73,12 @@ vec3 sRGBToLinear(vec3 srgb)
 
 float ShadowVisibility(vec3 worldPosition, vec3 N, vec3 L)
 {
+    // Back-facing receivers contribute zero direct light anyway (the product
+    // with NoL below is zero), so skip the 9-tap PCF on them.
+    // Keep this in lockstep with the GLES deferred-lighting shader.
+    if (dot(N, L) <= 0.0) {
+        return 0.0;
+    }
     vec4 shadowH = scene.shadowMvp * vec4(worldPosition, 1.0);
     vec3 shadowNdc = shadowH.xyz / max(shadowH.w, 1e-5);
     vec2 shadowUv = shadowNdc.xy * 0.5 + 0.5;
@@ -142,6 +149,11 @@ vec3 PointLight(vec3 lightPos, vec3 lightColor, vec3 N, vec3 V, float NoV,
 {
     vec3 toLight = lightPos - worldPos;
     float distanceToLight = length(toLight);
+    // Distance cutoff (lockstep with the GLES lighting shader): with the
+    // scene's intensity scale (color * 8) the falloff at 30 m is under 1%.
+    if (distanceToLight > 30.0) {
+        return vec3(0.0);
+    }
     vec3 L = toLight / max(distanceToLight, 1e-4);
     float attenuation = 1.0 / (1.0 + distanceToLight * distanceToLight);
     vec3 H = normalize(V + L);
@@ -172,36 +184,14 @@ vec3 PerturbNormal(vec3 geometricNormal, vec3 worldPosition, vec2 uv, float norm
     return normalize(tbn * mapNormal);
 }
 
-// Four advected noise octaves with analytic height gradients. Geometry stays
-// at the fixed sea level; only the reflection normal changes.
-float WaterHash(vec2 p)
-{
-    vec3 q = fract(vec3(p.xyx) * 0.1031);
-    q += dot(q, q.yzx + 33.33);
-    return fract((q.x + q.y) * q.z);
-}
-
-vec2 WaterNoiseGradient(vec2 p)
-{
-    vec2 cell = floor(p);
-    vec2 f = fract(p);
-    // Quintic interpolation gives continuous first and second derivatives
-    // across lattice boundaries, without finite-difference texture samples.
-    vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
-    vec2 du = 30.0 * f * f * (f * (f - 2.0) + 1.0);
-    float a = WaterHash(cell);
-    float b = WaterHash(cell + vec2(1.0, 0.0));
-    float c = WaterHash(cell + vec2(0.0, 1.0));
-    float d = WaterHash(cell + vec2(1.0, 1.0));
-    return vec2(mix(b - a, d - c, u.y) * du.x,
-                mix(c - a, d - b, u.x) * du.y);
-}
-
-vec3 WaterNormal(vec3 worldPosition, float time)
+// The two RGBA-packed periodic gradient fields replace per-fragment lattice
+// hashing. Four independently advected octaves still use their own UVs.
+vec3 WaterNormal(vec3 worldPosition, float time, vec2 positionDx, vec2 positionDy)
 {
     vec2 p = worldPosition.xz;
-    float footprint = max(length(dFdx(p)), length(dFdy(p)));
+    float footprint = max(length(positionDx), length(positionDy));
     const mat2 turn = mat2(0.8, 0.6, -0.6, 0.8);
+    const float inverseTilePeriod = 1.0 / 32.0;
     mat2 basis = mat2(1.0);
     vec2 drift = vec2(0.12, -0.08);
     vec2 offset = vec2(17.3, -9.2);
@@ -212,7 +202,12 @@ vec3 WaterNormal(vec3 worldPosition, float time)
         // Each layer has its own scale, orientation, origin and flow direction.
         vec2 q = basis * p * frequency + drift * (time * 3.0) + offset;
         float filterWeight = 1.0 - smoothstep(0.25, 0.85, footprint * frequency);
-        slope += transpose(basis) * WaterNoiseGradient(q)
+        vec4 packedGradient = textureGrad(normalTexture, q * inverseTilePeriod,
+            basis * positionDx * (frequency * inverseTilePeriod),
+            basis * positionDy * (frequency * inverseTilePeriod));
+        vec2 encodedGradient = (octave % 2 == 0) ? packedGradient.rg : packedGradient.ba;
+        vec2 noiseGradient = (encodedGradient * 2.0 - 1.0) * 1.875;
+        slope += transpose(basis) * noiseGradient
             * (amplitude * frequency * filterWeight);
         basis = turn * basis;
         drift = turn * drift * 1.19;
@@ -236,13 +231,18 @@ void main()
 {
     vec2 materialUv = vMaterialParams0.w > 1.5 ? CubeWorldUv(vWorldPosition, normalize(vNormal)) : vTexCoord;
     vec4 materialColor = texture(baseColorTexture, materialUv) * vBaseColorFactor;
+    if (vAlphaCutoff > 0.0 && materialColor.a < vAlphaCutoff) {
+        discard;
+    }
     // The marker is a per-instance gameplay presentation tint.  It leaves
     // the source material untouched when its alpha/strength is zero.
     materialColor.rgb = mix(materialColor.rgb, vInstanceMarker.rgb,
         clamp(vInstanceMarker.a, 0.0, 1.0));
     vec3 albedo = sRGBToLinear(materialColor.rgb);
+    vec2 waterPositionDx = dFdx(vWorldPosition.xz);
+    vec2 waterPositionDy = dFdy(vWorldPosition.xz);
     if (vMaterialParams0.w > 0.5 && vMaterialParams0.w < 1.5) {
-        vec3 N = WaterNormal(vWorldPosition, vWaterTime);
+        vec3 N = WaterNormal(vWorldPosition, vWaterTime, waterPositionDx, waterPositionDy);
         vec3 V = normalize(scene.cameraPosition.xyz - vWorldPosition);
         if (dot(N, V) < 0.0) N = -N;
         float NoV = max(dot(N, V), 0.0);
@@ -260,6 +260,11 @@ void main()
     vec3 N = normalize(vNormal);
     if (vMaterialParams0.z > 0.0) {
         N = PerturbNormal(N, vWorldPosition, materialUv, vMaterialParams0.z);
+    }
+    // Double-sided materials use a no-cull pipeline; orient their back-face
+    // lighting normal toward the viewer as required by glTF.
+    if (!gl_FrontFacing) {
+        N = -N;
     }
     vec3 V = normalize(scene.cameraPosition.xyz - vWorldPosition);
     float NoV = max(dot(N, V), 1e-4);
@@ -302,8 +307,11 @@ void main()
     vec3 fmsEms = ems * fssEss * fAvg / max(1.0 - fAvg * ems, 1e-4);
     vec3 envBrdf = fssEss + fmsEms;
     vec3 specularIbl = prefiltered * SpecOcclusion(NoV, ao, roughness) * envBrdf;
+    // Emissive gain x3.0: matches the GLES g-buffer emission gain so glTF
+    // emissive materials (lantern glass, helmet display) read as glowing
+    // under the daylight key light instead of flat lit albedo.
     vec3 emissive = sRGBToLinear(texture(emissiveTexture, materialUv).rgb) *
-        vMaterialParams1.xyz;
+        vMaterialParams1.xyz * 3.0;
     vec3 color = direct + pointLights + diffuseIbl * ao + specularIbl + emissive;
     if (vDissolve > 0.0) {
         float n = DissolveNoise(vWorldPosition * 5.0);

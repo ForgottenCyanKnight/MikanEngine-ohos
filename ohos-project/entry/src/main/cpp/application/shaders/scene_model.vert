@@ -54,6 +54,7 @@ layout(location = 10) in vec4 inInstanceModel2;
 layout(location = 11) in vec4 inInstanceModel3;
 layout(location = 12) in vec4 inInstanceColor;
 layout(location = 13) in uint inSkinIndex;
+layout(location = 14) in float inAlphaCutoff;
 
 layout(location = 0) out vec3 vNormal;
 layout(location = 1) out vec2 vTexCoord;
@@ -64,6 +65,7 @@ layout(location = 5) out vec4 vMaterialParams1;
 layout(location = 6) out vec4 vInstanceMarker;
 layout(location = 7) out flat float vDissolve;
 layout(location = 8) out flat float vWaterTime;
+layout(location = 9) out flat float vAlphaCutoff;
 
 void main()
 {
@@ -96,4 +98,5 @@ void main()
     vMaterialParams0 = inMaterialParams0;
     vMaterialParams1 = inMaterialParams1;
     vDissolve = inSkinIndex == 1u ? object.dissolve : 0.0;
+    vAlphaCutoff = inAlphaCutoff;
 }
