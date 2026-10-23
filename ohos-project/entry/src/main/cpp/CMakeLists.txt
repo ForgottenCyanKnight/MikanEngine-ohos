@@ -36,12 +36,28 @@ message(STATUS "SDL3 scene source: ${_mikan_scene_source}")
 
 add_subdirectory(../../../../.. external/sdlbin)
 
+# Vendored rawfile headers (cpp/include/rawfile): the stock SDK 6.0.0.47
+# raw_file.h exposes deprecated C++-reference overloads without __cplusplus
+# guards, which breaks every C compilation unit in SDL that includes it.
+# Huawei fixed the header in the 26.0.0 Release SDK; once the project moves
+# to that SDK or newer, pass -DMIKAN_VENDOR_RAWFILE_HEADERS=OFF (or flip the
+# default here) to go back to the sysroot headers.
+option(MIKAN_VENDOR_RAWFILE_HEADERS
+       "Prefer vendored rawfile headers over the sysroot (required for SDK < 26.0.0)" ON)
+if(MIKAN_VENDOR_RAWFILE_HEADERS)
+    # Prepend our patched copy before the sysroot headers for the SDL target;
+    # the entry target picks it up via include_directories() below.
+    target_include_directories(SDL3-shared PRIVATE ${NATIVERENDER_ROOT_PATH}/include)
+endif()
+
 link_directories(${CMAKE_LIBRARY_OUTPUT_DIRECTORY})
 add_definitions(-DVK_USE_PLATFORM_OHOS=1)
 include_directories(${NATIVERENDER_ROOT_PATH}
-                    ${NATIVERENDER_ROOT_PATH}/include
                     ${SDL3_SOURCE_DIR}/include
                     ${SDL3_SOURCE_DIR}/src/video)
+if(MIKAN_VENDOR_RAWFILE_HEADERS)
+    include_directories(${NATIVERENDER_ROOT_PATH}/include)
+endif()
 
 set(JOLT_ROOT ${NATIVERENDER_ROOT_PATH}/third_party/JoltPhysics)
 file(GLOB_RECURSE JOLT_SOURCES ${JOLT_ROOT}/Jolt/*.cpp)
