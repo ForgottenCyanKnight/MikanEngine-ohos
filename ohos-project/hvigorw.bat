@@ -33,8 +33,12 @@ for %%i in ("%APP_HOME%") do set "APP_HOME=%%~fi"
 @rem DevEco's all-in-one installation supplies the matching Node, Hvigor and JBR.
 @rem The project-local hvigor-wrapper.js is not present in this checkout, so use
 @rem the installed wrapper directly and keep the SDK root at ...\sdk.
-set "DEV_ECO_ROOT=D:\Program Files\Huawei\DevEco Studio"
+@rem Probe the common install drives; DEVECO_INSTALL_DIR always wins if valid.
+set "DEV_ECO_ROOT="
 if defined DEVECO_INSTALL_DIR if exist "%DEVECO_INSTALL_DIR%\tools\hvigor\bin\hvigorw.js" set "DEV_ECO_ROOT=%DEVECO_INSTALL_DIR%"
+if not defined DEV_ECO_ROOT for %%D in ("C:" "D:" "E:") do (
+    if not defined DEV_ECO_ROOT if exist "%%~D\Program Files\Huawei\DevEco Studio\tools\hvigor\bin\hvigorw.js" set "DEV_ECO_ROOT=%%~D\Program Files\Huawei\DevEco Studio"
+)
 
 if exist "%DEV_ECO_ROOT%\tools\node\node.exe" if exist "%DEV_ECO_ROOT%\tools\hvigor\bin\hvigorw.js" goto use_deveco
 
