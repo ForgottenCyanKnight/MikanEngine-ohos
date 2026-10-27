@@ -40,7 +40,8 @@ inline bool PlayerSubmerged(const scene::Definition& definition, float x, float 
 {
     const auto& water = definition.water;
     const float half = water.size * 0.5f;
-    if (!water.enabled || std::fabs(x) > half || std::fabs(z) > half) return false;
+    if (!water.enabled || std::fabs(x-water.center.x) > (water.halfExtents.x>0 ? water.halfExtents.x : half) ||
+        std::fabs(z-water.center.z) > (water.halfExtents.z>0 ? water.halfExtents.z : half)) return false;
     return water.height - feetY >= (wasSwimming ? 0.65f : 0.85f);
 }
 
@@ -66,9 +67,9 @@ inline void AppendSurface(const scene::Definition& definition, ohos_model::Model
     for (int z = 0; z < 2; ++z)
         for (int x = 0; x < 2; ++x) {
             ohos_model::Vertex vertex{};
-            vertex.position[0] = x ? half : -half;
+            vertex.position[0] = water.center.x + (x ? 1 : -1)*(water.halfExtents.x>0 ? water.halfExtents.x : half);
             vertex.position[1] = water.height;
-            vertex.position[2] = z ? half : -half;
+            vertex.position[2] = water.center.z + (z ? 1 : -1)*(water.halfExtents.z>0 ? water.halfExtents.z : half);
             vertex.normal[1] = 1;
             vertex.uv[0] = float(x);
             vertex.uv[1] = float(z);

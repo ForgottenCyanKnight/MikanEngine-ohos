@@ -1,0 +1,23 @@
+cmake_minimum_required(VERSION 3.20)
+project(portal_scene_tests LANGUAGES CXX)
+get_filename_component(ROOT "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
+set(APP "${ROOT}/ohos-project/entry/src/main/cpp/application")
+set(JOLT "${APP}/../third_party/JoltPhysics")
+file(GLOB_RECURSE JOLT_SOURCES "${JOLT}/Jolt/*.cpp")
+add_executable(portal_tests ../portal_tests.cpp
+    "${APP}/physics/jolt_gameplay_physics.cpp"
+    "${APP}/terrain/heightmap_terrain.cpp"
+    "${APP}/scene/scene_definition.cpp" ${JOLT_SOURCES})
+target_compile_features(portal_tests PRIVATE cxx_std_17)
+add_executable(animation_transition_tests ../animation_transition_tests.cpp)
+target_compile_features(animation_transition_tests PRIVATE cxx_std_17)
+add_executable(save_store_tests ../save_store_tests.cpp)
+target_compile_features(save_store_tests PRIVATE cxx_std_17)
+target_include_directories(save_store_tests PRIVATE "${APP}")
+add_executable(touch_multitouch_tests ../touch_multitouch_tests.cpp "${APP}/touch_controller.cpp")
+target_compile_features(touch_multitouch_tests PRIVATE cxx_std_17)
+target_include_directories(touch_multitouch_tests PRIVATE "${ROOT}/include" "${APP}" "${ROOT}/src/video/ohos")
+target_include_directories(animation_transition_tests PRIVATE "${APP}")
+target_include_directories(portal_tests PRIVATE "${ROOT}/include" "${ROOT}/src/video" "${APP}" "${JOLT}")
+target_compile_definitions(portal_tests PRIVATE JPH_DEBUG_RENDERER=0 JPH_PROFILE_ENABLED=0
+    JPH_DISABLE_TEMP_ALLOCATOR_NAMES=1 JPH_USE_CUSTOM_ALLOCATOR=0)

@@ -1,0 +1,1522 @@
+{
+  "formatVersion": 1,
+  "game": "forest_portal_test",
+  "water": {
+    "enabled": false
+  },
+  "gameplay": {
+    "playerSpawn": [
+      0,
+      0.2245,
+      0
+    ],
+    "enemyEnabled": false,
+    "demoPropsEnabled": false,
+    "portal": {
+      "target": "scenes/main.json",
+      "label": "RETURN - WALK THROUGH GATE",
+      "position": [
+        0,
+        0.2057,
+        3
+      ],
+      "radius": 0.85,
+      "color": [
+        0.35,
+        0.18,
+        1.0
+      ],
+      "opacity": 0.32
+    },
+    "savePoints": [
+      [
+        0,
+        0.2245,
+        0
+      ]
+    ]
+  },
+  "entities": [
+    {
+      "id": 0,
+      "name": {
+        "name": "Main Camera"
+      },
+      "transform": {
+        "position": [
+          -5.13074e-07,
+          2.19747,
+          -5.86889
+        ],
+        "rotation": [
+          4.34719e-08,
+          -4.56909e-09,
+          -0.994522,
+          -0.104528
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
+      "camera": {
+        "fov": 60,
+        "nearPlane": 0.1,
+        "farPlane": 600,
+        "isMainCamera": true,
+        "isOrthographic": false,
+        "orthographicSize": 5,
+        "postProcessChain": "",
+        "enableFrustumCulling": true,
+        "showFrustumWireframe": false,
+        "useSubMeshCulling": false,
+        "showBVHWireframe": false,
+        "showCollisionWireframe": false,
+        "useBVHCulling": false,
+        "thirdPersonEnabled": true,
+        "thirdPersonTargetName": "AnimationPlayer",
+        "thirdPersonTargetOffset": [
+          0,
+          0.95,
+          0
+        ],
+        "thirdPersonDistance": 6,
+        "thirdPersonMinDistance": 2,
+        "thirdPersonMaxDistance": 12,
+        "thirdPersonYaw": 180,
+        "thirdPersonPitch": 12,
+        "thirdPersonMinPitch": -25,
+        "thirdPersonMaxPitch": 70,
+        "thirdPersonOrbitSensitivity": 0.12,
+        "thirdPersonZoomSensitivity": 1,
+        "thirdPersonPositionDamping": 12,
+        "thirdPersonRotationDamping": 16,
+        "thirdPersonCaptureMouse": false,
+        "thirdPersonPreserveDistanceWhenOccluded": true,
+        "thirdPersonCollisionEnabled": true,
+        "thirdPersonCollisionRadius": 0.22,
+        "thirdPersonCollisionBuffer": 0.08,
+        "thirdPersonCollisionMinDistance": 0.75,
+        "thirdPersonCollisionDampingIn": 24,
+        "thirdPersonCollisionDampingOut": 6,
+        "thirdPersonCollisionSmoothingTime": 0.12,
+        "thirdPersonAimEnabled": true,
+        "thirdPersonAimShoulderOffset": 0.75,
+        "thirdPersonAimFov": 50,
+        "thirdPersonAimSensitivity": 0.08,
+        "thirdPersonAimPositionDamping": 18,
+        "thirdPersonAimRotationDamping": 20,
+        "thirdPersonLockOnEnabled": true,
+        "thirdPersonLockTargetName": "",
+        "thirdPersonLockOnMaxDistance": 25,
+        "thirdPersonLockOnLookAtBlend": 0.5
+      },
+      "script": {
+        "scriptName": ""
+      }
+    },
+    {
+      "id": 1,
+      "name": {
+        "name": "Directional Light"
+      },
+      "transform": {
+        "position": [
+          0,
+          12,
+          10
+        ],
+        "rotation": [
+          0.875426,
+          0.408218,
+          -0.23457,
+          0.109382
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
+      "light": {
+        "type": 0,
+        "color": [
+          1,
+          1,
+          1
+        ],
+        "intensity": 1.2,
+        "range": 10,
+        "spotAngle": 45,
+        "castShadow": true
+      },
+      "script": {
+        "scriptName": ""
+      }
+    },
+    {
+      "id": 2,
+      "name": {
+        "name": "Skybox"
+      },
+      "transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
+      "skybox": {
+        "enabled": true,
+        "textureName": "skybox",
+        "tint": [
+          1,
+          1,
+          1
+        ],
+        "intensity": 1
+      },
+      "script": {
+        "scriptName": ""
+      }
+    },
+    {
+      "id": 9001,
+      "name": {
+        "name": "Heightmap terrain"
+      },
+      "transform": {
+        "position": [
+          0,
+          -0.94,
+          0
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      },
+      "terrain": {
+        "enabled": true,
+        "heightmapPath": "terrain/forest_test_height16.png",
+        "worldSize": [
+          24,
+          24
+        ],
+        "heightScale": 2,
+        "heightOffset": 0,
+        "chunkCount": 4,
+        "patchResolution": 17,
+        "collisionEnabled": true,
+        "collisionResolution": 65,
+        "materialTiling": 10,
+        "blendSharpness": 1,
+        "layer0Path": "terrain/demo_layer0.png",
+        "layer1Path": "terrain/demo_layer1.png",
+        "layer2Path": "terrain/demo_layer2.png"
+      }
+    },
+    {
+      "id": 9200,
+      "name": {
+        "name": "EZTree_tree_0"
+      },
+      "transform": {
+        "position": [
+          -5,
+          2.4453,
+          -4
+        ],
+        "rotation": [
+          1.0,
+          0,
+          0.0,
+          0
+        ],
+        "scale": [
+          2.5,
+          2.5,
+          2.5
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/EZTree/tree.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9201,
+      "name": {
+        "name": "EZTree_tree_1"
+      },
+      "transform": {
+        "position": [
+          5,
+          2.5182,
+          -5
+        ],
+        "rotation": [
+          0.9151163204946318,
+          0,
+          0.4031899303856266,
+          0
+        ],
+        "scale": [
+          2.8,
+          2.8,
+          2.8
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/EZTree/tree.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9202,
+      "name": {
+        "name": "EZTree_tree_2"
+      },
+      "transform": {
+        "position": [
+          -7,
+          1.6834,
+          1
+        ],
+        "rotation": [
+          0.6748757600712672,
+          0,
+          0.7379313711099627,
+          0
+        ],
+        "scale": [
+          2.4,
+          2.4,
+          2.4
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/EZTree/tree.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9203,
+      "name": {
+        "name": "EZTree_tree_3"
+      },
+      "transform": {
+        "position": [
+          7,
+          1.9597,
+          2
+        ],
+        "rotation": [
+          0.3200633242002401,
+          0,
+          0.9473961518297886,
+          0
+        ],
+        "scale": [
+          2.6,
+          2.6,
+          2.6
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/EZTree/tree.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9204,
+      "name": {
+        "name": "EZTree_tree_4"
+      },
+      "transform": {
+        "position": [
+          -4,
+          2.3949,
+          -9
+        ],
+        "rotation": [
+          -0.08908541693645897,
+          0,
+          0.9960239899165367,
+          0
+        ],
+        "scale": [
+          2.7,
+          2.7,
+          2.7
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/EZTree/tree.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9205,
+      "name": {
+        "name": "EZTree_tree_5"
+      },
+      "transform": {
+        "position": [
+          3,
+          1.9176,
+          -9
+        ],
+        "rotation": [
+          -0.48311036211348485,
+          0,
+          0.8755594657238179,
+          0
+        ],
+        "scale": [
+          2.4,
+          2.4,
+          2.4
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/EZTree/tree.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9206,
+      "name": {
+        "name": "EZTree_tree_6"
+      },
+      "transform": {
+        "position": [
+          -8,
+          1.4151,
+          7
+        ],
+        "rotation": [
+          -0.795118937003784,
+          0,
+          0.606453523378315,
+          0
+        ],
+        "scale": [
+          2.2,
+          2.2,
+          2.2
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/EZTree/tree.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9207,
+      "name": {
+        "name": "EZTree_tree_7"
+      },
+      "transform": {
+        "position": [
+          7,
+          1.93,
+          7
+        ],
+        "rotation": [
+          -0.9721422698595266,
+          0,
+          0.23439156800611965,
+          0
+        ],
+        "scale": [
+          2.5,
+          2.5,
+          2.5
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/EZTree/tree.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9208,
+      "name": {
+        "name": "EZTree_rock1_8"
+      },
+      "transform": {
+        "position": [
+          -3,
+          0.4097,
+          -5
+        ],
+        "rotation": [
+          -0.9841275769785145,
+          0,
+          -0.17746242484086014,
+          0
+        ],
+        "scale": [
+          0.65,
+          0.65,
+          0.65
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/EZTree/rock1.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9209,
+      "name": {
+        "name": "EZTree_rock2_9"
+      },
+      "transform": {
+        "position": [
+          4,
+          -0.136,
+          -3
+        ],
+        "rotation": [
+          -0.8290401444242248,
+          0,
+          -0.5591890904989658,
+          0
+        ],
+        "scale": [
+          0.8,
+          0.8,
+          0.8
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/EZTree/rock2.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9210,
+      "name": {
+        "name": "EZTree_rock3_10"
+      },
+      "transform": {
+        "position": [
+          -6,
+          -0.2904,
+          4
+        ],
+        "rotation": [
+          -0.5332087560371551,
+          0,
+          -0.8459837010754461,
+          0
+        ],
+        "scale": [
+          0.65,
+          0.65,
+          0.65
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/EZTree/rock3.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9211,
+      "name": {
+        "name": "EZTree_rock1_11"
+      },
+      "transform": {
+        "position": [
+          6,
+          0.025,
+          5
+        ],
+        "rotation": [
+          -0.14685592533625724,
+          0,
+          -0.9891578929542197,
+          0
+        ],
+        "scale": [
+          0.55,
+          0.55,
+          0.55
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/EZTree/rock1.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9212,
+      "name": {
+        "name": "EZTree_grass_12"
+      },
+      "transform": {
+        "position": [
+          -2,
+          -0.1768,
+          -3
+        ],
+        "rotation": [
+          0.2644282479640549,
+          0,
+          -0.9644053617015307,
+          0
+        ],
+        "scale": [
+          0.35,
+          0.35,
+          0.35
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/EZTree/grass.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9213,
+      "name": {
+        "name": "EZTree_grass_13"
+      },
+      "transform": {
+        "position": [
+          2,
+          -0.2762,
+          -4
+        ],
+        "rotation": [
+          0.6308211359596733,
+          0,
+          -0.7759282791769787,
+          0
+        ],
+        "scale": [
+          0.35,
+          0.35,
+          0.35
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/EZTree/grass.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9214,
+      "name": {
+        "name": "EZTree_grass_14"
+      },
+      "transform": {
+        "position": [
+          -4,
+          -0.1033,
+          -2
+        ],
+        "rotation": [
+          0.8901211856952652,
+          0,
+          -0.4557239019148055,
+          0
+        ],
+        "scale": [
+          0.35,
+          0.35,
+          0.35
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/EZTree/grass.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9215,
+      "name": {
+        "name": "EZTree_grass_15"
+      },
+      "transform": {
+        "position": [
+          4,
+          0.0715,
+          -6
+        ],
+        "rotation": [
+          0.9983077125358665,
+          0,
+          -0.05815248138648784,
+          0
+        ],
+        "scale": [
+          0.35,
+          0.35,
+          0.35
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/EZTree/grass.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9216,
+      "name": {
+        "name": "EZTree_grass_16"
+      },
+      "transform": {
+        "position": [
+          -6,
+          0.1566,
+          -3
+        ],
+        "rotation": [
+          0.9370141755392041,
+          0,
+          0.34929133232673487,
+          0
+        ],
+        "scale": [
+          0.35,
+          0.35,
+          0.35
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/EZTree/grass.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9217,
+      "name": {
+        "name": "EZTree_grass_17"
+      },
+      "transform": {
+        "position": [
+          6,
+          -0.3524,
+          1
+        ],
+        "rotation": [
+          0.7166462166056284,
+          0,
+          0.6974368790255063,
+          0
+        ],
+        "scale": [
+          0.35,
+          0.35,
+          0.35
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/EZTree/grass.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9218,
+      "name": {
+        "name": "EZTree_grass_18"
+      },
+      "transform": {
+        "position": [
+          -5,
+          -0.4335,
+          5
+        ],
+        "rotation": [
+          0.3746151221338789,
+          0,
+          0.927180408695427,
+          0
+        ],
+        "scale": [
+          0.35,
+          0.35,
+          0.35
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/EZTree/grass.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9219,
+      "name": {
+        "name": "EZTree_grass_19"
+      },
+      "transform": {
+        "position": [
+          5,
+          -0.237,
+          4
+        ],
+        "rotation": [
+          -0.031013392268023753,
+          0,
+          0.9995189690546297,
+          0
+        ],
+        "scale": [
+          0.35,
+          0.35,
+          0.35
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/EZTree/grass.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9220,
+      "name": {
+        "name": "EZTree_grass_20"
+      },
+      "transform": {
+        "position": [
+          -8,
+          0.3347,
+          -6
+        ],
+        "rotation": [
+          -0.43137684497061923,
+          0,
+          0.9021718337562941,
+          0
+        ],
+        "scale": [
+          0.35,
+          0.35,
+          0.35
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/EZTree/grass.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9221,
+      "name": {
+        "name": "EZTree_grass_21"
+      },
+      "transform": {
+        "position": [
+          8,
+          -0.0243,
+          -5
+        ],
+        "rotation": [
+          -0.7585065899641702,
+          0,
+          0.6516653688672785,
+          0
+        ],
+        "scale": [
+          0.35,
+          0.35,
+          0.35
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/EZTree/grass.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9222,
+      "name": {
+        "name": "EZTree_grass_22"
+      },
+      "transform": {
+        "position": [
+          -2,
+          -0.0942,
+          -8
+        ],
+        "rotation": [
+          -0.9568666743872632,
+          0,
+          0.29052739534690886,
+          0
+        ],
+        "scale": [
+          0.35,
+          0.35,
+          0.35
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/EZTree/grass.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9223,
+      "name": {
+        "name": "EZTree_grass_23"
+      },
+      "transform": {
+        "position": [
+          1,
+          -0.2344,
+          -7
+        ],
+        "rotation": [
+          -0.9927820305742447,
+          0,
+          -0.1199326468017752,
+          0
+        ],
+        "scale": [
+          0.35,
+          0.35,
+          0.35
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/EZTree/grass.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9224,
+      "name": {
+        "name": "EZTree_flower_blue_24"
+      },
+      "transform": {
+        "position": [
+          -3,
+          -0.2901,
+          1
+        ],
+        "rotation": [
+          -0.8601554033573205,
+          0,
+          -0.5100320402437528,
+          0
+        ],
+        "scale": [
+          0.45,
+          0.45,
+          0.45
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/EZTree/flower_blue.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9225,
+      "name": {
+        "name": "EZTree_flower_white_25"
+      },
+      "transform": {
+        "position": [
+          3,
+          -0.3578,
+          1
+        ],
+        "rotation": [
+          -0.5815024649736085,
+          0,
+          -0.8135446412026923,
+          0
+        ],
+        "scale": [
+          0.4,
+          0.4,
+          0.4
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/EZTree/flower_white.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9226,
+      "name": {
+        "name": "EZTree_flower_yellow_26"
+      },
+      "transform": {
+        "position": [
+          -4,
+          0.4355,
+          -6
+        ],
+        "rotation": [
+          -0.20412938885309476,
+          0,
+          -0.9789439169873124,
+          0
+        ],
+        "scale": [
+          0.45,
+          0.45,
+          0.45
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/EZTree/flower_yellow.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9100,
+      "name": {
+        "name": "PortalTest_Left"
+      },
+      "transform": {
+        "position": [
+          -1.1,
+          0.6457140090753417,
+          3
+        ],
+        "rotation": [
+          1.0,
+          0,
+          0.0,
+          0
+        ],
+        "scale": [
+          0.16,
+          1.4,
+          0.2
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9101,
+      "name": {
+        "name": "PortalTest_Right"
+      },
+      "transform": {
+        "position": [
+          1.1,
+          0.6457140090753417,
+          3
+        ],
+        "rotation": [
+          1.0,
+          0,
+          0.0,
+          0
+        ],
+        "scale": [
+          0.16,
+          1.4,
+          0.2
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9102,
+      "name": {
+        "name": "PortalTest_Top"
+      },
+      "transform": {
+        "position": [
+          0,
+          2.195714009075342,
+          3
+        ],
+        "rotation": [
+          1.0,
+          0,
+          0.0,
+          0
+        ],
+        "scale": [
+          1.26,
+          0.15,
+          0.2
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9103,
+      "name": {
+        "name": "PortalTest_Pad"
+      },
+      "transform": {
+        "position": [
+          0,
+          -0.7792859909246582,
+          3
+        ],
+        "rotation": [
+          1.0,
+          0,
+          0.0,
+          0
+        ],
+        "scale": [
+          1.3,
+          0.025,
+          0.85
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9300,
+      "name": {
+        "name": "Forest boundary"
+      },
+      "transform": {
+        "position": [
+          0,
+          0.35,
+          -12
+        ],
+        "rotation": [
+          1.0,
+          0,
+          0.0,
+          0
+        ],
+        "scale": [
+          12,
+          0.8,
+          0.2
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9301,
+      "name": {
+        "name": "Forest boundary"
+      },
+      "transform": {
+        "position": [
+          0,
+          0.35,
+          12
+        ],
+        "rotation": [
+          1.0,
+          0,
+          0.0,
+          0
+        ],
+        "scale": [
+          12,
+          0.8,
+          0.2
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9302,
+      "name": {
+        "name": "Forest boundary"
+      },
+      "transform": {
+        "position": [
+          -12,
+          0.35,
+          0
+        ],
+        "rotation": [
+          1.0,
+          0,
+          0.0,
+          0
+        ],
+        "scale": [
+          0.2,
+          0.8,
+          12
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9303,
+      "name": {
+        "name": "Forest boundary"
+      },
+      "transform": {
+        "position": [
+          12,
+          0.35,
+          0
+        ],
+        "rotation": [
+          1.0,
+          0,
+          0.0,
+          0
+        ],
+        "scale": [
+          0.2,
+          0.8,
+          12
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 12000,
+      "name": {
+        "name": "SavePoint 1 0"
+      },
+      "transform": {
+        "position": [
+          0.9,
+          -0.6755,
+          0
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.32,
+          0.08,
+          0.32
+        ]
+      },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/violet.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 12001,
+      "name": {
+        "name": "SavePoint 1 1"
+      },
+      "transform": {
+        "position": [
+          0.9,
+          -0.2054999999999999,
+          0
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.095,
+          0.4,
+          0.095
+        ]
+      },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 12002,
+      "name": {
+        "name": "SavePoint 1 2"
+      },
+      "transform": {
+        "position": [
+          0.9,
+          0.2845000000000001,
+          0
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.22,
+          0.1,
+          0.22
+        ]
+      },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    }
+  ]
+}

@@ -7,7 +7,20 @@
 namespace gameplay {
 struct WeaponButton { float x,y,r; };
 inline WeaponButton PistolButton(int index,float w,float h) {
-    return {w*0.79f,h*(0.23f+0.13f*index),std::min(w,h)*0.052f};
+    const float mn=std::min(w,h);
+    if(index==0)return {w*.5f,h-mn*.085f,mn*.048f};
+    return {w-mn*(.68f-.18f*index),h-mn*.61f,mn*.052f};
+}
+inline WeaponButton ActionButton(int index,float w,float h) {
+    const float mn=std::min(w,h);
+    const float attackX=w-mn*.17f,attackY=h-mn*.16f;
+    if(index==0)return {attackX,attackY,mn*.090f};
+    // Jump above, sprint upper-left, crouch lower-left. Equal orbit radius
+    // and 50-degree spacing keep all three secondary actions equally near.
+    const float angleDegrees[3]={-90.f,-140.f,-190.f};
+    const float angle=angleDegrees[index-1]*.01745329252f;
+    const float orbit=mn*.22f;
+    return {attackX+std::cos(angle)*orbit,attackY+std::sin(angle)*orbit,mn*.055f};
 }
 inline int HitPistolButton(float x,float y,float w,float h,bool equipped,bool available=true) {
     if(!available)return -1;
@@ -17,13 +30,21 @@ inline int HitPistolButton(float x,float y,float w,float h,bool equipped,bool av
     }
     return -1;
 }
-inline WeaponButton PotionButton(float w,float h){float mn=std::min(w,h);return {w*.5f-mn*.25f,h-mn*.06f,mn*.040f};}
+inline WeaponButton PotionButton(float w,float h){float mn=std::min(w,h);return {w*.5f+mn*.12f,h-mn*.085f,mn*.048f};}
+// Bottom-centre quickbar: melee, ranged, potion. Shared draw/hit geometry.
+inline WeaponButton SwordButton(float w,float h) {
+    const float mn=std::min(w,h);return {w*.5f-mn*.12f,h-mn*.085f,mn*.048f};
+}
+inline bool HitSwordButton(float x,float y,float w,float h) {
+    auto b=SwordButton(w,h);float dx=x-b.x,dy=y-b.y;
+    return dx*dx+dy*dy<=b.r*b.r;
+}
 inline bool HitPotionButton(float x,float y,float w,float h){auto b=PotionButton(w,h);return (x-b.x)*(x-b.x)+(y-b.y)*(y-b.y)<=b.r*b.r;}
 // Chest interaction prompt (wide capsule, bottom-centre).  The renderer only
 // shows it near a closed chest; touch claims the press only while active.
 inline bool HitChestButton(float x,float y,float w,float h){
     float mn=std::min(w,h);
-    return std::fabs(x-w*.5f)<=mn*.14f && std::fabs(y-(h-mn*.205f))<=mn*.055f;
+    return std::fabs(x-w*.5f)<=mn*.14f && std::fabs(y-(h-mn*.36f))<=mn*.055f;
 }
 struct PistolState {
     static constexpr int capacity=12;
@@ -102,6 +123,27 @@ inline void PistolMount(const float* player,const float* normalise,const float* 
     const float mount[16]={0.029999288f,0.982385913f,-0.184439476f,0.000000000f,-0.041918582f,0.185596763f,0.981731483f,0.000000000f,0.998670554f,-0.021720015f,0.046747986f,0.000000000f,0.000813600f,0.096766587f,0.027578364f,1.000000000f};
     WeaponMultiply(pose,mount,world);
     for(int c=0;c<3;++c)for(int row=0;row<3;++row)world[c*4+row]*=.18f;
+    WeaponMultiply(player,world,out);
+}
+// Melee sword: the shared melee pipeline (attack button -> AnimState::Attack
+// -> damage within reach) drives the swing; this state only tracks whether
+// the blade is currently drawn in the right hand.
+struct SwordState {
+    bool drawn=false;
+    void Holster(){drawn=false;}
+};
+inline void SwordMount(const float* player,const float* normalise,const float* hand,float* out) {
+    float pose[16],world[16];WeaponMultiply(normalise,hand,pose);
+    // Preserve the hand position, removing inherited rig scale from the grip.
+    for(int c=0;c<3;++c){float n=std::sqrt(pose[c*4]*pose[c*4]+pose[c*4+1]*pose[c*4+1]+pose[c*4+2]*pose[c*4+2]);
+        if(n>1e-6f)for(int row=0;row<3;++row)pose[c*4+row]/=n;}
+    // The glTF node rotation is baked into static vertices: blade +Y.
+    // The normalised wood grip is (0,-.675,0). Map blade +Y to hand +X
+    // and align the grip with this rig's calibrated palm, not the wrist.
+    const float mount[16]={0.f,0.f,-1.f,0.f, 1.f,0.f,0.f,0.f, 0.f,-1.f,0.f,0.f,
+        0.2235636f,0.096766587f,0.027578364f,1.f};
+    WeaponMultiply(pose,mount,world);
+    for(int c=0;c<3;++c)for(int row=0;row<3;++row)world[c*4+row]*=.33f;
     WeaponMultiply(player,world,out);
 }
 // Ray versus the actual vertical character capsule, returns nearest positive t.

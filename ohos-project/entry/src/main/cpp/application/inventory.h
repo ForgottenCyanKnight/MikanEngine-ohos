@@ -2,15 +2,16 @@
 #include <array>
 #include <algorithm>
 namespace inventory {
-enum class SlotType {Weapon=0,Helmet,Armor,Count};
+enum class SlotType {Weapon=0,Helmet,Armor,Melee,Count};
 struct ItemDef {const char* name;SlotType slot;float color[3];int maxCount;float attack=1,defense=1,speed=1;};
 inline constexpr ItemDef kItemDefs[]={
  {"手枪",SlotType::Weapon,{.70f,.75f,.82f},1,1.30f,1,1},
  {"铁盔",SlotType::Helmet,{.60f,.64f,.70f},1,1,1.15f,1},
  {"皮甲",SlotType::Armor,{.55f,.38f,.22f},1,1,1.25f,1.05f},
  {"法袍",SlotType::Armor,{.35f,.45f,.80f},1,1.10f,1.10f,1.10f},
- {"药水",SlotType::Count,{.85f,.30f,.35f},3,1,1,1}};
-inline constexpr int kItemDefCount=5,kSlotCount=3,kBagCapacity=15,kNoItem=-1;
+ {"药水",SlotType::Count,{.85f,.30f,.35f},3,1,1,1},
+ {"长剑",SlotType::Melee,{.75f,.78f,.85f},1,1.60f,1.05f,1}};
+inline constexpr int kItemDefCount=6,kSlotCount=4,kBagCapacity=15,kNoItem=-1;
 struct BagEntry {int defId=-1,count=0;};
 struct Bonuses {float attack=1,defense=1,speed=1;};
 struct State {
@@ -47,6 +48,13 @@ struct State {
   for(auto& cell:bag)if(cell.defId==kNoItem){cell={equipped[slot],1};equipped[slot]=kNoItem;return true;}return false;
  }
  bool HasPistol()const{return equipped[0]==0;}
+ bool HasSword()const{return equipped[3]==5;}
+ bool PistolInBag()const{for(const auto& cell:bag)if(cell.defId==0&&cell.count>0)return true;return false;}
+ void EquipPistol(){if(HasPistol())return;for(int i=0;i<kBagCapacity;i++)if(bag[i].defId==0&&bag[i].count>0){TapBag(i);return;}}
+ bool SwordInBag()const{for(const auto& cell:bag)if(cell.defId==5&&cell.count>0)return true;return false;}
+ // Quick-equip fills independent ranged/melee slots; switching never
+ // returns the other weapon to the bag.
+ void EquipSword(){if(HasSword())return;for(int i=0;i<kBagCapacity;i++)if(bag[i].defId==5&&bag[i].count>0){TapBag(i);return;}}
  int PotionCount()const{int count=0;for(int i=0;i<kBagCapacity;i++)if(auto d=DefOf(i))if(d->slot==SlotType::Count)count+=bag[i].count;return count;}
  bool UsePotion(float& health,float maximum){
   if(health<=0 || health>=maximum)return false;
@@ -54,6 +62,6 @@ struct State {
    if(!TapBag(i))return false;health=std::min(maximum,health+30.f);return true;
   }return false;
  }
- Bonuses Stats()const {Bonuses b;for(int i=0;i<kSlotCount;i++)if(auto d=EquippedDef(i)){b.attack*=d->attack;b.defense*=d->defense;b.speed*=d->speed;}return b;}
+ Bonuses Stats(int activeWeapon=kNoItem)const {Bonuses b;for(int i=0;i<kSlotCount;i++)if(auto d=EquippedDef(i)){if((i==0||i==3)&&equipped[i]!=activeWeapon)continue;b.attack*=d->attack;b.defense*=d->defense;b.speed*=d->speed;}return b;}
 };
 }

@@ -15,8 +15,9 @@ import os
 from PIL import Image, ImageDraw, ImageFont
 
 FONT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts", "simhei.ttf")
-OUT_PNG = r"D:\ohosengine\sdl3-ohos-vulkan\ohos-project\entry\src\main\resources\rawfile\SdfAtlas.png"
-OUT_HEADER = r"D:\ohosengine\sdl3-ohos-vulkan\ohos-project\entry\src\main\cpp\application\rhi\sdf_font_metrics.h"
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+OUT_PNG = os.path.join(PROJECT_ROOT, 'entry', 'src', 'main', 'resources', 'rawfile', 'SdfAtlas.png')
+OUT_HEADER = os.path.join(PROJECT_ROOT, 'entry', 'src', 'main', 'cpp', 'application', 'rhi', 'sdf_font_metrics.h')
 
 # ASCII letters cover the title (MIKAN), the splash subtitle, the debug
 # animation-state HUD (WALK/IDLE/ATTACK/...), the FPS counter and the value
@@ -33,6 +34,8 @@ CHARSET += "攻击防御移速未装备恢复满血不消耗长皮袍"
 CHARSET += "手换弹量装填绑定快捷栏/"
 CHARSET += "商店金币购买备发均衡强化击杀获得请到穿戴中"
 CHARSET += "启宝箱近处提示开启交互奖励"
+CHARSET += "近战远程"
+CHARSET += "选择存档没有请创建新最后保存日期成功失败读取森林跑酷场景上下页"
 CHARSET = "".join(dict.fromkeys(CHARSET))  # dedupe, keep first-seen order
 EM = 64            # 1x em size the metrics are measured at
 PAD = 8            # 1x margin around the em box inside a cell

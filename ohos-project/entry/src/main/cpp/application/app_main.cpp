@@ -17,6 +17,8 @@
 #include <chrono>
 #include <condition_variable>
 #include <memory>
+#include <map>
+#include <algorithm>
 #include <mutex>
 #include <string>
 
@@ -195,7 +197,7 @@ int main()
     }
 
     if (mikanSceneLoaded && physicsWorld.IsReady() &&
-        !physicsWorld.SetTerrainColliders(sceneDefinition)) {
+        !physicsWorld.SetTerrainColliders(sceneDefinition, "scenes/main.json")) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "SDL3_TERRAIN stage=collision_sync_failed");
     }
 
@@ -220,6 +222,24 @@ int main()
     }
     session.renderer->SetPhysicsWorld(&physicsWorld);
 
+    // Resolve the small portal graph once. Assets stay resident until shutdown.
+    std::map<std::string, scene::Definition> sceneCache;
+    sceneCache.emplace("scenes/main.json", sceneDefinition);
+    std::vector<std::string> preloadPaths{"scenes/main.json"};
+    auto enqueuePortals = [&](const scene::Definition& definition) {
+        for (const auto& portal : definition.portals)
+            if (preloadPaths.size() < 8 && std::find(preloadPaths.begin(), preloadPaths.end(), portal.target) == preloadPaths.end())
+                preloadPaths.push_back(portal.target);
+    };
+    enqueuePortals(sceneDefinition);
+    size_t preloadIndex = 0;
+    int preloadPhase = 0;
+    float preloadLocalProgress = 0;
+    bool preloading = session.renderer->SupportsScenePreload();
+    const Uint64 preloadStart = SDL_GetTicks();
+    std::string currentScenePath = "scenes/main.json";
+
+    Uint64 switchPresentationStart = 0;
     bool running = true;
     bool splashHidden = false;
     bool rendererSuspended = false;
@@ -251,6 +271,7 @@ int main()
         // layout and costs nothing.
         touch.SetScreen(session.renderer->CurrentScreen());
         touch.SetWeaponAvailable(session.renderer->WeaponAvailable());
+        touch.SetSwordAvailable(session.renderer->SwordAvailable());
         touch.SetWeaponEquipped(session.renderer->WeaponEquipped());
         touch.SetChestPrompt(session.renderer->ChestPromptActive());
         if (waitForEvents && SDL_WaitEventTimeout(&event, 80)) {
@@ -312,6 +333,48 @@ int main()
                         if (session.renderer->Initialize(session.window,
                             static_cast<uint64_t>(session.width),
                             static_cast<uint64_t>(session.height))) {
+                            if (preloading) {
+                                touch.FrameInput(); // Do not queue taps on the hidden main menu.
+                                const float progress = (float(preloadIndex) + preloadLocalProgress) / float(preloadPaths.size());
+                                const bool shown = session.renderer->DrawLoadingScreen(progress,
+                                    preloadIndex == preloadPaths.size() ? "Ready" :
+                                    (preloadPhase == 1 ? "Preparing scene collisions" : "Loading scene resources"));
+                                if (shown && !splashHidden) {
+                                    OHOS_HideNativeSplash(); splashHidden = true;
+                                }
+                                if (preloadIndex == preloadPaths.size()) {
+                                    preloading = false; touch = TouchController{};
+                                    SDL_Log("SDL3_SCENE stage=preload_complete scenes=%zu ms=%llu", preloadPaths.size(),
+                                        static_cast<unsigned long long>(SDL_GetTicks() - preloadStart));
+                                } else if (shown) {
+                                    const std::string path = preloadPaths[preloadIndex];
+                                    std::string error;
+                                    if (!sceneCache.count(path)) {
+                                        scene::Definition next;
+                                        if (scene::LoadMikanSceneRawFile(path.c_str(), next, error)) {
+                                            enqueuePortals(next);
+                                            sceneCache.emplace(path, std::move(next));
+                                        }
+                                    }
+                                    if (error.empty() && preloadPhase == 0) {
+                                        const auto status = session.renderer->PreloadSceneStep(sceneCache.at(path));
+                                        preloadLocalProgress = status.progress * .8f;
+                                        error = status.error;
+                                        if (status.ready) preloadPhase = 1;
+                                    } else if (error.empty()) {
+                                        if (physicsWorld.IsReady() && !physicsWorld.PrepareTerrainColliders(sceneCache.at(path), path))
+                                            error = "terrain collision preload failed";
+                                        else {
+                                            ++preloadIndex; preloadPhase = 0; preloadLocalProgress = 0;
+                                        }
+                                    }
+                                    if (!error.empty()) {
+                                        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "SDL3_SCENE stage=preload_failed path=%s error=%s", path.c_str(), error.c_str());
+                                        ++preloadIndex; preloadPhase = 0; preloadLocalProgress = 0;
+                                    }
+                                }
+                                continue; // Poll lifecycle/input before the next asset job.
+                            }
                             restoreFailureLogged = false;
                             session.renderer->PushCameraInput(touch.FrameInput());
                             const bool framePresented = session.renderer->DrawOnce();
@@ -326,6 +389,45 @@ int main()
                                 splashHidden = true;
                                 SDL_Log("SDL3_RHI stage=first_frame_presented hide_splash");
                                 OHOS_HideNativeSplash();
+                            }
+                            if (framePresented && switchPresentationStart) {
+                                SDL_Log("SDL3_SCENE stage=switch_presented target=%s ms=%llu", currentScenePath.c_str(),
+                                    static_cast<unsigned long long>(SDL_GetTicks() - switchPresentationStart));
+                                switchPresentationStart = 0;
+                            }
+                            if (framePresented) {
+                                const std::string target = session.renderer->ConsumeSceneRequest();
+                                if (!target.empty()) {
+                                    const Uint64 start = SDL_GetTicks();
+                                    SDL_Log("SDL3_SCENE stage=switch_begin target=%s", target.c_str());
+                                    const auto next = sceneCache.find(target);
+                                    if (next == sceneCache.end()) {
+                                        session.renderer->SceneRequestFailed();
+                                        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "SDL3_SCENE stage=switch_failed reason=not_preloaded");
+                                    } else {
+                                        const float groundY = physics::kGroundCollider.centerY + physics::kGroundCollider.halfExtentY;
+                                        const bool physicsReady = physicsWorld.IsReady();
+                                        const bool ready = !physicsReady ||
+                                            (physicsWorld.SetTerrainColliders(next->second, target) &&
+                                             physicsWorld.SetStaticSceneColliders(scene::BuildStaticBoxColliders(next->second, groundY)));
+                                        if (ready && session.renderer->ReloadScene(next->second)) {
+                                            sceneDefinition = next->second;
+                                            currentScenePath = target;
+                                            switchPresentationStart = start;
+                                            session.renderer->SetSceneDefinition(sceneDefinition);
+                                            touch = TouchController{};
+                                            SDL_Log("SDL3_SCENE stage=switch_complete target=%s cached=1 ms=%llu", target.c_str(),
+                                                static_cast<unsigned long long>(SDL_GetTicks() - start));
+                                        } else {
+                                            if (physicsReady) {
+                                                physicsWorld.SetTerrainColliders(sceneDefinition, currentScenePath);
+                                                physicsWorld.SetStaticSceneColliders(scene::BuildStaticBoxColliders(sceneDefinition, groundY));
+                                            }
+                                            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "SDL3_SCENE stage=switch_failed reason=scene_resources");
+                                            session.renderer->SceneRequestFailed();
+                                        }
+                                    }
+                                }
                             }
                         } else {
                             shouldWaitForSurface = true;

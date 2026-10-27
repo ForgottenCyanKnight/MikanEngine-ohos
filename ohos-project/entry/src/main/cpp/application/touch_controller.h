@@ -41,6 +41,7 @@ public:
     // happens to run Relayout, so at launch it draws away from its home
     // position with a stale radius.
     void SetViewport(float width, float height);
+    void SetSwordAvailable(bool available){swordAvailable_=available;}
     void SetWeaponAvailable(bool available){weaponAvailable_=available;}
     void SetWeaponEquipped(bool equipped) { weaponEquipped_ = equipped; }
     void SetChestPrompt(bool active) { chestPrompt_ = active; }
@@ -120,14 +121,14 @@ private:
     // captured by it until lift; presses queue an edge into pressedMask_.
     float actionBtnX_[rhi::CameraInput::kActionButtonCount] = {};
     float actionBtnY_[rhi::CameraInput::kActionButtonCount] = {};
-    float actionBtnRadius_ = 0.0f;
+    float actionBtnRadius_[rhi::CameraInput::kActionButtonCount] = {};
     bool actionBtnHeld_[rhi::CameraInput::kActionButtonCount] = {};
     // Single-touch devices: Sprint is a tap toggle, independent of finger lift.
     bool sprintEnabled_ = false;
     SDL_FingerID actionBtnFinger_[rhi::CameraInput::kActionButtonCount] = {};
     int actionBtnPressedMask_ = 0;
 
-    bool weaponAvailable_=false;
+    bool swordAvailable_=false; bool weaponAvailable_=false;
     bool weaponEquipped_ = false;
     bool chestPrompt_ = false;  // chest interaction prompt on screen
     bool sawFinger_ = false;  // disables the mouse fallback forever once set

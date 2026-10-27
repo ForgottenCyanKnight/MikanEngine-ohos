@@ -28,6 +28,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 struct SDL_Window;
 
@@ -115,7 +116,7 @@ struct CameraInput {
     int actionButtonPressedMask = 0;
     float actionButtonX[kActionButtonCount] = {0.0f, 0.0f, 0.0f, 0.0f};
     float actionButtonY[kActionButtonCount] = {0.0f, 0.0f, 0.0f, 0.0f};
-    float actionButtonRadius = 0.0f;
+    float actionButtonRadius[kActionButtonCount] = {};
     // Active levels: Sprint (index 2) is latched by tapping; others follow hold.
     bool actionButtonHeld[kActionButtonCount] = {false, false, false, false};
 
@@ -131,6 +132,12 @@ struct CameraInput {
 // shape the Vulkan renderer already had, so owning a swapchain, being called
 // once per frame with the current size, and rebuilding lazily on resize all
 // keep working unchanged.
+struct ScenePreloadStatus {
+    float progress = 0.0f;
+    bool ready = false;
+    std::string error;
+};
+
 class IRenderer {
 public:
     virtual ~IRenderer() = default;
@@ -138,6 +145,7 @@ public:
     // Stable identifier, used in logs to tell which backend actually came up.
     virtual const char* Name() const = 0;
     virtual bool WeaponAvailable() const { return false; }
+    virtual bool SwordAvailable() const { return false; }
     virtual bool WeaponEquipped() const { return false; }
     // True while the chest interaction prompt is on screen (player near a
     // closed chest); the touch layer claims presses on the prompt region.
@@ -170,6 +178,15 @@ public:
     // The app owns this immutable parsed scene for the entire renderer
     // lifetime. Both backends receive the exact same Mikan-authored snapshot.
     virtual void SetSceneDefinition(const scene::Definition& definition) { (void)definition; }
+
+    // Requests are consumed by the app after presentation, on the render thread.
+    virtual std::string ConsumeSceneRequest() { return {}; }
+    virtual void SceneRequestFailed() {}
+    virtual bool ReloadScene(const scene::Definition& definition) { (void)definition; return false; }
+    virtual bool SupportsScenePreload() const { return false; }
+    // One bounded asset job per call, between event polling and presented frames.
+    virtual ScenePreloadStatus PreloadSceneStep(const scene::Definition&) { return {1.0f, true, {}}; }
+    virtual bool DrawLoadingScreen(float progress, const char* label) { (void)progress; (void)label; return false; }
 
     // Current top-level screen, used by the main loop to tell the touch layer
     // how to route input.  Defaults to Gameplay so simple backends (Vulkan

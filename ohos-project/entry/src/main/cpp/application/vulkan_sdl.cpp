@@ -1,3 +1,4 @@
+#include "camera/camera_collision.h"
 #include "inventory_ui.h"
 #include "shop_ui.h"
 #include "settings_ui.h"
@@ -27,6 +28,7 @@
 #include "gameplay_lights.h"
 #include "enemy_activity.h"
 #include "weapon_gameplay.h"
+#include "animation/pose_transition.h"
 #include "audio/audio_manager.h"
 #include "model_loader.h"
 #include "physics/jolt_gameplay_physics.h"
@@ -715,6 +717,8 @@ struct ModelGpuAsset {
     std::vector<float> animationRotations;
     std::vector<float> animationScales;
     std::vector<Mat4> animationGlobals;
+    animation::PoseTransition bodyTransition, weaponTransition;
+    std::vector<std::uint8_t> weaponMask;
     int animationClipIndex = -1;
     int idleClip = -1;
     int walkClip = -1;
@@ -901,7 +905,7 @@ public:
 
     void PushCameraInput(const rhi::CameraInput& input) override
     {
-        cameraInput_ = input;
+        cameraInput_ = uiScreen_==rhi::UiScreen::Gameplay && playerHealth_<=0 ? rhi::CameraInput{} : input;
     }
 
     void SetPhysicsWorld(physics::JoltGameplayPhysics* world) override
@@ -1230,6 +1234,7 @@ public:
         playerSwimming_ = false;
         crouchEnabled_ = false;
         playerHealth_ = playerMaxHealth_;
+        playerDeathHold_=0;
         playerAttackCooldown_ = 0.0f;
         playerAttackInvulnerability_ = 0.0f;
         playerHitInvulnerability_ = 0.0f;
@@ -1257,17 +1262,20 @@ public:
         enemyDesiredVelocityX_ = 0.0f;
         enemyDesiredVelocityZ_ = 0.0f;
 
+        cameraObstruction_.Reset(); cameraWasObstructed_ = false;
         camYaw_ = 0.0f;
         camPitch_ = 0.0f;
         camDistance_ = 2.8f;
         camPanX_ = 0.0f;
-        camPanY_ = 0.0f;
+        camPanY_ = playerY_ + camera::kHeadFocusOffset;
         camPanZ_ = 0.0f;
         camPosX_ = 0.0f;
         camPosY_ = 0.0f;
         camPosZ_ = camDistance_;
         moveLastTicks_ = SDL_GetTicks();
 
+        playerAsset_.bodyTransition.Reset(); playerAsset_.weaponTransition.Reset();
+        playerAsset_.weaponMask.clear();
         playerAsset_.animationState = ModelAnimationState::Idle;
         playerAsset_.animationStateTime = 0.0f;
         playerAsset_.animationClipIndex = playerAsset_.idleClip >= 0
@@ -1276,6 +1284,7 @@ public:
         playerAsset_.animationLoop = true;
         playerAsset_.animationTime = 0.0f;
         playerAsset_.animationLastTicks = SDL_GetTicks();
+        enemyAsset_.bodyTransition.Reset();
         enemyAsset_.animationState = ModelAnimationState::Idle;
         enemyAsset_.animationStateTime = 0.0f;
         enemyAsset_.animationClipIndex = enemyAsset_.idleClip >= 0
@@ -5267,7 +5276,7 @@ private:
                 SDL_Log("SDL3_VULKAN stage=inventory_close");
                 return;
             }
-            for (int slot = 1; slot <= 3; ++slot) {
+            for (int slot = 1; slot <= inventory::kSlotCount; ++slot) {
                 if (HitRect(uiX, uiY, MenuButtonLayout(slot))) {
                     inventory_.TapEquip(slot - 1);
                     SDL_Log("SDL3_VULKAN stage=inventory_unequip slot=%d", slot - 1);
@@ -5715,7 +5724,7 @@ private:
         AppendTextCentered(text,potionLabel,potion.x,potion.y,mn*.018f,white,true);
         if(pistol_.equipped){char ammo[32];std::snprintf(ammo,sizeof(ammo),pistol_.reloading?"换弹中":"弹量 %d/%d 备弹 %d",pistol_.ammo,pistol_.capacity,pistol_.reserve);
             AppendTextCentered(text,ammo,w*.5f,h-mn*.115f,mn*.026f,white,true);}
-        if(pistol_.equipped && !playerSwimming_) {
+        if(pistol_.equipped && pistol_.aiming && !playerSwimming_) {
             const float hit[4]={1.f,.25f,.15f,1.f};
             AppendTextCentered(text,pistol_.hitFlash>0?"×":"+",w*.5f,h*.5f,
                 mn*(pistol_.shotAge<.10f?.050f:.036f),pistol_.hitFlash>0?hit:white,true);
@@ -5750,7 +5759,7 @@ private:
                     cameraInput_.actionButtonHeld[index] ? 0.70f : 0.55f};
                 const float buttonX = cameraInput_.actionButtonX[index] * inputScaleX;
                 const float buttonY = cameraInput_.actionButtonY[index] * inputScaleY;
-                const float buttonRadius = cameraInput_.actionButtonRadius * inputScale;
+                const float buttonRadius = cameraInput_.actionButtonRadius[index] * inputScale;
                 AppendCircle(overlay, buttonX, buttonY,
                     buttonRadius + 5.0f * inputScale, buttonColor);
                 const bool hasIcon = actionIconTextures_[index].view != VK_NULL_HANDLE;
@@ -6576,6 +6585,20 @@ private:
             ? asset.animationClips[clipIndex].duration : fallback;
     }
 
+    static float AnimTransitionDuration(ModelAnimationState state)
+    {
+        using T = animation::Transition;
+        switch (state) {
+        case ModelAnimationState::Crouch: return animation::Duration(T::Crouch);
+        case ModelAnimationState::SwimIdle: case ModelAnimationState::SwimForward: return animation::Duration(T::Swim);
+        case ModelAnimationState::JumpStart: case ModelAnimationState::JumpLoop: case ModelAnimationState::JumpLand: return animation::Duration(T::Jump);
+        case ModelAnimationState::Attack: return animation::Duration(T::Attack);
+        case ModelAnimationState::Hit: return animation::Duration(T::Hit);
+        case ModelAnimationState::Death: return animation::Duration(T::Death);
+        default: return animation::Duration(T::Locomotion);
+        }
+    }
+
     void EnterPlayerAnimationState(ModelAnimationState next)
     {
         ModelGpuAsset& asset = playerAsset_;
@@ -6617,11 +6640,14 @@ private:
             targetClip = asset.walkClip;
             targetLoop = true;
         }
+        const bool matchGait = (asset.animationState == ModelAnimationState::Walk || asset.animationState == ModelAnimationState::Sprint) &&
+            (next == ModelAnimationState::Walk || next == ModelAnimationState::Sprint);
+        const float phase = matchGait ? asset.animationTime / AnimationClipDurationOr(asset, asset.animationClipIndex, 1.0f) : 0;
         asset.animationState = next;
         asset.animationStateTime = 0.0f;
         if (asset.animationClipIndex != targetClip) {
             asset.animationClipIndex = targetClip;
-            asset.animationTime = 0.0f;
+            asset.animationTime = phase * AnimationClipDurationOr(asset, targetClip, 1.0f);
         }
         asset.animationLoop = targetLoop;
         if (targetClip >= 0 && targetClip < static_cast<int>(asset.animationClips.size())) {
@@ -6641,6 +6667,10 @@ private:
         // Vulkan path silently ignore all three one-shot/toggle actions.
         const int pressed = cameraInput_.actionButtonPressedMask;
         cameraInput_.actionButtonPressedMask = 0;
+        if (playerHealth_<=0) {
+            if (asset.animationState!=ModelAnimationState::Death) EnterPlayerAnimationState(ModelAnimationState::Death);
+            return;
+        }
         // Mikan hit-stun: while the control lock is active the Hit one-shot
         // overrides everything and all action edges are swallowed.
         if (playerHitLockTimer_ > 0.0f) {
@@ -6712,7 +6742,7 @@ private:
         case ModelAnimationState::Crouch:
             break;
         case ModelAnimationState::Hit:
-            // Lock expired this frame: snap back to the grounded loop.
+            // Lock expired: transition back to the grounded loop.
             if (playerHitLockTimer_ <= 0.0f) {
                 EnterPlayerAnimationState(GroundedPlayerAnimationState());
             }
@@ -6786,8 +6816,12 @@ private:
             }
         }
 
+        asset.bodyTransition.Apply(int(asset.animationState) * 1024 + asset.animationClipIndex, dt,
+            AnimTransitionDuration(asset.animationState), translations, rotations, scales);
+        int weaponPoseKey = 0;
         if (pistol_.equipped && !playerSwimming_ && playerHealth_>0 && playerHitLockTimer_<=0) {
             const auto* gunClip=gameplay::PistolClip(asset.animationClips,pistol_,camPitch_);
+            if (gunClip) weaponPoseKey = 1024 + int(gunClip - asset.animationClips.data());
             if(gunClip)for(const auto& channel:gunClip->channels) {
                 if(channel.nodeIndex>=nodeCount || !gameplay::WeaponUpperBody(asset.animationNodes,channel.nodeIndex))continue;
                 const float time=pistol_.reloading?std::min(pistol_.reloadAge,gunClip->duration):(pistol_.shotAge<.30f?std::min(pistol_.shotAge,gunClip->duration):0.f);
@@ -6799,6 +6833,18 @@ private:
                 else std::memcpy(&scales[channel.nodeIndex*3],sampled,sizeof(float)*3);
             }
         }
+
+        if (asset.weaponMask.size() != nodeCount) {
+            asset.weaponMask.resize(nodeCount);
+            for (size_t i = 0; i < nodeCount; ++i)
+                asset.weaponMask[i] = gameplay::WeaponUpperBody(asset.animationNodes, i) ? 1 : 0;
+        }
+        float weaponFade = animation::Duration(animation::Transition::Weapon);
+        if (pistol_.fired) weaponFade = animation::Duration(animation::Transition::Fire);
+        else if (pistol_.reloading || asset.animationState == ModelAnimationState::Attack || playerHitLockTimer_ > 0)
+            weaponFade = AnimTransitionDuration(playerHitLockTimer_ > 0 ? ModelAnimationState::Hit : ModelAnimationState::Attack);
+        if (playerHealth_<=0) asset.weaponTransition.Reset();
+        asset.weaponTransition.Apply(weaponPoseKey, dt, weaponFade, translations, rotations, scales, &asset.weaponMask);
 
         std::vector<Mat4>& globals = asset.animationGlobals;
         globals.assign(nodeCount, Mat4Identity());
@@ -6842,6 +6888,14 @@ private:
                 clip.name.c_str(), static_cast<unsigned int>(jointCount));
             asset.animationLogged = true;
         }
+        if (playerHealth_<=0 && asset.animationState==ModelAnimationState::Death && asset.animationTime>=clip.duration) {
+            playerDeathHold_+=dt;
+            if (playerDeathHold_>=.3f) {
+                uiScreen_=rhi::UiScreen::GameplayRetry;
+                SDL_Log("SDL3_VULKAN stage=player_death_complete screen=retry");
+            }
+        }
+
     }
 
     ModelAnimationState GroundedEnemyAnimationState() const
@@ -6888,11 +6942,14 @@ private:
             targetClip = asset.walkClip >= 0 ? asset.walkClip : asset.idleClip;
             targetLoop = true;
         }
+        const bool matchGait = (asset.animationState == ModelAnimationState::Walk || asset.animationState == ModelAnimationState::Sprint) &&
+            (next == ModelAnimationState::Walk || next == ModelAnimationState::Sprint);
+        const float phase = matchGait ? asset.animationTime / AnimationClipDurationOr(asset, asset.animationClipIndex, 1.0f) : 0;
         asset.animationState = next;
         asset.animationStateTime = 0.0f;
         if (asset.animationClipIndex != targetClip) {
             asset.animationClipIndex = targetClip;
-            asset.animationTime = 0.0f;
+            asset.animationTime = phase * AnimationClipDurationOr(asset, targetClip, 1.0f);
         }
         asset.animationLoop = targetLoop;
         if (targetClip >= 0 && targetClip < static_cast<int>(asset.animationClips.size())) {
@@ -6921,7 +6978,7 @@ private:
             return;
         }
         if (asset.animationState == ModelAnimationState::Hit) {
-            // Lock expired this frame: snap back to the grounded loop.
+            // Lock expired: transition back to the grounded loop.
             EnterEnemyAnimationState(GroundedEnemyAnimationState());
         }
         if (enemyAttackRequested_) {
@@ -7034,6 +7091,9 @@ private:
             }
         }
 
+        asset.bodyTransition.Apply(int(asset.animationState) * 1024 + asset.animationClipIndex, dt,
+            AnimTransitionDuration(asset.animationState), translations, rotations, scales);
+
         std::vector<Mat4>& globals = asset.animationGlobals;
         globals.assign(nodeCount, Mat4Identity());
         for (size_t nodeIndex = 0; nodeIndex < nodeCount; ++nodeIndex) {
@@ -7070,6 +7130,13 @@ private:
 
     void UpdateEnemyAi(float dt, int pressed)
     {
+        if (playerHealth_<=0) {
+            playerAttackAcceptedThisFrame_=false;
+            enemyMoving_=false; enemyAttackRequested_=false;
+            enemyDesiredVelocityX_=enemyDesiredVelocityZ_=0;
+            return;
+        }
+
         const auto TickCombatTimer = [dt](float& timer) {
             if (timer > 0.0f) {
                 timer = std::max(0.0f, timer - dt);
@@ -7110,8 +7177,8 @@ private:
             const float dx=std::sin(camYaw_)*std::cos(camPitch_);
             const float dy=-std::sin(camPitch_);
             const float dz=-std::cos(camYaw_)*std::cos(camPitch_);
-            const float ox=camPanX_+std::cos(camYaw_)*(pistol_.aiming?.55f:0.f)-dx*camDistance_;
-            const float oy=camPanY_+(pistol_.aiming?.25f:0.f)-dy*camDistance_, oz=camPanZ_+std::sin(camYaw_)*(pistol_.aiming?.55f:0.f)-dz*camDistance_;
+            const float ox=camPosX_;
+            const float oy=camPosY_, oz=camPosZ_;
             const float target=gameplay::RayEnemy(ox,oy,oz,dx,dy,dz,enemyX_,enemyY_,enemyZ_);
             const bool physicsReady=physicsWorld_!=nullptr && physicsWorld_->IsReady();
             const float wall=physicsReady?physicsWorld_->RaycastWorld(ox,oy,oz,dx,dy,dz,60.f):0.f;
@@ -7132,7 +7199,7 @@ private:
         float distance = std::sqrt(toEnemyX * toEnemyX + toEnemyZ * toEnemyZ);
         if (((playerAttackAcceptedThisFrame_ && distance <= 1.75f) || pistolHit) && enemyAlive_ &&
             (pistolHit || enemyHitInvulnerability_ <= 0.0f)) {
-            enemyHealth_ = std::max(0.0f, enemyHealth_ - 25.0f * inventory_.Stats().attack);
+            enemyHealth_ = std::max(0.0f, enemyHealth_ - 25.0f * inventory_.Stats(pistolHit?0:inventory::kNoItem).attack);
             AudioManager::GetInstance().PlayAudio("hit", 0.55f);
             enemyHitInvulnerability_ = kHitInvulnerability;
             if (enemyHealth_ <= 0.0f) {
@@ -7205,8 +7272,11 @@ private:
                     enemyDesiredVelocityZ_ = 0.0f;
                     enemyAttackRequested_ = false;
                     cameraInput_.actionButtonPressedMask = 0;
-                    uiScreen_ = rhi::UiScreen::GameplayRetry;
-                    SDL_Log("SDL3_VULKAN stage=player_defeated screen=retry");
+                    pistol_.aiming=false;
+                    playerDeathHold_=0;
+                    playerHitLockTimer_=0;
+                    EnterPlayerAnimationState(ModelAnimationState::Death);
+                    SDL_Log("SDL3_VULKAN stage=player_defeated animation=death");
                     return;
                 }
             } else {
@@ -7239,7 +7309,7 @@ private:
         // Match GLES' third-person camera target and camera-relative joystick
         // movement.  Vulkan keeps the same Vulkan-depth projection, but the
         // view and object transforms are otherwise identical to the GL path.
-        const bool gameplayInput = uiScreen_ == rhi::UiScreen::Gameplay;
+        const bool gameplayInput = uiScreen_ == rhi::UiScreen::Gameplay && playerHealth_>0;
         float dt = 0.016f;
         const Uint64 nowTicks = SDL_GetTicks();
         if (moveLastTicks_ != 0) {
@@ -7334,9 +7404,38 @@ private:
             playerX_, playerY_ - physics::kPlayerVisualOriginOffset, playerZ_, playerSwimming_);
         // Keep the action edge available for UpdatePlayerAnimationStateMachine;
         // the same edge is used here for an in-range enemy hit.
+
+
+        if (playerHealth_<=0) camPanY_+=(playerY_-.4f-camPanY_)*(1-std::exp(-5.f*dt));
+        const bool aiming = pistol_.equipped && pistol_.aiming;
+        const float aimOffset = aiming ? .55f : 0;
+        const camera::Vec3 desiredFocus{camPanX_+camToWorld.value[0]*aimOffset,
+            camPanY_+(aiming ? .25f : 0), camPanZ_+camToWorld.value[2]*aimOffset};
+        const camera::Vec3 backward{camToWorld.value[8], camToWorld.value[9], camToWorld.value[10]};
+        camera::Placement placement;
+        placement.focus = desiredFocus;
+        placement.distance = camDistance_;
+        placement.eye = {desiredFocus.x+backward.x*camDistance_, desiredFocus.y+backward.y*camDistance_,
+            desiredFocus.z+backward.z*camDistance_};
+        if (physicsReady && uiScreen_ != rhi::UiScreen::MainMenu && uiScreen_ != rhi::UiScreen::Settings) {
+            placement = cameraObstruction_.Resolve({playerX_, playerY_+(playerHealth_>0 ? camera::kHeadFocusOffset : -.4f)+(aiming ? .25f : 0), playerZ_},
+                desiredFocus, backward, camDistance_, camera::CollisionRadius(nearPlane, fieldOfViewDegrees, aspect), dt,
+                [this](float x,float y,float z,float dx,float dy,float dz,float distance,float radius) {
+                    return physicsWorld_->SweepCamera(x,y,z,dx,dy,dz,distance,radius);
+                });
+            if (placement.obstructed != cameraWasObstructed_) {
+                cameraWasObstructed_ = placement.obstructed;
+                SDL_Log("SDL3_CAMERA obstructed=%d requested=%.2f actual=%.2f", placement.obstructed ? 1 : 0,
+                    camDistance_, placement.distance);
+            }
+        }
+        const Mat4 view = Mat4Multiply(Mat4Translation(0, 0, -placement.distance),
+            Mat4Multiply(Mat4RotationX(camPitch_), Mat4Multiply(Mat4RotationY(camYaw_),
+                Mat4Translation(-placement.focus.x, -placement.focus.y, -placement.focus.z))));
+        camPosX_ = placement.eye.x; camPosY_ = placement.eye.y; camPosZ_ = placement.eye.z;
         if (gameplayInput) {
             UpdateEnemyAi(dt, cameraInput_.actionButtonPressedMask);
-            if (uiScreen_ == rhi::UiScreen::Gameplay) {
+            if (uiScreen_ == rhi::UiScreen::Gameplay && playerHealth_>0) {
                 playerHealth_ = gameplay::HealNearLight(playerHealth_, playerMaxHealth_,
                     playerX_, playerY_, playerZ_, dt);
             }
@@ -7353,24 +7452,9 @@ private:
             }
             const float followLerp = 1.0f - std::exp(-8.0f * dt);
             camPanX_ += (playerX_ - camPanX_) * followLerp;
-            camPanY_ += (playerY_ - camPanY_) * followLerp;
+            camPanY_ += (playerY_ + camera::kHeadFocusOffset - camPanY_) * followLerp;
             camPanZ_ += (playerZ_ - camPanZ_) * followLerp;
         }
-
-        const float aimOffset=(pistol_.equipped && pistol_.aiming)?.55f:0.f;
-        const float focusX=camPanX_+camToWorld.value[0]*aimOffset;
-        const float focusY=camPanY_+((pistol_.equipped && pistol_.aiming)?.25f:0.f);
-        const float focusZ=camPanZ_+camToWorld.value[2]*aimOffset;
-        const Mat4 view = Mat4Multiply(Mat4Translation(0.0f, 0.0f, -camDistance_),
-            Mat4Multiply(Mat4RotationX(camPitch_),
-                Mat4Multiply(Mat4RotationY(camYaw_),
-                    Mat4Translation(-focusX, -focusY, -focusZ))));
-        // Keep the lighting camera in the same world space as GLES.  The
-        // view matrix is target-relative, so recover the eye from the inverse
-        // orbit rotation rather than approximating it from the target.
-        camPosX_ = focusX + camToWorld.value[8] * camDistance_ + camToWorld.value[12];
-        camPosY_ = focusY + camToWorld.value[9] * camDistance_ + camToWorld.value[13];
-        camPosZ_ = focusZ + camToWorld.value[10] * camDistance_ + camToWorld.value[14];
         viewProj_ = Mat4Multiply(projection, view);
         if (pistol_.equipped && pistol_.aiming && !playerSwimming_) playerYaw_ = std::atan2(std::sin(camYaw_),-std::cos(camYaw_));
         playerMatrix_ = Mat4Multiply(Mat4Translation(playerX_, playerY_, playerZ_),
@@ -8078,11 +8162,13 @@ private:
     const scene::Definition* sceneDefinition_ = nullptr;
     physics::JoltGameplayPhysics* physicsWorld_ = nullptr;
     bool physicsReset_ = false;
+    camera::ObstructionCamera cameraObstruction_;
+    bool cameraWasObstructed_ = false;
     float camYaw_ = 0.0f;
     float camPitch_ = 0.0f;
     float camDistance_ = 2.8f;
     float camPanX_ = 0.0f;
-    float camPanY_ = 0.0f;
+    float camPanY_ = camera::kHeadFocusOffset;
     float camPanZ_ = 0.0f;
     float camPosX_ = 0.0f;
     float camPosY_ = 0.0f;
@@ -8096,6 +8182,7 @@ private:
     float playerZ_ = gameplay::kPlayerSpawnZ;
     float playerYaw_ = 0.0f;
     float playerMaxHealth_ = 100.0f;
+    float playerDeathHold_=0;
     float playerHealth_ = 100.0f;
     float playerAttackCooldown_ = 0.0f;
     float playerAttackInvulnerability_ = 0.0f;

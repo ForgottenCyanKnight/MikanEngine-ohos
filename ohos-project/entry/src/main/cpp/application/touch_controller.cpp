@@ -12,14 +12,7 @@ constexpr float kJoystickScreenAnchorY = 0.72f;  // fraction of height, lower ar
 constexpr float kJoystickRadiusFraction = 0.11f; // of min(w, h)
 constexpr float kJoystickCaptureFactor = 1.5f;   // grab zone = 1.5x base
 
-// Action button cluster (bottom-right arc, MikanEngine RenderTouchControls
-// layout).  Attack is the lower-right anchor; Jump/Sprint/Crouch sit outside
-// it so the four actions keep the same meaning in both RHI paths.
-constexpr float kActionButtonReferenceHeight = 1080.0f;
-constexpr float kActionButtonMinScale = 0.70f;
-constexpr float kActionButtonMaxScale = 1.0f;
-constexpr float kActionButtonRadiusAtReference = 84.0f;
-constexpr float kActionButtonRingPadding = 5.0f;
+// Action geometry is shared with the HUD and layout regression tests.
 
 // Per-event clamps from MikanEngine InputController: a lost sample or a torn
 // batch must never teleport the camera or explode the zoom.
@@ -35,32 +28,16 @@ void TouchController::Relayout(float width, float height)
     baseRadius_ = kJoystickRadiusFraction *
         (width_ < height_ ? width_ : height_);
     knobRadius_ = baseRadius_ * 0.55f;
-    baseX_ = width_ * kJoystickScreenAnchorX;
-    baseY_ = height_ * kJoystickScreenAnchorY;
     if (!stickActive_) {
+        baseX_ = width_ * kJoystickScreenAnchorX;
+        baseY_ = height_ * kJoystickScreenAnchorY;
         knobX_ = baseX_;
         knobY_ = baseY_;
     }
-    float layoutScale = height_ / kActionButtonReferenceHeight;
-    layoutScale = layoutScale < kActionButtonMinScale ? kActionButtonMinScale : layoutScale;
-    layoutScale = layoutScale > kActionButtonMaxScale ? kActionButtonMaxScale : layoutScale;
-    const float minRightInset = 96.0f * layoutScale;
-    float safeRightInset = width_ * 0.08f;
-    if (safeRightInset < minRightInset) {
-        safeRightInset = minRightInset;
+    for(int i=0;i<rhi::CameraInput::kActionButtonCount;++i){
+        auto b=gameplay::ActionButton(i,width_,height_);
+        actionBtnX_[i]=b.x;actionBtnY_[i]=b.y;actionBtnRadius_[i]=b.r;
     }
-    actionBtnRadius_ = kActionButtonRadiusAtReference * layoutScale;
-    const float rightColumnX = width_ - safeRightInset - actionBtnRadius_
-        - kActionButtonRingPadding * layoutScale;
-    const float leftColumnX = rightColumnX - 200.0f * layoutScale;
-    actionBtnX_[0] = rightColumnX;  // Attack: bottom-right primary action.
-    actionBtnY_[0] = height_ - 180.0f * layoutScale;
-    actionBtnX_[1] = leftColumnX;   // Jump: outside Attack, lower-left.
-    actionBtnY_[1] = height_ - 120.0f * layoutScale;
-    actionBtnX_[2] = leftColumnX;   // Sprint: outside Attack, upper-left.
-    actionBtnY_[2] = height_ - 320.0f * layoutScale;
-    actionBtnX_[3] = rightColumnX;  // Crouch: outside Attack, upper-right.
-    actionBtnY_[3] = height_ - 380.0f * layoutScale;
 }
 
 void TouchController::SetViewport(float width, float height)
@@ -242,6 +219,7 @@ void TouchController::HandleEvent(const SDL_Event& event, float width, float hei
             if (menuBtnFinger_ == static_cast<SDL_FingerID>(-1) &&
                 (gameplay::HitPistolButton(x,y,width_,height_,weaponEquipped_,weaponAvailable_) >= 0 ||
                  gameplay::HitPotionButton(x,y,width_,height_) ||
+                 (swordAvailable_ && gameplay::HitSwordButton(x,y,width_,height_)) ||
                  (chestPrompt_ && gameplay::HitChestButton(x,y,width_,height_)))) {
                 menuBtnFinger_=finger;
                 return;
@@ -276,7 +254,7 @@ void TouchController::HandleEvent(const SDL_Event& event, float width, float hei
                 }
                 const float dx = x - actionBtnX_[i];
                 const float dy = y - actionBtnY_[i];
-                const float r = actionBtnRadius_;
+                const float r = actionBtnRadius_[i];
                 if (dx * dx + dy * dy <= r * r) {
                     actionBtnFinger_[i] = finger;
                     actionBtnHeld_[i] = true;
@@ -431,6 +409,7 @@ void TouchController::HandleEvent(const SDL_Event& event, float width, float hei
     if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT) {
         if ((gameplay::HitPistolButton(event.button.x,event.button.y,width_,height_,weaponEquipped_,weaponAvailable_)>=0 ||
              gameplay::HitPotionButton(event.button.x,event.button.y,width_,height_) ||
+             (swordAvailable_ && gameplay::HitSwordButton(event.button.x,event.button.y,width_,height_)) ||
              (chestPrompt_ && gameplay::HitChestButton(event.button.x,event.button.y,width_,height_)))) {
             tapPending_=true;tapX_=event.button.x;tapY_=event.button.y;return;
         }
@@ -498,10 +477,10 @@ rhi::CameraInput TouchController::FrameInput()
     for (int i = 0; i < rhi::CameraInput::kActionButtonCount; ++i) {
         input.actionButtonX[i] = actionBtnX_[i];
         input.actionButtonY[i] = actionBtnY_[i];
+        input.actionButtonRadius[i] = actionBtnRadius_[i];
         // Both renderers use this level for speed, animation and highlighting.
         input.actionButtonHeld[i] = i == 2 ? sprintEnabled_ : actionBtnHeld_[i];
     }
-    input.actionButtonRadius = actionBtnRadius_;
     // Edge-triggered presses queued since the last frame; the renderer
     // consumes them exactly once per DrawOnce.
     input.actionButtonPressedMask = actionBtnPressedMask_;

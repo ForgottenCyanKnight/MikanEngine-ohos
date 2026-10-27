@@ -74,10 +74,12 @@ public:
     void Shutdown();
     bool IsReady() const;
     bool SetStaticSceneColliders(const std::vector<scene::StaticBoxCollider>& colliders);
-    bool SetTerrainColliders(const scene::Definition& definition);
+    bool SetTerrainColliders(const scene::Definition& definition, const std::string& cacheKey = {});
+    bool PrepareTerrainColliders(const scene::Definition& definition, const std::string& cacheKey);
 
     void Reset(float playerX, float playerY, float playerZ,
                float enemyX, float enemyY, float enemyZ);
+    void RespawnPlayer(float x,float feetY,float z);
 
     void MovePlayer(float desiredVelocityX, float desiredVelocityZ,
                     float deltaSeconds, bool jumpPressed);
@@ -88,9 +90,15 @@ public:
                    float deltaSeconds);
 
     float RaycastWorld(float x,float y,float z,float dx,float dy,float dz,float distance) const;
+    float SweepCamera(float x, float y, float z, float dx, float dy, float dz,
+                      float distance, float radius) const;
 
     CharacterState GetPlayerState() const;
     CharacterState GetEnemyState() const;
+    bool GetWorkshopTransform(std::uint32_t entityId, scene::Transform& transform) const;
+    struct WorkshopState { bool enabled=false, platePressed=false, gateOpen=false; float liftHeight=0; };
+    WorkshopState GetWorkshopState() const;
+    void RestoreGateProgress(bool open);
 
 private:
     struct Impl;

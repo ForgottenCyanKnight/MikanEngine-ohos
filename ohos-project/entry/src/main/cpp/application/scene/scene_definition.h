@@ -155,11 +155,51 @@ struct WaterSurface {
     bool enabled = false;
     float height = -2.6f;
     float size = 128.0f;
+    Vec3 center{}; // X/Z centre; height still controls the water plane.
+    Vec3 halfExtents{}; // Zero X/Z keeps the original square size contract.
     float roughness = 0.08f;
     Vec3 color{0.035f, 0.18f, 0.22f}; // sRGB body tint
 };
 
+struct Portal {
+    std::string target;
+    std::string label;
+    Vec3 position{};
+    float radius = 0.9f;
+    Vec3 color{0.08f, 0.85f, 0.4f};
+    float opacity = 0.32f;
+};
+
+struct CourseCheckpoint {
+    Vec3 spawn{}; // Render origin, as with playerSpawn.
+    Vec3 halfExtents{1, 0.2f, 1}; // Grounded activation area around spawn.
+};
+
+struct ParkourCourse {
+    bool enabled = false;
+    float fallY = 0;
+    std::vector<CourseCheckpoint> checkpoints; // Start, rest stops, finish.
+};
+
 struct Definition {
+    std::string sourcePath; // Runtime identity, set by the rawfile loader.
+    // Optional runtime extension; absent fields preserve the original demo.
+    Vec3 playerSpawn{}; // Render-model origin in runtime coordinates.
+    bool enemyEnabled = true;
+    bool demoPropsEnabled = true;
+    bool groundEnabled = true;
+    std::vector<Portal> portals;
+    std::vector<Vec3> savePoints; // Safe grounded render-origin positions.
+    ParkourCourse parkour{};
+    // Optional workshop: three cube entities become live Jolt bodies.
+    struct Workshop {
+        bool enabled = false;
+        std::uint32_t crateId = kNoParent, gateId = kNoParent, liftId = kNoParent;
+        Vec3 plate{};
+        float liftTravel = 4.0f;
+        struct MovingPlatform { std::uint32_t entityId=kNoParent; Vec3 travel{}; float period=12; };
+        std::vector<MovingPlatform> movingPlatforms;
+    } workshop;
     WaterSurface water{};
     int formatVersion = 0;
     std::string game;

@@ -1,3 +1,6 @@
+#include "../gameplay/parkour_course.h"
+#include "../gameplay/save_store.h"
+#include "../camera/camera_collision.h"
 #include "../inventory_ui.h"
 #include "../shop_ui.h"
 #include "../settings_ui.h"
@@ -34,6 +37,7 @@
 #include "../gameplay_lights.h"
 #include "../enemy_activity.h"
 #include "../weapon_gameplay.h"
+#include "../animation/pose_transition.h"
 #include "../physics/jolt_gameplay_physics.h"
 #include "../terrain/frustum_culling.h"
 #include "../scene/scene_definition.h"
@@ -59,11 +63,13 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <map>
 #include <string>
 #include <vector>
 
 extern "C" int OHOS_ReadRawFile(const char* path, void** data, size_t* size);
 extern "C" void OHOS_FreeRawFile(void* data);
+extern "C" const char* OHOS_GetSaveDirectory();
 
 namespace {
 
@@ -1226,6 +1232,43 @@ constexpr GLsizei kShadowMapSize = 2048;
 // EXT_color_buffer_float, completeness-checked by actually attaching.
 constexpr GLenum kHdrFormats[] = {GL_R11F_G11F_B10F, GL_RGBA16F};
 
+// World-space, two-sided translucent portal. Manual opaque-depth rejection
+// keeps characters and the frame in front; HDR radiance feeds the bloom chain.
+const char* const kPortalFragmentSource = R"(#version 300 es
+precision highp float;
+precision highp sampler2D;
+uniform sampler2D sceneDepth;
+uniform mat4 inverseViewProjection;
+uniform vec3 cameraPosition;
+uniform vec3 portalCenter;
+uniform vec4 portalTint;
+uniform float portalTime;
+uniform int ldrOutput;
+in vec2 vUV;
+out vec4 outColor;
+void main() {
+    vec4 farH = inverseViewProjection * vec4(vUV * 2.0 - 1.0, 1.0, 1.0);
+    vec3 direction = normalize(farH.xyz / farH.w - cameraPosition);
+    if (abs(direction.z) < 0.00001) discard;
+    float distanceToPlane = (portalCenter.z - cameraPosition.z) / direction.z;
+    if (distanceToPlane <= 0.0) discard;
+    vec3 world = cameraPosition + direction * distanceToPlane;
+    vec2 q = (world.xy - portalCenter.xy) / vec2(0.94, 1.4);
+    if (any(greaterThan(abs(q), vec2(1.0)))) discard;
+    float depth = texture(sceneDepth, vUV).r;
+    vec4 opaqueH = inverseViewProjection * vec4(vUV * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+    vec3 opaque = opaqueH.xyz / opaqueH.w;
+    if (depth < 0.999999 && dot(opaque - cameraPosition, direction) < distanceToPlane - 0.015) discard;
+    float edge = pow(max(abs(q.x), abs(q.y)), 10.0);
+    float ripple = 0.5 + 0.5 * sin(q.y * 14.0 + sin(q.x * 8.0 + portalTime * 0.9) * 0.6 - portalTime * 1.4);
+    float pulse = 1.0 + 0.05 * sin(portalTime * 1.6);
+    vec3 radiance = portalTint.rgb * (2.4 + edge * 5.0 + 0.5 * pow(ripple, 6.0)) * pulse;
+    if (ldrOutput != 0) radiance = pow(radiance / (1.0 + radiance), vec3(1.0 / 2.2));
+    float alpha = clamp(portalTint.a * (0.75 + ripple * 0.3 + edge * 0.85), 0.0, 0.8);
+    outColor = vec4(radiance, alpha);
+}
+)";
+
 const char* const kWaterFragmentSource = R"(#version 300 es
 precision highp float;
 precision highp int;
@@ -1238,6 +1281,7 @@ uniform sampler2D waterNormalMap;
 uniform mat4 waterInvViewProj;
 uniform vec4 waterCamera;
 uniform vec4 waterParams;
+uniform vec4 waterBounds; // centre X/Z, half extent X/Z
 uniform vec4 waterColor;
 uniform vec4 waterMuzzle;
 uniform int waterLdr;
@@ -1371,9 +1415,9 @@ void main()
     float bottomDistance = depth >= 0.99999 ? 10000.0 : max(dot(bottom - camera, ray), 0.0);
     float surfaceDistance = abs(ray.y) > 0.00001 ? (WATER_PARAMS.x - camera.y) / ray.y : -1.0;
     vec3 surface = camera + ray * max(surfaceDistance, 0.0);
-    bool insideSea = abs(surface.x) <= WATER_PARAMS.y && abs(surface.z) <= WATER_PARAMS.y;
+    bool insideSea = all(lessThanEqual(abs(surface.xz-waterBounds.xy),waterBounds.zw));
     bool hitsWater = WATER_CAMERA.w < 1.5 && insideSea && surfaceDistance > 0.0 && surfaceDistance < bottomDistance - 0.001;
-    bool underwater = WATER_CAMERA.w < 1.5 && camera.y < WATER_PARAMS.x && abs(camera.x) <= WATER_PARAMS.y && abs(camera.z) <= WATER_PARAMS.y;
+    bool underwater = WATER_CAMERA.w < 1.5 && camera.y < WATER_PARAMS.x && all(lessThanEqual(abs(camera.xz-waterBounds.xy),waterBounds.zw));
     vec2 surfaceDx = dFdx(surface.xz);
     vec2 surfaceDy = dFdy(surface.xz);
     if (!hitsWater && !underwater) {
@@ -2542,6 +2586,14 @@ struct GlesSceneModel {
     ohos_model::AnimationClip openClip{};
 };
 
+// Inactive scene terrain stays resident; model assets are shared by rawfile path.
+struct GlesTerrainCache {
+    std::vector<GlesMesh> meshes;
+    std::vector<GLuint> textures;
+    std::vector<ohos_model::Material> materials;
+    gameplay::MinimapTerrain minimap;
+};
+
 // Treasure chest interaction constants (kChestModelPath is referenced by the
 // scene JSON entity and by the proximity/interaction logic below).
 static const char* const kChestModelPath = "models/Chest/chest.glb";
@@ -2691,7 +2743,7 @@ public:
     // consumed by UpdateSceneUniforms (the camera state lives there).
     void PushCameraInput(const rhi::CameraInput& input) override
     {
-        cameraInput_ = input;
+        cameraInput_ = uiScreen_==rhi::UiScreen::Gameplay && playerHealth_<=0 ? rhi::CameraInput{} : input;
     }
 
     void SetPhysicsWorld(physics::JoltGameplayPhysics* world) override
@@ -2703,6 +2755,149 @@ public:
     void SetSceneDefinition(const scene::Definition& definition) override
     {
         sceneDefinition_ = &definition;
+        if (activeSceneKey_.empty()) activeSceneKey_ = definition.sourcePath;
+    }
+
+    Mat4 SceneEntityMatrix(const scene::Entity& entity) const
+    {
+        scene::Transform transform;
+        if (physicsWorld_ && physicsWorld_->GetWorkshopTransform(entity.id,transform)) {
+            Mat4 matrix{}; scene::BuildModelMatrix(transform,matrix.value); return matrix;
+        }
+        return Mat4FromSceneEntity(*sceneDefinition_,entity);
+    }
+
+    std::string ConsumeSceneRequest() override
+    {
+        if (!saveSceneRequest_.empty()) { auto path=saveSceneRequest_; saveSceneRequest_.clear(); return path; }
+        if (uiScreen_ != rhi::UiScreen::Gameplay || playerHealth_ <= 0 ||
+            sceneDefinition_ == nullptr ||
+            SDL_GetTicks() < portalReadyTicks_) return {};
+        for (const auto& portal : sceneDefinition_->portals) {
+            const auto& p = portal.position;
+            const float dx = playerX_ - p.x, dz = playerZ_ - p.z;
+            if (dx * dx + dz * dz <= portal.radius * portal.radius &&
+                std::fabs(playerY_ - p.y) <= 1.5f) {
+                portalReadyTicks_ = SDL_GetTicks() + 2500;
+                return portal.target;
+            }
+        }
+        return {};
+    }
+
+    bool SupportsScenePreload() const override { return true; }
+    void SceneRequestFailed() override {
+        if (!pendingSaveLoad_) return;
+        pendingSaveLoad_=false;saveSelection_=true;uiScreen_=rhi::UiScreen::MainMenu;
+        SaveMessage("读取失败请重试");
+    }
+
+    rhi::ScenePreloadStatus PreloadSceneStep(const scene::Definition& definition) override
+    {
+        const std::string& key = definition.sourcePath;
+        if (key == activeSceneKey_ || terrainCache_.count(key)) return {1, true, {}};
+        if (preloadSceneKey_ != key) {
+            preloadSceneKey_ = key;
+            preloadPaths_.clear();
+            preloadAssetIndex_ = 0;
+            for (const auto& entity : definition.entities) {
+                if (entity.importAsStaticModel && !FindSceneModel(entity.modelPath) &&
+                    std::find(preloadPaths_.begin(), preloadPaths_.end(), entity.modelPath) == preloadPaths_.end())
+                    preloadPaths_.push_back(entity.modelPath);
+            }
+        }
+        const float total = static_cast<float>(preloadPaths_.size() + 1);
+        if (preloadAssetIndex_ < preloadPaths_.size()) {
+            const auto& path = preloadPaths_[preloadAssetIndex_];
+            const Uint64 start = SDL_GetTicks();
+            if (!LoadSceneModel(path)) return {preloadAssetIndex_ / total, false, "Model load failed: " + path};
+            ++preloadAssetIndex_;
+            SDL_Log("SDL3_SCENE stage=preload_asset path=%s ms=%llu", path.c_str(),
+                static_cast<unsigned long long>(SDL_GetTicks() - start));
+            return {preloadAssetIndex_ / total, false, {}};
+        }
+        ohos_model::Model model;
+        std::string error;
+        if (!terrain::BuildModel(definition, physics::kGroundCollider.centerY +
+                physics::kGroundCollider.halfExtentY, model, error)) return {preloadAssetIndex_ / total, false, error};
+        GlesTerrainCache prepared;
+        prepared.minimap.Build(model);
+        prepared.materials = model.materials;
+        LoadStaticTextures(model, prepared.textures);
+        BuildStaticMeshes(model, prepared.meshes);
+        terrainCache_.emplace(key, std::move(prepared));
+        SDL_Log("SDL3_SCENE stage=gpu_preloaded game=%s assets=%zu", key.c_str(), preloadPaths_.size());
+        return {1, true, {}};
+    }
+
+    bool DrawLoadingScreen(float progress, const char* label) override
+    {
+        if (!context_ || !width_ || !height_) return false;
+        const bool glass = glassEnabled_;
+        const float opacity = uiOpacity_;
+        glassEnabled_ = false;
+        uiOpacity_ = 1;
+        uiBatch_.clear(); textBatch_.clear();
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glViewport(0, 0, width_, height_);
+        glDisable(GL_SCISSOR_TEST);
+        glClearColor(.025f, .045f, .075f, 1);
+        glClear(GL_COLOR_BUFFER_BIT);
+        const float w = float(width_), h = float(height_), mn = std::min(w, h);
+        const float half = std::min(w * .34f, mn * .55f), hh = mn * .009f;
+        const float track[4] = {.12f, .19f, .25f, 1};
+        const float fill[4] = {.22f, .83f, .74f, 1};
+        const float white[4] = {.93f, .97f, 1, 1};
+        const float muted[4] = {.57f, .70f, .78f, 1};
+        progress = std::clamp(progress, 0.0f, 1.0f);
+        DrawMenuRect({w*.5f, h*.58f, half, hh, hh}, track);
+        if (progress > 0) DrawMenuRect({w*.5f-half+half*progress, h*.58f,
+            half*progress, hh, std::min(hh, half*progress)}, fill);
+        DrawTextCentered("MikanEngine", w*.5f, h*.40f, mn*.075f, white, false);
+        DrawTextCentered("PREPARING SCENES", w*.5f, h*.49f, mn*.026f, muted, false);
+        char percent[16]; std::snprintf(percent, sizeof(percent), "%d%%", int(progress*100+.5f));
+        DrawTextCentered(percent, w*.5f, h*.64f, mn*.035f, white, false);
+        DrawTextCentered(label, w*.5f, h*.70f, mn*.021f, muted, false);
+        UiFlushOverlay(); UiFlushText();
+        glEnable(GL_DEPTH_TEST); glDisable(GL_BLEND);
+        glClearColor(.05f, .06f, .09f, 1);
+        SDL_GL_SwapWindow(window_);
+        glassEnabled_ = glass;
+        uiOpacity_ = opacity;
+        return true;
+    }
+
+    bool ReloadScene(const scene::Definition& definition) override
+    {
+        const auto found = terrainCache_.find(definition.sourcePath);
+        if (found == terrainCache_.end()) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "SDL3_SCENE stage=reload_failed reason=not_preloaded");
+            return false;
+        }
+        GlesTerrainCache old;
+        old.meshes.swap(terrainMeshes_); old.textures.swap(terrainTextures_);
+        old.materials.swap(terrainMaterials_); old.minimap = minimapTerrain_;
+        terrainCache_.emplace(activeSceneKey_, std::move(old));
+        auto& next = found->second;
+        terrainMeshes_.swap(next.meshes); terrainTextures_.swap(next.textures);
+        terrainMaterials_.swap(next.materials); minimapTerrain_ = next.minimap;
+        terrainCache_.erase(found);
+        activeSceneKey_ = definition.sourcePath;
+        sceneDefinition_ = &definition;
+        minimapFrameTick_ = 0;
+        const auto pistol = pistol_;
+        const auto sword = sword_;
+        const float health = playerHealth_;
+        ResetGameplayScene();
+        pistol_ = pistol;
+        sword_ = sword;
+        playerHealth_ = health;
+        chestOpenStartTicks_ = 0;
+        if (pendingSaveLoad_) ApplySave();
+        portalReadyTicks_ = SDL_GetTicks() + 2500;
+        SDL_Log("SDL3_SCENE stage=render_reloaded game=%s terrain_meshes=%zu scene_models=%zu",
+            definition.game.c_str(), terrainMeshes_.size(), sceneModels_.size());
+        return true;
     }
 
     void OnApplicationBackground() override
@@ -2730,9 +2925,10 @@ public:
         return true;
     }
 
-    bool WeaponAvailable() const override {return inventory_.HasPistol();}
+    bool WeaponAvailable() const override {return inventory_.HasPistol()||inventory_.PistolInBag();}
+    bool SwordAvailable() const override {return inventory_.HasSword()||inventory_.SwordInBag();}
     bool WeaponEquipped() const override { return pistol_.equipped; }
-    bool ChestPromptActive() const override { return !ChestOpened() && ChestNear(); }
+    bool ChestPromptActive() const override { return NearSavePoint()!=nullptr || (!ChestOpened() && ChestNear()); }
 
     rhi::UiScreen CurrentScreen() const override
     {
@@ -3122,6 +3318,112 @@ public:
         }
     }
 
+
+    struct MenuButtonPos { float cx; float cy; float hw; float hh; float r; };
+    void EnsureSaveStore() {
+        if (saveStoreReady_) return;
+        const char* root=OHOS_GetSaveDirectory();
+        if(root && *root) { saveRoot_=std::string(root)+"/"; saveStore_.Open(saveRoot_); }
+        else SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"SDL3_SAVE stage=storage_unavailable");
+        saveStoreReady_=true;
+    }
+    void SaveMessage(const char* text) { saveMessage_=text;saveMessageUntil_=SDL_GetTicks()+3500; }
+    const scene::Vec3* NearSavePoint() const {
+        if(!sceneDefinition_ || uiScreen_!=rhi::UiScreen::Gameplay || playerHealth_<=0) return nullptr;
+        for(const auto& p:sceneDefinition_->savePoints) {
+            float dx=p.x-playerX_,dz=p.z-playerZ_;
+            if(dx*dx+dz*dz<=2.25f && std::fabs(p.y-playerY_)<.45f &&
+               (!physicsWorld_ || physicsWorld_->GetPlayerState().grounded)) return &p;
+        }
+        return nullptr;
+    }
+    saves::Record CaptureSave(const scene::Vec3& point) {
+        saves::Record r;r.id=activeSaveId_;r.savedAt=std::time(nullptr);r.scene=activeSceneKey_;
+        r.x=point.x;r.y=point.y;r.z=point.z;r.yaw=playerYaw_;r.health=playerHealth_;
+        r.gold=gold_;r.inventory=inventory_;r.ammo=pistol_.ammo;r.reserve=pistol_.reserve;
+        r.weapon=pistol_.equipped?0:(sword_.drawn?1:-1);
+        r.checkpoint=int(parkourProgress_.checkpoint);r.falls=parkourProgress_.falls;r.seconds=parkourProgress_.seconds;
+        r.gateOpen=physicsWorld_ && physicsWorld_->GetWorkshopState().gateOpen;
+        r.chestOpened=ChestOpened();r.enemyDead=sceneDefinition_->enemyEnabled && !enemyAlive_;
+        return r;
+    }
+    void SaveAtPoint() {
+        const auto* p=NearSavePoint();if(!p || !activeSaveId_)return;
+        auto record=CaptureSave(*p);
+        if(saveStore_.Put(record)) {SaveMessage("存档成功");SDL_Log("SDL3_SAVE stage=saved id=%u scene=%s",record.id,record.scene.c_str());}
+        else SaveMessage("存档失败请重试");
+    }
+    void OpenSaveList() { EnsureSaveStore();if(!saveRoot_.empty())saveStore_.Open(saveRoot_);savePage_=0;saveSelection_=true; }
+    void BeginSaveLoad(const saves::Record& record) {
+        pendingSave_=record;pendingSaveLoad_=true;saveSelection_=false;
+        if(record.scene==activeSceneKey_) { ResetGameplayScene();ApplySave(); }
+        else {saveSceneRequest_=record.scene;uiScreen_=rhi::UiScreen::MainMenu;}
+    }
+    void ApplySave() {
+        const auto r=pendingSave_;pendingSaveLoad_=false;activeSaveId_=r.id;
+        playerX_=r.x;playerY_=r.y;playerZ_=r.z;playerYaw_=r.yaw;playerHealth_=r.health;
+        gold_=r.gold;inventory_=r.inventory;pistol_.ammo=r.ammo;pistol_.reserve=r.reserve;
+        pistol_.equipped=r.weapon==0 && inventory_.HasPistol();sword_.drawn=r.weapon==1 && inventory_.HasSword();
+        parkourProgress_.checkpoint=sceneDefinition_->parkour.checkpoints.empty()?0:
+            std::min(std::size_t(r.checkpoint),sceneDefinition_->parkour.checkpoints.size()-1);
+        parkourProgress_.falls=r.falls;parkourProgress_.seconds=r.seconds;
+        parkourProgress_.finished=sceneDefinition_->parkour.enabled && parkourProgress_.checkpoint+1==sceneDefinition_->parkour.checkpoints.size();
+        chestOpenStartTicks_=r.chestOpened?SDL_GetTicks():0;
+        if(r.enemyDead) {enemyAlive_=enemyVisible_=false;enemyHealth_=0;}
+        if(physicsWorld_ && physicsWorld_->IsReady()) {
+            physicsWorld_->RestoreGateProgress(r.gateOpen);
+            physicsWorld_->RespawnPlayer(playerX_,playerY_-physics::kPlayerVisualOriginOffset,playerZ_);
+            physicsWorld_->SetEnemyCollisionEnabled(enemyAlive_);
+        }
+        camPanX_=playerX_;camPanY_=playerY_+camera::kHeadFocusOffset;camPanZ_=playerZ_;
+        cameraObstruction_.Reset();portalReadyTicks_=SDL_GetTicks()+2500;
+        uiScreen_=rhi::UiScreen::Gameplay;cameraInput_={};
+        SDL_Log("SDL3_SAVE stage=loaded id=%u scene=%s",r.id,r.scene.c_str());
+    }
+    MenuButtonPos SaveButton(int i) const {
+        float w=float(width_),h=float(height_),m=std::min(w,h);
+        if(i<3) return {w*.5f,h*(.31f+.16f*i),m*.48f,m*.065f,m*.016f};
+        if(i==3)return {w*.5f,h*.83f,m*.24f,m*.052f,m*.024f};
+        if(i==4)return {m*.12f,m*.09f,m*.08f,m*.035f,m*.014f};
+        return {w*.5f+(i==5?-1:1)*m*.35f,h*.83f,m*.07f,m*.042f,m*.014f};
+    }
+    void HandleSaveTap(float x,float y) {
+        if(pendingSaveLoad_)return;
+        if(HitRect(x,y,SaveButton(4))) {saveSelection_=false;return;}
+        if(HitRect(x,y,SaveButton(5))) {if(savePage_>0)--savePage_;return;}
+        if(HitRect(x,y,SaveButton(6))) {if((savePage_+1)*3<int(saveStore_.records.size()))++savePage_;return;}
+        if(HitRect(x,y,SaveButton(3))) {
+            saves::Record fresh;fresh.id=saveStore_.NextId();fresh.savedAt=std::time(nullptr);
+            // The hub's render origin is the original gameplay spawn.
+            fresh.x=gameplay::kPlayerSpawnX;fresh.z=gameplay::kPlayerSpawnZ;
+            if(!saveStore_.Put(fresh)) {SaveMessage("存档失败请重试");return;}
+            BeginSaveLoad(fresh);return;
+        }
+        for(int i=0;i<3;++i) {int at=savePage_*3+i;if(at<int(saveStore_.records.size())&&HitRect(x,y,SaveButton(i))){BeginSaveLoad(saveStore_.records[at]);return;}}
+    }
+    void DrawSaveList() {
+        float w=float(width_),h=float(height_),m=std::min(w,h);
+        const float white[4]={1,1,1,.96f},panel[4]={.07f,.13f,.21f,.85f},accent[4]={.12f,.42f,.55f,.95f};
+        DrawTextCentered("选择存档",w*.5f,h*.12f,m*.054f,white);
+        if(saveStore_.records.empty())DrawTextCentered("没有存档请创建新游戏",w*.5f,h*.43f,m*.035f,white);
+        for(int i=0;i<3;++i) {int at=savePage_*3+i;if(at>=int(saveStore_.records.size()))break;
+            const auto& r=saveStore_.records[at];auto b=SaveButton(i);DrawMenuRect(b,panel);
+            const char* place=r.scene=="scenes/main.json"?"主场景":(r.scene=="scenes/forest_test.json"?"森林场景":"跑酷场景");
+            std::string title="存档 "+std::to_string(r.id)+"  "+place;
+            DrawTextCentered(title.c_str(),b.cx,b.cy-b.hh*.4f,m*.029f,white);
+            std::string date="最后保存 "+saves::Date(r.savedAt);
+            DrawTextCentered(date.c_str(),b.cx,b.cy+b.hh*.45f,m*.024f,white);
+        }
+        for(int i=3;i<=6;++i) {
+            if((i==5&&savePage_==0)||(i==6&&(savePage_+1)*3>=int(saveStore_.records.size())))continue;
+            auto b=SaveButton(i);DrawMenuRect(b,i==3?accent:panel);
+            DrawTextCentered(i==3?"创建新游戏":(i==4?"返回":(i==5?"上页":"下页")),b.cx,b.cy,m*.027f,white);
+        }
+        std::string page=std::to_string(savePage_+1)+" / "+std::to_string(std::max(1,(int(saveStore_.records.size())+2)/3));
+        DrawTextCentered(page.c_str(),w*.5f,h*.94f,m*.023f,white);
+        if(SDL_GetTicks()<saveMessageUntil_)DrawTextCentered(saveMessage_.c_str(),w*.5f,h*.72f,m*.025f,white);
+    }
+
     // ---- main menu / settings ------------------------------------------------
     // The renderer owns menu layout, drawing and hit-testing; the touch layer
     // just forwards raw taps (see CameraInput::menuTapEdge).  Buttons are
@@ -3129,7 +3431,6 @@ public:
 
     // Axis-aligned rounded rectangle, centre (cx, cy), half extent (hw, hh),
     // corner radius r (r == hh gives a pill).
-    struct MenuButtonPos { float cx; float cy; float hw; float hh; float r; };
 
     // MainMenu: 0 = START, 1 = SETTINGS; settings screens share settings_ui
     // (0 = close, 1..8 = options, 9 = return); Gameplay: 0 = SET, 1 = BAG;
@@ -3214,7 +3515,8 @@ public:
             x, y, static_cast<int>(uiScreen_), width_, height_);
         if (uiScreen_ == rhi::UiScreen::GameplayRetry) {
             if (HitRect(x, y, MenuButtonLayout(0))) {
-                ResetGameplayScene();
+                const auto it=std::find_if(saveStore_.records.begin(),saveStore_.records.end(),[&](const saves::Record& r){return r.id==activeSaveId_;});
+                if(it!=saveStore_.records.end()) BeginSaveLoad(*it); else ResetGameplayScene();
                 SDL_Log("SDL3_GLES stage=player_retry");
             } else if (HitRect(x, y, MenuButtonLayout(5))) {
                 uiScreen_ = rhi::UiScreen::MainMenu;
@@ -3224,6 +3526,7 @@ public:
         }
         if (uiScreen_ == rhi::UiScreen::Gameplay) {
             if(gameplay::HitPotionButton(x,y,static_cast<float>(width_),static_cast<float>(height_))){inventory_.UsePotion(playerHealth_,playerMaxHealth_);return;}
+            if (NearSavePoint() && HitRect(x,y,ChestButtonRect())) { SaveAtPoint(); return; }
             // Chest interaction: claim the tap before gameplay controls so a
             // press on the prompt never doubles as a camera drag.
             if (!ChestOpened() && ChestNear() && HitRect(x, y, ChestButtonRect())) {
@@ -3233,8 +3536,13 @@ public:
                 return;
             }
             const int weaponButton = gameplay::HitPistolButton(x,y,
-                static_cast<float>(width_),static_cast<float>(height_),pistol_.equipped,inventory_.HasPistol());
-            if (weaponButton>=0) { pistol_.Button(weaponButton); return; }
+                static_cast<float>(width_),static_cast<float>(height_),pistol_.equipped,WeaponAvailable());
+            if (SwordAvailable() && gameplay::HitSwordButton(x,y,static_cast<float>(width_),static_cast<float>(height_))) {
+                if(sword_.drawn)sword_.Holster();
+                else {inventory_.EquipSword();sword_.drawn=inventory_.HasSword();pistol_.Holster();}
+                return;
+            }
+            if (weaponButton>=0) { if(weaponButton==0){inventory_.EquipPistol();sword_.Holster();}pistol_.Button(weaponButton); return; }
             // Gameplay exposes one larger SET button plus the BAG shortcut.
             // Returning to the title is intentionally handled inside the
             // settings sheet.
@@ -3300,7 +3608,7 @@ public:
                 SDL_Log("SDL3_GLES stage=inventory_close");
                 return;
             }
-            for (int slot = 1; slot <= 3; ++slot) {
+            for (int slot = 1; slot <= inventory::kSlotCount; ++slot) {
                 if (HitRect(x, y, MenuButtonLayout(slot))) {
                     inventory_.TapEquip(slot - 1);
                     SDL_Log("SDL3_GLES stage=inventory_unequip slot=%d", slot - 1);
@@ -3338,9 +3646,10 @@ public:
             }return;
         }
         if (uiScreen_ == rhi::UiScreen::MainMenu) {
+            if (saveSelection_) { HandleSaveTap(x,y); return; }
             if (HitRect(x, y, MenuButtonLayout(0))) {
-                ResetGameplayScene();
-                SDL_Log("SDL3_GLES stage=menu_start");
+                OpenSaveList();
+                SDL_Log("SDL3_GLES stage=save_list_open");
             } else if (HitRect(x, y, MenuButtonLayout(1))) {
                 uiScreen_ = rhi::UiScreen::Settings;
                 SDL_Log("SDL3_GLES stage=menu_settings");
@@ -3574,8 +3883,8 @@ public:
         const float mn = w < h ? w : h;
         const float barHalfWidth = mn * 0.145f;
         const float barHalfHeight = mn * 0.018f;
-        const float barCenterX = w * 0.5f;
-        const float barCenterY = h - mn * 0.060f;
+        const float barCenterX = mn * .46f;
+        const float barCenterY = mn * .085f;
         const float radius = mn * 0.012f;
         const float ratio = std::max(0.0f, std::min(1.0f,
             playerMaxHealth_ > 0.0f ? playerHealth_ / playerMaxHealth_ : 0.0f));
@@ -3681,6 +3990,7 @@ public:
         // below add only a light wash so the animated environment remains visible.
 
         if (uiScreen_ == rhi::UiScreen::MainMenu) {
+            if (saveSelection_) { DrawSaveList(); return; }
             DrawTextCentered("MikanEngine", w * 0.5f, h * 0.20f, mn * 0.105f, white, false);
             DrawTextCentered("基于自研游戏引擎的鸿蒙系统客户端实例", w * 0.5f, h * 0.30f,
                 mn * 0.026f, white);
@@ -3772,13 +4082,13 @@ public:
                 cameraInput_.actionButtonHeld[i] ? 0.25f : 0.36f,
                 (cameraInput_.actionButtonHeld[i] ? 0.70f : 0.55f) * uiOpacity_};
             EmitUiCircle(cameraInput_.actionButtonX[i], cameraInput_.actionButtonY[i],
-                cameraInput_.actionButtonRadius + 5.0f, btnColor);
+                cameraInput_.actionButtonRadius[i] + 5.0f, btnColor);
         }
         // One overlay draw lands all circles; the icons must paint on top.
         UiFlushOverlay();
         for (int i = 0; i < rhi::CameraInput::kActionButtonCount; ++i) {
             DrawActionIcon(i, cameraInput_.actionButtonX[i], cameraInput_.actionButtonY[i],
-                cameraInput_.actionButtonRadius, cameraInput_.actionButtonHeld[i]);
+                cameraInput_.actionButtonRadius[i], cameraInput_.actionButtonHeld[i]);
         }
         DrawFpsText();
         if (settingFps_) {
@@ -3957,6 +4267,8 @@ public:
             cameraInput_.menuTapEdge = false;
         }
         if(!inventory_.HasPistol())pistol_.Holster();
+        if(!inventory_.HasSword())sword_.Holster();
+        attackClip_ = sword_.drawn && swordAttackClip_>=0 ? swordAttackClip_ : punchClip_;
 
         if (!UpdateSceneUniforms()) {
             return false;
@@ -3998,7 +4310,9 @@ public:
             }
             if(pistol_.equipped && pistolPoseReady_ && !playerSwimming_ && playerHealth_>0)
                 DrawShadowMeshList(pistolMeshes_,false,pistolMatrix_);
-            if (!helmetMeshes_.empty()) {
+            if(sword_.drawn && pistolPoseReady_ && !playerSwimming_ && playerHealth_>0)
+                DrawShadowMeshList(swordMeshes_,false,swordMatrix_);
+            if (!helmetMeshes_.empty() && (sceneDefinition_ == nullptr || sceneDefinition_->demoPropsEnabled)) {
                 const float helmetAngle = static_cast<float>(SDL_GetTicks() % 600000U)
                     * 0.001f * 0.8f + 0.5f;
                 const Mat4 helmetTransform = Mat4Multiply(
@@ -4010,7 +4324,7 @@ public:
                 DrawShadowMeshList(helmetMeshes_, false, helmetTransform);
             }
             DrawShadowMeshList(terrainMeshes_, false, Mat4Identity());
-            if (!groundMeshes_.empty()) {
+            if (!groundMeshes_.empty() && (sceneDefinition_ == nullptr || sceneDefinition_->demoPropsEnabled)) {
                 const Mat4 groundTransform = Mat4Multiply(
                     Mat4Translation(physics::kGroundCollider.centerX,
                         physics::kGroundCollider.centerY,
@@ -4021,29 +4335,32 @@ public:
                 DrawShadowMeshList(groundMeshes_, false, groundTransform);
             }
             if (!groundMeshes_.empty() && sceneDefinition_ != nullptr) {
-                const terrain::Bounds cubeBounds = UnionMeshBounds(groundMeshes_);
-                const terrain::Frustum lightFrustum(shadowMatrix_.value, false);
-                for (const scene::Entity& entity : sceneDefinition_->entities) {
-                    if (entity.importAsStaticCube && entity.castShadow) {
-                        const Mat4 entityWorld =
-                            Mat4FromSceneEntity(*sceneDefinition_, entity);
-                        if (!lightFrustum.Intersects(
-                                terrain::TransformBounds(cubeBounds,
-                                    entityWorld.value))) {
-                            continue;
-                        }
-                        DrawShadowMeshList(groundMeshes_, false, entityWorld);
-                    }
-                }
+                std::vector<Mat4> worlds;
+                for (const auto& entity:sceneDefinition_->entities)
+                    if (entity.importAsStaticCube && entity.castShadow) worlds.push_back(SceneEntityMatrix(entity));
+                DrawStaticShadowBatch(groundMeshes_,worlds,UnionMeshBounds(groundMeshes_));
             }
+
             if (sceneDefinition_ != nullptr) {
                 const terrain::Frustum lightFrustum(shadowMatrix_.value, false);
+                std::map<const GlesSceneModel*,std::vector<Mat4>> groups;
+                for (const auto& entity:sceneDefinition_->entities) {
+                    if (!entity.importAsStaticModel || !entity.castShadow) continue;
+                    const auto* asset=FindSceneModel(entity.modelPath);
+                    if (asset && !asset->hasOpenClip) groups[asset].push_back(SceneEntityMatrix(entity));
+                }
+                for (const auto& group:groups) {
+                    const auto* asset=group.first;
+                    DrawStaticShadowBatch(asset->meshes,group.second,
+                        asset->boundsValid ? asset->bounds : UnionMeshBounds(asset->meshes));
+                }
+
                 for (const scene::Entity& entity : sceneDefinition_->entities) {
                     if (!entity.importAsStaticModel || !entity.castShadow) {
                         continue;
                     }
                         const GlesSceneModel* asset = FindSceneModel(entity.modelPath);
-                        if (asset != nullptr) {
+                        if (asset != nullptr && asset->hasOpenClip) {
                             const Mat4 entityWorld =
                                 Mat4FromSceneEntity(*sceneDefinition_, entity);
                             if (asset->boundsValid && !lightFrustum.Intersects(
@@ -4122,7 +4439,7 @@ public:
             // ---- static props: helmet + ground slab.  Same program,
             // skinning off, per-draw modelMvp/modelMatrix in the scene UBO
             // (offsets 128/192 = the two mat4 slots after cubeMvp/skyMvp).
-            if (!helmetMeshes_.empty()) {
+            if (!helmetMeshes_.empty() && (sceneDefinition_ == nullptr || sceneDefinition_->demoPropsEnabled)) {
                 // Turntable spin around its own base position: T * R(t) * S.
                 // The 0.5 initial yaw from LoadHelmetModel becomes the phase.
                 const float helmetAngle = static_cast<float>(SDL_GetTicks() % 600000U) * 0.001f * 0.8f + 0.5f;
@@ -4136,8 +4453,10 @@ public:
             }
             if(pistol_.equipped && pistolPoseReady_ && !playerSwimming_ && playerHealth_>0)
                 DrawStaticMeshList(pistolMeshes_,pistolTextures_,pistolMaterials_,pistolMatrix_);
+            if(sword_.drawn && pistolPoseReady_ && !playerSwimming_ && playerHealth_>0)
+                DrawStaticMeshList(swordMeshes_,swordTextures_,swordMaterials_,swordMatrix_);
             DrawStaticMeshList(terrainMeshes_, terrainTextures_, terrainMaterials_, Mat4Identity());
-            if (!groundMeshes_.empty()) {
+            if (!groundMeshes_.empty() && (sceneDefinition_ == nullptr || sceneDefinition_->demoPropsEnabled)) {
                 // Ground: the Base Model cube stretched into a slab.  Top
                 // surface sits at the character's feet line (y = -0.94):
                 // centre y = -0.94 - half thickness 0.2 = -1.14.
@@ -4156,7 +4475,7 @@ public:
                 for (const scene::Entity& entity : sceneDefinition_->entities) {
                     if (entity.importAsStaticCube) {
                         cubeWorlds.push_back(
-                            Mat4FromSceneEntity(*sceneDefinition_, entity));
+                            SceneEntityMatrix(entity));
                     }
                 }
                 DrawStaticMeshBatch(groundMeshes_, groundTextures_,
@@ -4164,12 +4483,25 @@ public:
             }
             if (sceneDefinition_ != nullptr) {
                 const terrain::Frustum viewFrustum(viewProj_.value, false);
+                std::map<const GlesSceneModel*,std::vector<Mat4>> groups;
+                for (const auto& entity:sceneDefinition_->entities) {
+                    if (!entity.importAsStaticModel) continue;
+                    const auto* asset=FindSceneModel(entity.modelPath);
+                    if (asset && !asset->hasOpenClip) groups[asset].push_back(SceneEntityMatrix(entity));
+                }
+                for (const auto& group:groups) {
+                    const auto* asset=group.first;
+                    const bool foliage=asset->path==kEzTreeGrassModelPath || asset->path==kEzTreeTreeModelPath;
+                    DrawStaticMeshBatch(asset->meshes,asset->textures,asset->materials,group.second,
+                        asset->boundsValid ? asset->bounds : UnionMeshBounds(asset->meshes),foliage);
+                }
+
                 for (const scene::Entity& entity : sceneDefinition_->entities) {
                     if (!entity.importAsStaticModel) {
                         continue;
                     }
                     const GlesSceneModel* asset = FindSceneModel(entity.modelPath);
-                    if (asset != nullptr) {
+                    if (asset != nullptr && asset->hasOpenClip) {
                         const Mat4 entityWorld =
                             Mat4FromSceneEntity(*sceneDefinition_, entity);
                         // Whole-entity rejection: skip every per-mesh texture
@@ -4287,6 +4619,9 @@ public:
             glUniform4f(waterParamsLocation_, water.height, water.size * 0.5f, water.roughness,
                 static_cast<float>(SDL_GetTicks() % 3600000U) * 0.001f);
             glUniform4f(waterColorLocation_, water.color.x, water.color.y, water.color.z, 1.0f);
+            glUniform4f(waterBoundsLocation_,water.center.x,water.center.z,
+                water.halfExtents.x>0 ? water.halfExtents.x : water.size*.5f,
+                water.halfExtents.z>0 ? water.halfExtents.z : water.size*.5f);
             glUniform4f(waterMuzzleLocation_,shotMuzzle_[0],shotMuzzle_[1],shotMuzzle_[2],pistolPoseReady_?pistol_.shotAge:10.f);
             glUniform1i(waterLdrLocation_, hdrPipeline_ ? 0 : 1);
             glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, postColorTex_);
@@ -4301,6 +4636,35 @@ public:
             std::swap(postFbo_, waterFbo_);
             std::swap(postColorTex_, waterColorTex_);
             LogGlErrors("water_transmission_pass");
+        }
+
+        if (renderGameplayScene && sceneDefinition_) {
+          for (const auto& portal : sceneDefinition_->portals) {
+            if (portal.opacity <= 0) continue;
+            const auto& p = portal.position;
+            const auto& color = portal.color;
+            glBindFramebuffer(GL_FRAMEBUFFER, postFbo_);
+            glViewport(0, 0, postWidth_, postHeight_);
+            glDisable(GL_DEPTH_TEST);
+            glDepthMask(GL_FALSE);
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glUseProgram(portalProgram_);
+            glUniformMatrix4fv(portalInverseLocation_, 1, GL_FALSE, invViewProj_.value);
+            glUniform3f(portalCameraLocation_, camPosX_, camPosY_, camPosZ_);
+            glUniform3f(portalCenterLocation_, p.x, p.y + 0.44f, p.z);
+            glUniform4f(portalTintLocation_, color.x, color.y, color.z, portal.opacity);
+            glUniform1f(portalTimeLocation_, float(SDL_GetTicks() % 3600000U) * .001f);
+            glUniform1i(portalLdrLocation_, hdrPipeline_ ? 0 : 1);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, gbufferDepthTex_);
+            glBindVertexArray(fullscreenVao_);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+            glDisable(GL_BLEND);
+            glDepthMask(GL_TRUE);
+            glUseProgram(0);
+            LogGlErrors("portal_membrane_pass");
+          }
         }
 
         profMark(4); // water transmission pass done (or skipped)
@@ -4447,8 +4811,11 @@ public:
             DrawPlayerHealthBar();
             DrawEnemyHealthBar();
             const Uint64 uiT1 = SDL_GetPerformanceCounter();
-            // The fullscreen hit flash must cover the health labels, so land
-            // the pending text (below) before emitting the flash rect.
+            // Rects and labels render in two passes: land the queued rects
+            // (minimap, health bars) first so UiFlushText paints the labels on
+            // top, then the flash rect lands above the labels in the second
+            // overlay flush.
+            UiFlushOverlay();
             UiFlushText();
             DrawHitFlash();
             UiFlushOverlay();
@@ -4462,12 +4829,22 @@ public:
             const float mnF = static_cast<float>(width_ < height_ ? width_ : height_);
             const float panelF[4] = {0.30f, 0.32f, 0.36f, 0.55f};
             const float whiteF[4] = {1.0f, 1.0f, 1.0f, 0.92f};
-            for(int i=0;i<(inventory_.HasPistol()?(pistol_.equipped?4:1):0);++i) {
+            // One compact quickbar, clear of health, chest prompt and action cluster.
+            const float quickPanel[4]={.07f,.12f,.19f,.72f};
+            DrawMenuRect({width_*.5f,height_-mnF*.085f,mnF*.185f,mnF*.064f,mnF*.025f},quickPanel);
+            if(SwordAvailable()) {
+                auto b=gameplay::SwordButton(static_cast<float>(width_),static_cast<float>(height_));
+                const float color[4]={.65f,.75f,.95f,sword_.drawn?.92f:.30f};
+                DrawMenuRect({b.x,b.y,b.r,b.r,b.r},color);
+                const float textColor[4]={1,1,1,1};
+                DrawTextCentered(inventory::kItemDefs[5].name,b.x,b.y,b.r*.55f,textColor);
+            }
+            for(int i=0;i<(WeaponAvailable()?(pistol_.equipped?4:1):0);++i) {
                 auto b=gameplay::PistolButton(i,static_cast<float>(width_),static_cast<float>(height_));
                 const float active[4]={.22f,.48f,.68f,.75f};
                 const bool selected=(i==0&&pistol_.equipped)||(i==1&&pistol_.aiming);
                 DrawMenuRect({b.x,b.y,b.r,b.r,b.r},selected?active:panelF);
-                const char* label=i==0?(pistol_.equipped?"收起":"枪械"):(i==1?"瞄准":(i==2?"射击":"换弹"));
+                const char* label=i==0?inventory::kItemDefs[0].name:(i==1?"瞄准":(i==2?"射击":"换弹"));
                 DrawTextCentered(label,b.x,b.y,b.r*.55f,whiteF);
             }
             auto potion=gameplay::PotionButton(static_cast<float>(width_),static_cast<float>(height_));
@@ -4476,8 +4853,8 @@ public:
             char potionLabel[32];std::snprintf(potionLabel,sizeof(potionLabel),"药水×%d",inventory_.PotionCount());
             DrawTextCentered(potionLabel,potion.x,potion.y,mnF*.018f,whiteF);
             if(pistol_.equipped){char ammo[32];std::snprintf(ammo,sizeof(ammo),pistol_.reloading?"换弹中":"弹量 %d/%d 备弹 %d",pistol_.ammo,pistol_.capacity,pistol_.reserve);
-                DrawTextCentered(ammo,width_*.5f,height_-mnF*.115f,mnF*.026f,whiteF);}
-            if(pistol_.equipped && !playerSwimming_) {
+                DrawTextCentered(ammo,width_*.5f,height_-mnF*.185f,mnF*.026f,whiteF);}
+            if(pistol_.equipped && pistol_.aiming && !playerSwimming_) {
                 const float hit[4]={1.f,.25f,.15f,1.f};
                 DrawTextCentered(pistol_.hitFlash>0?"×":"+",width_*.5f,height_*.5f,
                     mnF*(pistol_.shotAge<.10f?.050f:.036f),pistol_.hitFlash>0?hit:whiteF);
@@ -4495,14 +4872,64 @@ public:
             DrawMenuRect(shopBtn, shopPanelF);
             DrawTextCentered("商店", shopBtn.cx, shopBtn.cy, shopBtn.hh * 0.52f,
                 whiteF);
+            if (SDL_GetTicks()<saveMessageUntil_) DrawTextCentered(saveMessage_.c_str(),width_*.5f,mnF*.16f,mnF*.028f,whiteF);
             // Proximity prompt: floats above the ammo label while the player
             // stands next to a closed treasure chest.
-            if (!ChestOpened() && ChestNear()) {
+            if (NearSavePoint() || (!ChestOpened() && ChestNear())) {
                 const MenuButtonPos chestBtn = ChestButtonRect();
                 const float chestPanelF[4] = {0.12f, 0.37f, 0.34f, 0.92f};
                 DrawMenuRect(chestBtn, chestPanelF);
-                DrawTextCentered("开启宝箱", chestBtn.cx, chestBtn.cy,
+                DrawTextCentered(NearSavePoint() ? "保存游戏" : "开启宝箱", chestBtn.cx, chestBtn.cy,
                     chestBtn.hh * 0.52f, whiteF);
+            }
+            if (sceneDefinition_) {
+              const scene::Portal* nearest = nullptr;
+              float nearestSquared = 64;
+              for (const auto& portal : sceneDefinition_->portals) {
+                const auto& p = portal.position;
+                const float d = (playerX_-p.x)*(playerX_-p.x)+(playerZ_-p.z)*(playerZ_-p.z);
+                if (d < nearestSquared) { nearest = &portal; nearestSquared = d; }
+              }
+              if (nearest) {
+                const auto& p = nearest->position;
+                const float dx = playerX_ - p.x, dz = playerZ_ - p.z;
+                if (dx * dx + dz * dz < 64.0f) {
+                    const float gatePanel[4] = {.06f, .24f, .29f, .85f};
+                    const MenuButtonPos hint = {width_ * .5f, mnF * .095f,
+                        mnF * .30f, mnF * .027f, mnF * .012f};
+                    DrawMenuRect(hint, gatePanel);
+                    DrawTextCentered(nearest->label.c_str(), hint.cx,
+                        hint.cy, mnF * .022f, whiteF);
+                }
+            }
+              if (sceneDefinition_->parkour.enabled) {
+                char status[160];
+                const auto count = sceneDefinition_->parkour.checkpoints.size();
+                if (parkourProgress_.finished)
+                    std::snprintf(status, sizeof(status), "COURSE CLEAR  |  %.1fs  |  FALLS %d  |  RETURN GATE AHEAD",
+                        parkourProgress_.seconds, parkourProgress_.falls);
+                else
+                    std::snprintf(status, sizeof(status), "PARKOUR  |  CHECKPOINT %zu/%zu  |  %.1fs  |  FALLS %d",
+                        parkourProgress_.checkpoint, count-1, parkourProgress_.seconds, parkourProgress_.falls);
+                const float courseColor[4] = {.98f, .80f, .35f, 1};
+                DrawTextCentered(status, width_*.5f, mnF*.15f, mnF*.025f, courseColor, false);
+              }
+              if (sceneDefinition_->workshop.enabled && physicsWorld_) {
+                const auto state=physicsWorld_->GetWorkshopState();
+                const char* step=!state.gateOpen ? "1  PUSH CRATE ONTO THE GOLD PLATE" :
+                    (playerY_>4.5f ? "3  UPPER DECK - RETURN GATE AHEAD" : "2  GATE OPEN - BOARD THE LIFT");
+                const float workshopColor[4]={.4f,.85f,1,1};
+                if (sceneDefinition_->parkour.enabled) {
+                    const auto& w=sceneDefinition_->workshop;
+                    const auto& pool=sceneDefinition_->water;
+                    step=playerZ_>w.plate.z+9 ? "1  JUMP TRAIL - FOLLOW CYAN MARKERS" :
+                        (!state.gateOpen ? "2  PUSH CRATE ONTO THE GOLD PLATE" :
+                        (playerZ_>w.plate.z-18 ? "3  BOARD LIFT TO THE UPPER DECK" :
+                        (playerZ_>pool.center.z+pool.halfExtents.z+1 ? "4  RIDE THE MOVING PLATFORMS" :
+                        (playerSwimming_ ? "5  SWIM TO THE EXIT STAIRS" : "6  FOLLOW THE ROUTE TO THE RETURN GATE"))));
+                }
+                DrawTextCentered(step,width_*.5f,mnF*(sceneDefinition_->parkour.enabled?.19f:.15f),mnF*.025f,workshopColor,false);
+              }
             }
             // Land everything the gameplay HUD emitted (buttons + labels) in
             // two draws before restoring depth state.
@@ -4541,6 +4968,9 @@ public:
         // Periodic per-stage profile: CPU always, GPU when timer queries are
         // available (they lag one frame; averages absorb that).
         if (++profFrames_ >= 300) {
+            SDL_Log("SDL3_BATCH frames=%u static_candidates=%u culled=%u instanced_draws=%u drawn_instances=%u",
+                profFrames_,staticCandidates_,staticCulled_,staticDraws_,staticDrawnInstances_);
+            staticCandidates_=staticCulled_=staticDraws_=staticDrawnInstances_=0;
             // Stubs guard: some bridges export the query entry points but
             // never make results available.  One blocking drain per window;
             // if even that yields nothing, stop issuing queries.
@@ -4657,6 +5087,14 @@ public:
         pistolMeshes_.clear();
         if(!pistolTextures_.empty())glDeleteTextures(static_cast<GLsizei>(pistolTextures_.size()),pistolTextures_.data());
         pistolTextures_.clear();pistolMaterials_.clear();
+        for(const auto& mesh:swordMeshes_) {
+            if(mesh.vao)glDeleteVertexArrays(1,&mesh.vao);
+            if(mesh.vertexBuffer)glDeleteBuffers(1,&mesh.vertexBuffer);
+            if(mesh.indexBuffer)glDeleteBuffers(1,&mesh.indexBuffer);
+        }
+        swordMeshes_.clear();
+        if(!swordTextures_.empty())glDeleteTextures(static_cast<GLsizei>(swordTextures_.size()),swordTextures_.data());
+        swordTextures_.clear();swordMaterials_.clear();
         if (!groundTextures_.empty()) {
             glDeleteTextures(static_cast<GLsizei>(groundTextures_.size()), groundTextures_.data());
             groundTextures_.clear();
@@ -4673,26 +5111,7 @@ public:
             }
         }
         groundMeshes_.clear();
-        for (GlesSceneModel& asset : sceneModels_) {
-            for (const GlesMesh& mesh : asset.meshes) {
-                if (mesh.vao != 0) glDeleteVertexArrays(1, &mesh.vao);
-                if (mesh.vertexBuffer != 0) glDeleteBuffers(1, &mesh.vertexBuffer);
-                if (mesh.indexBuffer != 0) glDeleteBuffers(1, &mesh.indexBuffer);
-            }
-            if (!asset.textures.empty()) {
-                glDeleteTextures(static_cast<GLsizei>(asset.textures.size()), asset.textures.data());
-            }
-        }
-        sceneModels_.clear();
-        for (const GlesMesh& mesh : terrainMeshes_) {
-            if (mesh.vao) glDeleteVertexArrays(1, &mesh.vao);
-            if (mesh.vertexBuffer) glDeleteBuffers(1, &mesh.vertexBuffer);
-            if (mesh.indexBuffer) glDeleteBuffers(1, &mesh.indexBuffer);
-        }
-        terrainMeshes_.clear();
-        if (!terrainTextures_.empty()) glDeleteTextures(static_cast<GLsizei>(terrainTextures_.size()), terrainTextures_.data());
-        terrainTextures_.clear();
-        terrainMaterials_.clear();
+        ReleaseSceneAssets();
         // Alias check must run before skyboxTexture_ is deleted: on IBL
         // creation failure irradianceTexture_ points at the skybox texture.
         const bool irradianceAliasesSkybox = irradianceTexture_ != 0 && irradianceTexture_ == skyboxTexture_;
@@ -4770,6 +5189,7 @@ public:
             glDeleteVertexArrays(1, &fullscreenVao_);
             fullscreenVao_ = 0;
         }
+        if (staticInstanceVbo_) { glDeleteBuffers(1,&staticInstanceVbo_); staticInstanceVbo_=0; }
         if (characterInstanceVbo_ != 0) {
             glDeleteBuffers(1, &characterInstanceVbo_);
             characterInstanceVbo_ = 0;
@@ -4805,6 +5225,7 @@ public:
             glDeleteProgram(shadowProgram_);
             shadowProgram_ = 0;
         }
+        if (portalProgram_ != 0) { glDeleteProgram(portalProgram_); portalProgram_ = 0; }
         if (waterProgram_ != 0) { glDeleteProgram(waterProgram_); waterProgram_ = 0; }
         if (lightingProgram_ != 0) {
             glDeleteProgram(lightingProgram_);
@@ -4842,17 +5263,20 @@ public:
     // gives Vulkan the same reset contract below.
     void ResetGameplayScene()
     {
+        parkourProgress_ = {};
         pistol_.Reset();
+        sword_.Holster();
         pistolPoseReady_ = false;
-        playerX_ = gameplay::kPlayerSpawnX;
-        playerY_ = 0.0f;
-        playerZ_ = gameplay::kPlayerSpawnZ;
+        playerX_ = sceneDefinition_ ? sceneDefinition_->playerSpawn.x : gameplay::kPlayerSpawnX;
+        playerY_ = sceneDefinition_ ? sceneDefinition_->playerSpawn.y : 0.0f;
+        playerZ_ = sceneDefinition_ ? sceneDefinition_->playerSpawn.z : gameplay::kPlayerSpawnZ;
         playerYaw_ = 0.0f;
         playerMoving_ = false;
         playerSprinting_ = false;
         playerSwimming_ = false;
         crouchEnabled_ = false;
         playerHealth_ = playerMaxHealth_;
+        playerDeathHold_=0;
         playerAttackCooldown_ = 0.0f;
         playerAttackInvulnerability_ = 0.0f;
         playerHitInvulnerability_ = 0.0f;
@@ -4868,9 +5292,9 @@ public:
         enemyAttackCooldown_ = 0.0f;
         enemyHitInvulnerability_ = 0.0f;
         enemyHitLockTimer_ = 0.0f;
-        enemyAlive_ = true;
+        enemyAlive_ = sceneDefinition_ == nullptr || sceneDefinition_->enemyEnabled;
         enemyReturningHome_ = false;
-        enemyVisible_ = true;
+        enemyVisible_ = enemyAlive_;
         enemyDeathPlaying_ = false;
         enemyDeathTime_ = 0.0f;
         enemyDissolveTimer_ = -1.0f;
@@ -4880,17 +5304,20 @@ public:
         enemyDesiredVelocityX_ = 0.0f;
         enemyDesiredVelocityZ_ = 0.0f;
 
+        cameraObstruction_.Reset(); cameraWasObstructed_ = false;
         camYaw_ = 0.0f;
-        camPitch_ = 0.0f;
-        camDistance_ = kCameraDistance;
-        camPanX_ = 0.0f;
-        camPanY_ = 0.0f;
-        camPanZ_ = 0.0f;
+        camPitch_ = sceneDefinition_ && sceneDefinition_->parkour.enabled ? .38f : 0.0f;
+        camDistance_ = sceneDefinition_ && sceneDefinition_->parkour.enabled ? 4.2f : kCameraDistance;
+        camPanX_ = playerX_;
+        camPanY_ = playerY_ + camera::kHeadFocusOffset;
+        camPanZ_ = playerZ_;
         camPosX_ = 0.0f;
         camPosY_ = 0.0f;
         camPosZ_ = kCameraDistance;
         moveLastTicks_ = SDL_GetTicks();
 
+        playerBodyTransition_.Reset(); playerWeaponTransition_.Reset(); enemyBodyTransition_.Reset();
+        weaponMask_.clear();
         animState_ = AnimState::Idle;
         animStateTime_ = 0.0f;
         animClipIndex_ = idleClip_ >= 0 ? idleClip_ : SelectAnimationClip();
@@ -4912,6 +5339,7 @@ public:
                     + physics::kPlayerCapsuleRadius)
                     - physics::kGameplayCharacterPadding,
                 enemyZ_);
+            physicsWorld_->SetEnemyCollisionEnabled(enemyAlive_);
             physicsReset_ = true;
         } else {
             physicsReset_ = false;
@@ -4920,6 +5348,41 @@ public:
     }
 
 private:
+    void ReleaseSceneAssets()
+    {
+        for (GlesSceneModel& asset : sceneModels_) {
+            for (const GlesMesh& mesh : asset.meshes) {
+                if (mesh.vao != 0) glDeleteVertexArrays(1, &mesh.vao);
+                if (mesh.vertexBuffer != 0) glDeleteBuffers(1, &mesh.vertexBuffer);
+                if (mesh.indexBuffer != 0) glDeleteBuffers(1, &mesh.indexBuffer);
+            }
+            if (!asset.textures.empty()) {
+                glDeleteTextures(static_cast<GLsizei>(asset.textures.size()), asset.textures.data());
+            }
+        }
+        sceneModels_.clear();
+        for (auto& entry : terrainCache_) {
+            auto& terrain = entry.second;
+            for (const auto& mesh : terrain.meshes) {
+                if (mesh.vao) glDeleteVertexArrays(1, &mesh.vao);
+                if (mesh.vertexBuffer) glDeleteBuffers(1, &mesh.vertexBuffer);
+                if (mesh.indexBuffer) glDeleteBuffers(1, &mesh.indexBuffer);
+            }
+            if (!terrain.textures.empty()) glDeleteTextures(GLsizei(terrain.textures.size()), terrain.textures.data());
+        }
+        terrainCache_.clear();
+        activeSceneKey_.clear(); preloadSceneKey_.clear(); preloadPaths_.clear();
+        for (const GlesMesh& mesh : terrainMeshes_) {
+            if (mesh.vao) glDeleteVertexArrays(1, &mesh.vao);
+            if (mesh.vertexBuffer) glDeleteBuffers(1, &mesh.vertexBuffer);
+            if (mesh.indexBuffer) glDeleteBuffers(1, &mesh.indexBuffer);
+        }
+        terrainMeshes_.clear();
+        if (!terrainTextures_.empty()) glDeleteTextures(static_cast<GLsizei>(terrainTextures_.size()), terrainTextures_.data());
+        terrainTextures_.clear();
+        terrainMaterials_.clear();
+    }
+
     bool CreatePrograms()
     {
         irradianceProgram_ = LinkProgram(kConvolutionVertexSource, kIrradianceFragmentSource, "irradiance");
@@ -4927,6 +5390,7 @@ private:
         gbufferProgram_ = LinkProgram(kModelVertexSource, kGBufferFragmentSource, "gbuffer");
         shadowProgram_ = LinkProgram(kShadowVertexSource, kShadowFragmentSource, "shadow");
         lightingProgram_ = LinkProgram(kFullscreenVertexSource, kLightingFragmentSource, "lighting");
+        portalProgram_ = LinkProgram(kFullscreenVertexSource, kPortalFragmentSource, "portal_membrane");
         waterProgram_ = LinkProgram(kFullscreenVertexSource, kWaterFragmentSource, "water_transmission");
         fxaaProgram_ = LinkProgram(kFullscreenVertexSource, kFxaaFragmentSource, "fxaa");
         bloomThProgram_ = LinkProgram(kFullscreenVertexSource, kBloomThresholdFragmentSource, "bloom_th");
@@ -4934,7 +5398,7 @@ private:
         bloomUpProgram_ = LinkProgram(kFullscreenVertexSource, kBloomUpFragmentSource, "bloom_up");
         tonemapProgram_ = LinkProgram(kFullscreenVertexSource, kTonemapFragmentSource, "tonemap");
         if (irradianceProgram_ == 0 || prefilterProgram_ == 0 || gbufferProgram_ == 0
-            || lightingProgram_ == 0 || waterProgram_ == 0 || fxaaProgram_ == 0 || bloomThProgram_ == 0
+            || lightingProgram_ == 0 || portalProgram_ == 0 || waterProgram_ == 0 || fxaaProgram_ == 0 || bloomThProgram_ == 0
             || bloomDownProgram_ == 0 || bloomUpProgram_ == 0 || tonemapProgram_ == 0) {
             return false;
         }
@@ -5017,6 +5481,7 @@ private:
         waterInverseLocation_ = glGetUniformLocation(waterProgram_, "waterInvViewProj");
         waterCameraLocation_ = glGetUniformLocation(waterProgram_, "waterCamera");
         waterParamsLocation_ = glGetUniformLocation(waterProgram_, "waterParams");
+        waterBoundsLocation_ = glGetUniformLocation(waterProgram_, "waterBounds");
         waterColorLocation_ = glGetUniformLocation(waterProgram_, "waterColor");
         waterMuzzleLocation_ = glGetUniformLocation(waterProgram_, "waterMuzzle");
         waterLdrLocation_ = glGetUniformLocation(waterProgram_, "waterLdr");
@@ -5026,6 +5491,15 @@ private:
         glUniform1i(glGetUniformLocation(waterProgram_, "opaqueDepth"), 1);
         glUniform1i(glGetUniformLocation(waterProgram_, "waterSky"), 2);
         glUniform1i(waterNormalSamplerLocation_, 3);
+        glUseProgram(0);
+        portalInverseLocation_ = glGetUniformLocation(portalProgram_, "inverseViewProjection");
+        portalCameraLocation_ = glGetUniformLocation(portalProgram_, "cameraPosition");
+        portalCenterLocation_ = glGetUniformLocation(portalProgram_, "portalCenter");
+        portalTintLocation_ = glGetUniformLocation(portalProgram_, "portalTint");
+        portalTimeLocation_ = glGetUniformLocation(portalProgram_, "portalTime");
+        portalLdrLocation_ = glGetUniformLocation(portalProgram_, "ldrOutput");
+        glUseProgram(portalProgram_);
+        glUniform1i(glGetUniformLocation(portalProgram_, "sceneDepth"), 0);
         glUseProgram(0);
         // Post-processing chain (FXAA).
         fxaaSampler_ = glGetUniformLocation(fxaaProgram_, "colorTex");
@@ -5837,6 +6311,9 @@ private:
         idleClip_ = FindClipIndex("Idle_Loop");
         crouchClip_ = FindClipIndex("Crouch_Idle_Loop");
         attackClip_ = FindClipIndex("Punch_Jab");
+        punchClip_ = attackClip_;
+        swordAttackClip_ = FindClipIndex("Sword_Attack");
+        swordIdleClip_ = FindClipIndex("Sword_Idle");
         jumpStartClip_ = FindClipIndex("Jump_Start");
         jumpLoopClip_ = FindClipIndex("Jump_Loop");
         jumpLandClip_ = FindClipIndex("Jump_Land");
@@ -5846,6 +6323,8 @@ private:
         // control lock with a red screen flash.
         hitClip_ = FindClipIndex("Hit_Chest");
         // The state machine owns clip selection: start standing (Idle).
+        playerBodyTransition_.Reset(); playerWeaponTransition_.Reset(); enemyBodyTransition_.Reset();
+        weaponMask_.clear();
         animState_ = AnimState::Idle;
         animClipIndex_ = idleClip_ >= 0 ? idleClip_ : SelectAnimationClip();
         animStateTime_ = 0.0f;
@@ -5995,6 +6474,7 @@ private:
         }
 
         LoadPistolModel();
+        LoadSwordModel();
         LoadHelmetModel();
         LoadGroundModel();
         LoadSceneModels();
@@ -6057,6 +6537,22 @@ private:
         pistolMaterials_=model.materials;
         LoadStaticTextures(model,pistolTextures_);
         BuildStaticMeshes(model,pistolMeshes_);
+    }
+
+    // Melee blade: untextured (material-factor colours) static model from the
+    // same Quaternius CC0 set as the pistol, mounted on DEF-hand.R.
+    void LoadSwordModel()
+    {
+        ohos_model::Model model;std::string error;
+        if(!ohos_model::LoadModelFromRawFile("models/Sword/sword.glb",model,error)) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"sword_load_failed %s",error.c_str());return;
+        }
+        if(model.skinned) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"sword_load_failed unexpected_skin");return;
+        }
+        swordMaterials_=model.materials;
+        LoadStaticTextures(model,swordTextures_);
+        BuildStaticMeshes(model,swordMeshes_);
     }
 
     void LoadHelmetModel()
@@ -6208,64 +6704,57 @@ private:
 
     void LoadSceneModels()
     {
-        if (sceneDefinition_ == nullptr) {
-            return;
-        }
-        for (const scene::Entity& entity : sceneDefinition_->entities) {
-            if (!entity.importAsStaticModel) {
-                continue;
-            }
-            const auto existing = std::find_if(sceneModels_.begin(), sceneModels_.end(),
-                [&entity](const GlesSceneModel& candidate) {
-                    return candidate.path == entity.modelPath;
-                });
-            if (existing != sceneModels_.end()) {
-                continue;
-            }
+        if (!sceneDefinition_) return;
+        for (const auto& entity : sceneDefinition_->entities)
+            if (entity.importAsStaticModel) LoadSceneModel(entity.modelPath);
+    }
 
-            ohos_model::Model model;
-            std::string error;
-            if (!ohos_model::LoadModelFromRawFile(entity.modelPath.c_str(), model, error)) {
-                SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                    "SDL3_GLES stage=scene_model_load_failed path=%s error=%s",
-                    entity.modelPath.c_str(), error.c_str());
-                continue;
-            }
-            if (model.skinned) {
-                SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                    "SDL3_GLES stage=scene_model_load_failed path=%s error=skinned_scene_model_unsupported",
-                    entity.modelPath.c_str());
-                continue;
-            }
-
-            GlesSceneModel asset;
-            asset.path = entity.modelPath;
-            asset.materials = model.materials;
-            LoadStaticTextures(model, asset.textures);
-            BuildStaticMeshes(model, asset.meshes);
-            if (asset.meshes.empty()) {
-                SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                    "SDL3_GLES stage=scene_model_load_failed path=%s error=no_meshes",
-                    entity.modelPath.c_str());
-                continue;
-            }
-            for (const GlesMesh& mesh : asset.meshes) {
-                if (mesh.bounds.minimum[0] > mesh.bounds.maximum[0]) {
-                    continue;  // empty bounds
-                }
-                for (int axis = 0; axis < 3; ++axis) {
-                    asset.bounds.minimum[axis] = std::min(asset.bounds.minimum[axis],
-                        mesh.bounds.minimum[axis]);
-                    asset.bounds.maximum[axis] = std::max(asset.bounds.maximum[axis],
-                        mesh.bounds.maximum[axis]);
-                }
-            }
-            asset.boundsValid = asset.bounds.minimum[0] <= asset.bounds.maximum[0];
-            InitOpenableProp(asset, model);
-            SDL_Log("SDL3_GLES stage=scene_model_ready path=%s meshes=%zu textures=%zu",
-                asset.path.c_str(), asset.meshes.size(), asset.textures.size());
-            sceneModels_.push_back(std::move(asset));
+    bool LoadSceneModel(const std::string& path)
+    {
+        if (FindSceneModel(path)) return true;
+        ohos_model::Model model;
+        std::string error;
+        if (!ohos_model::LoadModelFromRawFile(path.c_str(), model, error)) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                "SDL3_GLES stage=scene_model_load_failed path=%s error=%s",
+                path.c_str(), error.c_str());
+            return false;
         }
+        if (model.skinned) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                "SDL3_GLES stage=scene_model_load_failed path=%s error=skinned_scene_model_unsupported",
+                path.c_str());
+            return false;
+        }
+
+        GlesSceneModel asset;
+        asset.path = path;
+        asset.materials = model.materials;
+        LoadStaticTextures(model, asset.textures);
+        BuildStaticMeshes(model, asset.meshes);
+        if (asset.meshes.empty()) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                "SDL3_GLES stage=scene_model_load_failed path=%s error=no_meshes",
+                path.c_str());
+            return false;
+        }
+        for (const GlesMesh& mesh : asset.meshes) {
+            if (mesh.bounds.minimum[0] > mesh.bounds.maximum[0]) {
+                continue;  // empty bounds
+            }
+            for (int axis = 0; axis < 3; ++axis) {
+                asset.bounds.minimum[axis] = std::min(asset.bounds.minimum[axis],
+                    mesh.bounds.minimum[axis]);
+                asset.bounds.maximum[axis] = std::max(asset.bounds.maximum[axis],
+                    mesh.bounds.maximum[axis]);
+            }
+        }
+        asset.boundsValid = asset.bounds.minimum[0] <= asset.bounds.maximum[0];
+        InitOpenableProp(asset, model);
+        SDL_Log("SDL3_GLES stage=scene_model_ready path=%s meshes=%zu textures=%zu",
+            asset.path.c_str(), asset.meshes.size(), asset.textures.size());
+        sceneModels_.push_back(std::move(asset));
+        return true;
     }
 
     const GlesSceneModel* FindSceneModel(const std::string& path) const
@@ -6304,7 +6793,7 @@ private:
         const float w = static_cast<float>(width_);
         const float h = static_cast<float>(height_);
         const float mn = w < h ? w : h;
-        return {w * 0.5f, h - mn * 0.205f, mn * 0.095f, mn * 0.036f, mn * 0.036f};
+        return {w * 0.5f, h - mn * 0.36f, mn * 0.095f, mn * 0.036f, mn * 0.036f};
     }
 
     // Lid world matrix for the current animation progress: rebuilds the lid
@@ -6366,12 +6855,26 @@ private:
     // ---- animation state machine --------------------------------------------
     // Ported from MikanEngine's PlayerWalkScript (CesiumWalk.cpp): an enum
     // state + EnterAnimationState(stateTime reset) + a priority if/else
-    // transition chain + clip mapping with change detection.  Hard cuts, no
-    // crossfade -- exactly the engine's behaviour (it relies on Loop clips
-    // whose first/last frames match).  MikanEngine's "script system" is pure
+    // transition chain + clip mapping. Local-pose crossfades below smooth
+    // state changes while preserving the existing gameplay timing.
+    // MikanEngine's "script system" is pure
     // C++ (IScriptBehaviour), so there was nothing to port beyond this
     // pattern; the three on-screen buttons replace its keyboard/touch input.
     enum class AnimState { SwimIdle, SwimForward, Idle, Walk, Sprint, Attack, JumpStart, JumpLoop, JumpLand, Crouch, Hit, Death };
+
+    static float AnimTransitionDuration(AnimState state)
+    {
+        using T = animation::Transition;
+        switch (state) {
+        case AnimState::Crouch: return animation::Duration(T::Crouch);
+        case AnimState::SwimIdle: case AnimState::SwimForward: return animation::Duration(T::Swim);
+        case AnimState::JumpStart: case AnimState::JumpLoop: case AnimState::JumpLand: return animation::Duration(T::Jump);
+        case AnimState::Attack: return animation::Duration(T::Attack);
+        case AnimState::Hit: return animation::Duration(T::Hit);
+        case AnimState::Death: return animation::Duration(T::Death);
+        default: return animation::Duration(T::Locomotion);
+        }
+    }
 
     static const char* AnimStateHudName(AnimState state)
     {
@@ -6442,13 +6945,14 @@ private:
             targetClip = walkClip_;
             targetLoop = true;
         }
+        const bool matchGait = (animState_ == AnimState::Walk || animState_ == AnimState::Sprint) &&
+            (next == AnimState::Walk || next == AnimState::Sprint);
+        const float phase = matchGait ? animTime_ / ClipDurationOr(animClipIndex_, 1.0f) : 0;
         animState_ = next;
         animStateTime_ = 0.0f;
         if (animClipIndex_ != targetClip) {
-            // MikanEngine change-detection bridge: PlayAnimation = hard cut,
-            // new clip from frame 0.
             animClipIndex_ = targetClip;
-            animTime_ = 0.0f;
+            animTime_ = phase * ClipDurationOr(targetClip, 1.0f);
         }
         animLoop_ = targetLoop;
     }
@@ -6462,6 +6966,10 @@ private:
         // from a grounded loop state).
         const int pressed = cameraInput_.actionButtonPressedMask;
         cameraInput_.actionButtonPressedMask = 0;
+        if (playerHealth_<=0) {
+            if (animState_!=AnimState::Death) EnterAnimState(AnimState::Death);
+            return;
+        }
         // Mikan hit-stun: while the control lock is active the Hit one-shot
         // overrides everything and all action edges are swallowed.
         if (playerHitLockTimer_ > 0.0f) {
@@ -6544,7 +7052,7 @@ private:
         case AnimState::Crouch:
             break;
         case AnimState::Hit:
-            // Lock expired this frame: snap back to the grounded loop.
+            // Lock expired: transition back to the grounded loop.
             if (playerHitLockTimer_ <= 0.0f) {
                 EnterAnimState(GroundedState());
             }
@@ -6660,8 +7168,27 @@ private:
             }
         }
 
+        const int bodyKey = int(animState_) * 1024 + animClipIndex_;
+        if (playerBodyTransition_.Apply(bodyKey, dt, AnimTransitionDuration(animState_),
+                nodeTranslation_, nodeRotation_, nodeScale_))
+            SDL_Log("SDL3_ANIM actor=player layer=body state=%s fade_ms=%d", AnimStateHudName(animState_),
+                int(AnimTransitionDuration(animState_) * 1000));
+        int weaponPoseKey = 0;
+        if(sword_.drawn && !playerSwimming_ && playerHealth_>0 && playerHitLockTimer_<=0 &&
+            animState_!=AnimState::Attack && animState_!=AnimState::JumpStart &&
+            animState_!=AnimState::JumpLoop && animState_!=AnimState::JumpLand && swordIdleClip_>=0) {
+            weaponPoseKey = 1 + swordIdleClip_;
+            for(const auto& channel:clips_[swordIdleClip_].channels) {
+                if(channel.nodeIndex>=nodeCount || !gameplay::WeaponUpperBody(animNodes_,channel.nodeIndex))continue;
+                SampleChannel(channel,0.f,sampled);
+                const size_t base=channel.nodeIndex*(channel.path==1?4u:3u);
+                float* target=channel.path==0?&nodeTranslation_[base]:(channel.path==1?&nodeRotation_[base]:&nodeScale_[base]);
+                std::memcpy(target,sampled,sizeof(float)*(channel.path==1?4:3));
+            }
+        }
         if (pistol_.equipped && !playerSwimming_ && playerHealth_>0 && playerHitLockTimer_<=0) {
             const auto* gunClip=gameplay::PistolClip(clips_,pistol_,camPitch_);
+            if (gunClip) weaponPoseKey = 1024 + int(gunClip - clips_.data());
             if (gunClip) for(const auto& channel:gunClip->channels) {
                 if(channel.nodeIndex>=nodeCount || !gameplay::WeaponUpperBody(animNodes_,channel.nodeIndex))continue;
                 const float time=pistol_.reloading?std::min(pistol_.reloadAge,gunClip->duration):(pistol_.shotAge<.30f?std::min(pistol_.shotAge,gunClip->duration):0.f);
@@ -6673,6 +7200,20 @@ private:
                 std::memcpy(target,sampled,sizeof(float)*(channel.path==1?4:3));
             }
         }
+
+        if (weaponMask_.size() != nodeCount) {
+            weaponMask_.resize(nodeCount);
+            for (size_t i = 0; i < nodeCount; ++i)
+                weaponMask_[i] = gameplay::WeaponUpperBody(animNodes_, i) ? 1 : 0;
+        }
+        float weaponFade = animation::Duration(animation::Transition::Weapon);
+        if (pistol_.fired) weaponFade = animation::Duration(animation::Transition::Fire);
+        else if (pistol_.reloading || animState_ == AnimState::Attack || playerHitLockTimer_ > 0)
+            weaponFade = AnimTransitionDuration(playerHitLockTimer_ > 0 ? AnimState::Hit : AnimState::Attack);
+        if (playerHealth_<=0) playerWeaponTransition_.Reset();
+        if (playerWeaponTransition_.Apply(weaponPoseKey, dt, weaponFade,
+                nodeTranslation_, nodeRotation_, nodeScale_, &weaponMask_))
+            SDL_Log("SDL3_ANIM actor=player layer=weapon pose=%d fade_ms=%d", weaponPoseKey, int(weaponFade * 1000));
 
         // 2) locals -> globals.  Parents precede children in animNodes_ order,
         // so a single forward pass suffices (glTF node graphs are trees).
@@ -6697,6 +7238,7 @@ private:
         pistolPoseReady_=false;
         for(size_t i=0;i<nodeCount;++i) if(animNodes_[i].name=="DEF-hand.R") {
             gameplay::PistolMount(playerMatrix_.value,modelNormalise_.value,&nodeGlobals_[i*16],pistolMatrix_.value);
+            gameplay::SwordMount(playerMatrix_.value,modelNormalise_.value,&nodeGlobals_[i*16],swordMatrix_.value);
             pistolPoseReady_=true;break;
         }
 
@@ -6723,6 +7265,14 @@ private:
             jointMatrices_.data());
         glBindBuffer(GL_UNIFORM_BUFFER, 0);
         LogGlErrors("update_animation");
+        if (playerHealth_<=0 && animState_==AnimState::Death && animTime_>=clip.duration) {
+            playerDeathHold_+=dt;
+            if (playerDeathHold_>=.3f) {
+                uiScreen_=rhi::UiScreen::GameplayRetry;
+                SDL_Log("SDL3_GLES stage=player_death_complete screen=retry");
+            }
+        }
+
     }
 
     AnimState EnemyGroundedState() const
@@ -6763,11 +7313,14 @@ private:
             targetClip = enemyWalkClip_ >= 0 ? enemyWalkClip_ : enemyIdleClip_;
             targetLoop = true;
         }
+        const bool matchGait = (enemyAnimState_ == AnimState::Walk || enemyAnimState_ == AnimState::Sprint) &&
+            (next == AnimState::Walk || next == AnimState::Sprint);
+        const float phase = matchGait ? enemyAnimTime_ / EnemyClipDurationOr(enemyAnimClipIndex_, 1.0f) : 0;
         enemyAnimState_ = next;
         enemyAnimStateTime_ = 0.0f;
         if (enemyAnimClipIndex_ != targetClip) {
             enemyAnimClipIndex_ = targetClip;
-            enemyAnimTime_ = 0.0f;
+            enemyAnimTime_ = phase * EnemyClipDurationOr(targetClip, 1.0f);
         }
         enemyAnimLoop_ = targetLoop;
     }
@@ -6790,7 +7343,7 @@ private:
             return;
         }
         if (enemyAnimState_ == AnimState::Hit) {
-            // Lock expired this frame: snap back to the grounded loop.
+            // Lock expired: transition back to the grounded loop.
             EnterEnemyAnimState(EnemyGroundedState());
         }
         if (enemyAttackRequested_) {
@@ -6893,6 +7446,11 @@ private:
                 target[c] = sampled[c];
             }
         }
+
+        if (enemyBodyTransition_.Apply(int(enemyAnimState_) * 1024 + enemyAnimClipIndex_, dt,
+                AnimTransitionDuration(enemyAnimState_), enemyNodeTranslation_, enemyNodeRotation_, enemyNodeScale_))
+            SDL_Log("SDL3_ANIM actor=enemy layer=body state=%s fade_ms=%d", AnimStateHudName(enemyAnimState_),
+                int(AnimTransitionDuration(enemyAnimState_) * 1000));
 
         enemyNodeGlobals_.assign(nodeCount * 16, 0.0f);
         std::vector<float> local(16);
@@ -7097,11 +7655,68 @@ private:
         glActiveTexture(GL_TEXTURE0);
     }
 
-    // Batched path for the N scene copies of one static asset (the ground
-    // cube entities): they share meshes, materials and textures, so the
-    // whole material/texture/uniform state is issued once per material and
-    // only the modelMvp/modelMatrix UBO slots change per instance.  Cuts the
-    // per-entity cost from ~30 GL calls to ~3 on the DGLES bridge.
+    // One upload and instanced draw per visible mesh/material, after CPU culling.
+    int UploadStaticInstances(const std::vector<Mat4>& worlds,
+        const terrain::Bounds& bounds, const Mat4& projection)
+    {
+        staticInstances_.clear();
+        const terrain::Frustum frustum(projection.value,false);
+        for (const auto& world:worlds) {
+            ++staticCandidates_;
+            if (!frustum.Intersects(terrain::TransformBounds(bounds,world.value))) {
+                ++staticCulled_; continue;
+            }
+            CharacterInstanceData item{}; item.model=world;
+            item.color[0]=item.color[1]=item.color[2]=1; item.color[3]=0;
+            staticInstances_.push_back(item);
+        }
+        if (staticInstances_.empty()) return 0;
+        if (!staticInstanceVbo_) glGenBuffers(1,&staticInstanceVbo_);
+        glBindBuffer(GL_ARRAY_BUFFER,staticInstanceVbo_);
+        // Orphan the stream storage rather than stalling on the previous draw.
+        glBufferData(GL_ARRAY_BUFFER,staticInstances_.size()*sizeof(CharacterInstanceData),
+            staticInstances_.data(),GL_STREAM_DRAW);
+        glBindBuffer(GL_ARRAY_BUFFER,0);
+        return static_cast<int>(staticInstances_.size());
+    }
+
+    void BindStaticInstanceAttributes()
+    {
+        glBindBuffer(GL_ARRAY_BUFFER,staticInstanceVbo_);
+        for (GLuint column=0;column<4;++column) {
+            glEnableVertexAttribArray(5+column);
+            glVertexAttribPointer(5+column,4,GL_FLOAT,GL_FALSE,sizeof(CharacterInstanceData),
+                reinterpret_cast<const void*>(sizeof(float)*4*column));
+            glVertexAttribDivisor(5+column,1);
+        }
+        glEnableVertexAttribArray(9);
+        glVertexAttribPointer(9,4,GL_FLOAT,GL_FALSE,sizeof(CharacterInstanceData),
+            reinterpret_cast<const void*>(sizeof(Mat4)));
+        glVertexAttribDivisor(9,1);
+        glBindBuffer(GL_ARRAY_BUFFER,0);
+    }
+
+    void DrawStaticShadowBatch(const std::vector<GlesMesh>& meshes,
+        const std::vector<Mat4>& worlds,const terrain::Bounds& bounds)
+    {
+        const int count=UploadStaticInstances(worlds,bounds,shadowMatrix_);
+        if (!count) return;
+        glUniform1i(shadowSkinningOnLocation_,0);
+        glUniform1i(shadowInstancingOnLocation_,1);
+        glUniform1i(shadowInstanceBaseLocation_,0);
+        glUniform1f(shadowEnemyDissolveLocation_,0);
+        glUniformMatrix4fv(shadowMvpLocation_,1,GL_FALSE,shadowMatrix_.value);
+        for (const auto& mesh:meshes) {
+            if (!mesh.indexCount) continue;
+            if (mesh.doubleSided) glDisable(GL_CULL_FACE); else glEnable(GL_CULL_FACE);
+            glBindVertexArray(mesh.vao); BindStaticInstanceAttributes();
+            glDrawElementsInstanced(GL_TRIANGLES,static_cast<GLsizei>(mesh.indexCount),mesh.indexType,nullptr,count);
+            ++staticDraws_; staticDrawnInstances_+=count;
+        }
+        glUniform1i(shadowInstancingOnLocation_,0);
+        glEnable(GL_CULL_FACE);
+    }
+
     void DrawStaticMeshBatch(const std::vector<GlesMesh>& meshes,
         const std::vector<GLuint>& textures,
         const std::vector<ohos_model::Material>& materials,
@@ -7111,23 +7726,15 @@ private:
         if (worlds.empty() || meshes.empty()) {
             return;
         }
+        const int instanceCount=UploadStaticInstances(worlds,modelBounds,viewProj_);
+        if (!instanceCount) return;
         glUniform1i(skinningOnLocation_, 0);
-        glUniform1i(instancingOnLocation_, 0);
+        glUniform1i(instancingOnLocation_, 1);
         glUniform1i(instanceBaseLocation_, 0);
         glUniform1f(enemyDissolveLocation_, 0.0f);
         glUniform1f(waterTimeLocation_,
             static_cast<float>(SDL_GetTicks() % 3600000U) * 0.001f);
-        const terrain::Frustum viewFrustum(viewProj_.value, false);
-        glBindBuffer(GL_UNIFORM_BUFFER, uniformBuffer_);
         int lastMaterialIndex = -1;
-        for (const Mat4& world : worlds) {
-            if (!viewFrustum.Intersects(
-                    terrain::TransformBounds(modelBounds, world.value))) {
-                continue;
-            }
-            const Mat4 mvp = Mat4Multiply(viewProj_, world);
-            glBufferSubData(GL_UNIFORM_BUFFER, 128, sizeof(Mat4), mvp.value);
-            glBufferSubData(GL_UNIFORM_BUFFER, 192, sizeof(Mat4), world.value);
             for (const GlesMesh& mesh : meshes) {
                 if (mesh.indexCount == 0) {
                     continue;
@@ -7172,11 +7779,12 @@ private:
                         material->normalImage >= 0 ? 1 : 0);
                 }
                 glBindVertexArray(mesh.vao);
-                glDrawElements(GL_TRIANGLES,
-                    static_cast<GLsizei>(mesh.indexCount),
-                    mesh.indexType, nullptr);
+                BindStaticInstanceAttributes();
+                glDrawElementsInstanced(GL_TRIANGLES,
+                    static_cast<GLsizei>(mesh.indexCount), mesh.indexType, nullptr,instanceCount);
+                ++staticDraws_; staticDrawnInstances_+=instanceCount;
             }
-        }
+        glUniform1i(instancingOnLocation_,0);
         glBindBuffer(GL_UNIFORM_BUFFER, 0);
         glEnable(GL_CULL_FACE);
         glActiveTexture(GL_TEXTURE0);
@@ -7314,6 +7922,13 @@ private:
 
     void UpdateEnemyAi(float dt, int pressed)
     {
+        if (playerHealth_<=0) {
+            playerAttackAcceptedThisFrame_=false;
+            enemyMoving_=false; enemyAttackRequested_=false;
+            enemyDesiredVelocityX_=enemyDesiredVelocityZ_=0;
+            return;
+        }
+
         const auto TickCombatTimer = [dt](float& timer) {
             if (timer > 0.0f) {
                 timer = std::max(0.0f, timer - dt);
@@ -7334,7 +7949,7 @@ private:
         // The attack animation and the damage query share one admission edge.
         // The minimum also prevents a reduced/malformed asset from making the
         // player attack faster than the intended gameplay cadence.
-        if (!pistol_.equipped && (pressed & 1) != 0 && playerAttackCooldown_ <= 0.0f &&
+        if (!playerSwimming_ && !pistol_.equipped && (pressed & 1) != 0 && playerAttackCooldown_ <= 0.0f &&
             playerHitLockTimer_ <= 0.0f && playerHealth_ > 0.0f) {
             const float clipDuration = ClipDurationOr(attackClip_, 0.87f);
             playerAttackCooldown_ = std::max(kMinimumPlayerAttackCooldown, clipDuration);
@@ -7343,6 +7958,7 @@ private:
         }
 
         for(const auto& clip:clips_)if(clip.name=="Pistol_Reload" && clip.duration>0)pistol_.reloadDuration=clip.duration;
+        if(pistol_.equipped && (pressed&1)!=0)pistol_.pendingFire=true;
         pistol_.Tick(dt,playerHealth_>0 && !playerSwimming_ && playerHitLockTimer_<=0);
         bool pistolHit = false;
         if (pistol_.fired) {
@@ -7353,8 +7969,8 @@ private:
             const float dx=std::sin(camYaw_)*std::cos(camPitch_);
             const float dy=-std::sin(camPitch_);
             const float dz=-std::cos(camYaw_)*std::cos(camPitch_);
-            const float ox=camPanX_+std::cos(camYaw_)*(pistol_.aiming?.55f:0.f)-dx*camDistance_;
-            const float oy=camPanY_+(pistol_.aiming?.25f:0.f)-dy*camDistance_, oz=camPanZ_+std::sin(camYaw_)*(pistol_.aiming?.55f:0.f)-dz*camDistance_;
+            const float ox=camPosX_;
+            const float oy=camPosY_, oz=camPosZ_;
             const float target=gameplay::RayEnemy(ox,oy,oz,dx,dy,dz,enemyX_,enemyY_,enemyZ_);
             const bool physicsReady=physicsWorld_!=nullptr && physicsWorld_->IsReady();
             const float wall=physicsReady?physicsWorld_->RaycastWorld(ox,oy,oz,dx,dy,dz,60.f):0.f;
@@ -7373,9 +7989,9 @@ private:
         float toEnemyX = enemyX_ - playerX_;
         float toEnemyZ = enemyZ_ - playerZ_;
         float distance = std::sqrt(toEnemyX * toEnemyX + toEnemyZ * toEnemyZ);
-        if (((playerAttackAcceptedThisFrame_ && distance <= 1.75f) || pistolHit) && enemyAlive_ &&
+        if (((playerAttackAcceptedThisFrame_ && distance <= (sword_.drawn?2.4f:1.75f) && std::fabs(enemyY_-playerY_)<=1.5f) || pistolHit) && enemyAlive_ &&
             (pistolHit || enemyHitInvulnerability_ <= 0.0f)) {
-            enemyHealth_ = std::max(0.0f, enemyHealth_ - 25.0f * inventory_.Stats().attack);
+            enemyHealth_ = std::max(0.0f, enemyHealth_ - 25.0f * inventory_.Stats(pistolHit?0:(sword_.drawn?5:inventory::kNoItem)).attack);
             AudioManager::GetInstance().PlayAudio("hit", 0.55f);
             enemyHitInvulnerability_ = kHitInvulnerability;
             if (enemyHealth_ <= 0.0f) {
@@ -7433,7 +8049,7 @@ private:
             enemyAttackRequested_ = true;
             if (playerAttackInvulnerability_ <= 0.0f &&
                 playerHitInvulnerability_ <= 0.0f) {
-                playerHealth_ = std::max(0.0f, playerHealth_ - 8.0f / inventory_.Stats().defense);
+                playerHealth_ = std::max(0.0f, playerHealth_ - 8.0f / inventory_.Stats(pistol_.equipped?0:(sword_.drawn?5:inventory::kNoItem)).defense);
                 AudioManager::GetInstance().PlayAudio("hit",
                     playerHealth_ <= 0.0f ? 0.95f : 0.70f);
                 playerHitInvulnerability_ = kHitInvulnerability;
@@ -7449,8 +8065,11 @@ private:
                     enemyDesiredVelocityZ_ = 0.0f;
                     enemyAttackRequested_ = false;
                     cameraInput_.actionButtonPressedMask = 0;
-                    uiScreen_ = rhi::UiScreen::GameplayRetry;
-                    SDL_Log("SDL3_GLES stage=player_defeated screen=retry");
+                    pistol_.aiming=false;
+                    playerDeathHold_=0;
+                    playerHitLockTimer_=0;
+                    EnterAnimState(AnimState::Death);
+                    SDL_Log("SDL3_GLES stage=player_defeated animation=death");
                     return;
                 }
             } else {
@@ -7493,7 +8112,7 @@ private:
                 fpsAvgMs_ > 0.0f && fpsAvgMs_ < 1000.0f ? fpsAvgMs_ * 0.001f : 0.016f;
             camYaw_ += orbitDt * 0.12f;
         }
-        const bool gameplayInput = uiScreen_ == rhi::UiScreen::Gameplay;
+        const bool gameplayInput = uiScreen_ == rhi::UiScreen::Gameplay && playerHealth_>0;
         if (gameplayInput) {
             camYaw_ += cameraInput_.lookDeltaX * kLookSensitivity * lookSensitivityScale_;
             camPitch_ += cameraInput_.lookDeltaY * kLookSensitivity * lookSensitivityScale_;
@@ -7570,7 +8189,7 @@ private:
                 constexpr float kWalkSpeed = 1.3f;    // world units/s at full stick
                 constexpr float kSprintSpeed = 2.6f;  // RUN held: 2x walk
                 playerSprinting_ = cameraInput_.actionButtonHeld[2] && !crouchEnabled_;
-                const float speed = (playerSprinting_ ? kSprintSpeed : kWalkSpeed) * inventory_.Stats().speed;
+                const float speed = (playerSprinting_ ? kSprintSpeed : kWalkSpeed) * inventory_.Stats(pistol_.equipped?0:(sword_.drawn?5:inventory::kNoItem)).speed;
                 desiredVelocityX = dirX * speed * stickMag;
                 desiredVelocityZ = dirZ * speed * stickMag;
                 hasMovementDirection = true;
@@ -7584,7 +8203,7 @@ private:
                         : (playerX_ < -kGroundBound ? -kGroundBound : playerX_);
                     playerZ_ = playerZ_ > kGroundBound ? kGroundBound
                         : (playerZ_ < -kGroundBound ? -kGroundBound : playerZ_);
-                    playerY_ = 0.0f;
+                    playerY_ = sceneDefinition_ ? sceneDefinition_->playerSpawn.y : 0.0f;
                 }
                 // Face the movement direction: the model-space front is +Z, so
                 // yaw = atan2(x, z).  Shortest-arc capped turn for smoothness.
@@ -7610,8 +8229,35 @@ private:
             playerX_ = state.x;
             playerY_ = state.y + physics::kPlayerVisualOriginOffset;
             playerZ_ = state.z;
+            if (sceneDefinition_ && sceneDefinition_->workshop.enabled && !sceneDefinition_->parkour.enabled && playerY_<-5) {
+                const auto& spawn=sceneDefinition_->playerSpawn;
+                playerX_=spawn.x; playerY_=spawn.y; playerZ_=spawn.z;
+                physicsWorld_->Reset(playerX_,playerY_-physics::kPlayerVisualOriginOffset,playerZ_,enemyX_,enemyY_,enemyZ_);
+                physicsWorld_->SetEnemyCollisionEnabled(false);
+                camPanX_=playerX_; camPanY_=playerY_+camera::kHeadFocusOffset; camPanZ_=playerZ_;
+                cameraObstruction_.Reset();
+                SDL_Log("SDL3_WORKSHOP stage=fall_reset");
+            }
+            if (sceneDefinition_ && sceneDefinition_->parkour.enabled) {
+                const auto previous = parkourProgress_.checkpoint;
+                const auto& course = sceneDefinition_->parkour;
+                if (parkourProgress_.Update(course, {playerX_, playerY_, playerZ_}, state.grounded, dt)) {
+                    const auto& spawn = course.checkpoints[parkourProgress_.checkpoint].spawn;
+                    playerX_ = spawn.x; playerY_ = spawn.y; playerZ_ = spawn.z;
+                    physicsWorld_->RespawnPlayer(playerX_, playerY_-physics::kPlayerVisualOriginOffset, playerZ_);
+                    physicsWorld_->SetEnemyCollisionEnabled(false);
+                    camPanX_ = playerX_; camPanY_ = playerY_+camera::kHeadFocusOffset; camPanZ_ = playerZ_;
+                    cameraObstruction_.Reset();
+                    playerBodyTransition_.Reset(); playerWeaponTransition_.Reset();
+                    EnterAnimState(AnimState::Idle);
+                    SDL_Log("SDL3_PARKOUR stage=respawn checkpoint=%zu falls=%d", parkourProgress_.checkpoint, parkourProgress_.falls);
+                }
+                if (previous != parkourProgress_.checkpoint)
+                    SDL_Log("SDL3_PARKOUR stage=%s checkpoint=%zu seconds=%.2f",
+                        parkourProgress_.finished ? "finish" : "checkpoint", parkourProgress_.checkpoint, parkourProgress_.seconds);
+            }
         } else if (!physicsReady && gameplayInput && !hasMovementDirection) {
-            playerY_ = 0.0f;
+            playerY_ = sceneDefinition_ ? sceneDefinition_->playerSpawn.y : 0.0f;
         }
         playerMoving_ = stickMag > 0.15f && !playerLocked;
         playerSwimming_ = sceneDefinition_ != nullptr && water::PlayerSubmerged(*sceneDefinition_,
@@ -7621,9 +8267,49 @@ private:
         // attack damage, and periodically strikes back when in range.  The
         // action mask is consumed later by the player's animation state
         // machine, so both render paths observe the same attack edge.
+
+
+        if (pistol_.equipped && pistol_.aiming && !playerSwimming_) playerYaw_ = std::atan2(std::sin(camYaw_),-std::cos(camYaw_));
+
+        // Camera soft-follows the player in all axes so jumps move the orbit
+        // target too (exponential, frame-rate independent).
+        if (gameplayInput) {
+            const float followLerp = 1.0f - std::exp(-8.0f * dt);
+            camPanX_ += (playerX_ - camPanX_) * followLerp;
+            camPanY_ += (playerY_ + camera::kHeadFocusOffset - camPanY_) * followLerp;
+            camPanZ_ += (playerZ_ - camPanZ_) * followLerp;
+        }
+
+        if (playerHealth_<=0) camPanY_+=(playerY_-.4f-camPanY_)*(1-std::exp(-5.f*dt));
+        const bool aiming = pistol_.equipped && pistol_.aiming;
+        const float aimOffset = aiming ? .55f : 0;
+        const camera::Vec3 desiredFocus{camPanX_+camToWorld.value[0]*aimOffset,
+            camPanY_+(aiming ? .25f : 0), camPanZ_+camToWorld.value[2]*aimOffset};
+        const camera::Vec3 backward{camToWorld.value[8], camToWorld.value[9], camToWorld.value[10]};
+        camera::Placement placement;
+        placement.focus = desiredFocus;
+        placement.distance = camDistance_;
+        placement.eye = {desiredFocus.x+backward.x*camDistance_, desiredFocus.y+backward.y*camDistance_,
+            desiredFocus.z+backward.z*camDistance_};
+        if (physicsReady && uiScreen_ != rhi::UiScreen::MainMenu && uiScreen_ != rhi::UiScreen::Settings) {
+            placement = cameraObstruction_.Resolve({playerX_, playerY_+(playerHealth_>0 ? camera::kHeadFocusOffset : -.4f)+(aiming ? .25f : 0), playerZ_},
+                desiredFocus, backward, camDistance_, camera::CollisionRadius(nearPlane, fieldOfViewDegrees, aspect), dt,
+                [this](float x,float y,float z,float dx,float dy,float dz,float distance,float radius) {
+                    return physicsWorld_->SweepCamera(x,y,z,dx,dy,dz,distance,radius);
+                });
+            if (placement.obstructed != cameraWasObstructed_) {
+                cameraWasObstructed_ = placement.obstructed;
+                SDL_Log("SDL3_CAMERA obstructed=%d requested=%.2f actual=%.2f", placement.obstructed ? 1 : 0,
+                    camDistance_, placement.distance);
+            }
+        }
+        const Mat4 view = Mat4Multiply(Mat4Translation(0, 0, -placement.distance),
+            Mat4Multiply(Mat4RotationX(camPitch_), Mat4Multiply(Mat4RotationY(camYaw_),
+                Mat4Translation(-placement.focus.x, -placement.focus.y, -placement.focus.z))));
+        camPosX_ = placement.eye.x; camPosY_ = placement.eye.y; camPosZ_ = placement.eye.z;
         if (gameplayInput) {
             UpdateEnemyAi(dt, cameraInput_.actionButtonPressedMask);
-            if (uiScreen_ == rhi::UiScreen::Gameplay) {
+            if (uiScreen_ == rhi::UiScreen::Gameplay && playerHealth_>0) {
                 playerHealth_ = gameplay::HealNearLight(playerHealth_, playerMaxHealth_,
                     playerX_, playerY_, playerZ_, dt);
             }
@@ -7639,31 +8325,6 @@ private:
                     std::sqrt(state.velocityX * state.velocityX + state.velocityZ * state.velocityZ) > 0.05f;
             }
         }
-
-        if (pistol_.equipped && pistol_.aiming && !playerSwimming_) playerYaw_ = std::atan2(std::sin(camYaw_),-std::cos(camYaw_));
-
-        // Camera soft-follows the player in all axes so jumps move the orbit
-        // target too (exponential, frame-rate independent).
-        if (gameplayInput) {
-            const float followLerp = 1.0f - std::exp(-8.0f * dt);
-            camPanX_ += (playerX_ - camPanX_) * followLerp;
-            camPanY_ += (playerY_ - camPanY_) * followLerp;
-            camPanZ_ += (playerZ_ - camPanZ_) * followLerp;
-        }
-
-        const float aimOffset=(pistol_.equipped && pistol_.aiming)?.55f:0.f;
-        const float focusX=camPanX_+camToWorld.value[0]*aimOffset;
-        const float focusY=camPanY_+((pistol_.equipped && pistol_.aiming)?.25f:0.f);
-        const float focusZ=camPanZ_+camToWorld.value[2]*aimOffset;
-        const Mat4 view = Mat4Multiply(Mat4Translation(0.0f, 0.0f, -camDistance_),
-            Mat4Multiply(Mat4RotationX(camPitch_),
-                Mat4Multiply(Mat4RotationY(camYaw_),
-                    Mat4Translation(-focusX, -focusY, -focusZ))));
-        // World-space camera position = pan + camToWorld * (0, 0, distance);
-        // column-major columns 2 and 3 are the z basis and translation.
-        camPosX_ = focusX + camToWorld.value[8] * camDistance_ + camToWorld.value[12];
-        camPosY_ = focusY + camToWorld.value[9] * camDistance_ + camToWorld.value[13];
-        camPosZ_ = focusZ + camToWorld.value[10] * camDistance_ + camToWorld.value[14];
         // Player world transform: stand on the ground line at the moved
         // position, facing the last movement direction.
         const Mat4 modelFacing = Mat4Multiply(
@@ -7721,6 +8382,10 @@ private:
     GLuint gbufferProgram_ = 0;
     GLuint shadowProgram_ = 0;
     GLuint lightingProgram_ = 0;
+    GLuint portalProgram_ = 0;
+    GLint portalInverseLocation_ = -1, portalCameraLocation_ = -1;
+    GLint portalCenterLocation_ = -1, portalTintLocation_ = -1;
+    GLint portalTimeLocation_ = -1, portalLdrLocation_ = -1;
     GLuint waterProgram_ = 0;
     GLuint waterNormalTexture_ = 0;
     GLuint waterFbo_ = 0;
@@ -7728,6 +8393,7 @@ private:
     GLint waterInverseLocation_ = -1;
     GLint waterCameraLocation_ = -1;
     GLint waterParamsLocation_ = -1;
+    GLint waterBoundsLocation_ = -1;
     GLint waterColorLocation_ = -1;
     GLint waterMuzzleLocation_ = -1;
     GLint waterLdrLocation_ = -1;
@@ -7839,6 +8505,9 @@ private:
     // Skeletal animation state (glTF skin + clips owned by the renderer).
     GLuint jointBuffer_ = 0;
     GLuint enemyJointBuffer_ = 0;
+    GLuint staticInstanceVbo_=0;
+    std::vector<CharacterInstanceData> staticInstances_;
+    unsigned staticCandidates_=0,staticCulled_=0,staticDraws_=0,staticDrawnInstances_=0;
     GLuint characterInstanceVbo_ = 0;
     GLint skinningOnLocation_ = -1;
     GLint instancingOnLocation_ = -1;
@@ -7853,6 +8522,8 @@ private:
     std::vector<ohos_model::Node> animNodes_;
     ohos_model::Skin skin_;
     std::vector<ohos_model::AnimationClip> clips_;
+    animation::PoseTransition playerBodyTransition_, playerWeaponTransition_, enemyBodyTransition_;
+    std::vector<std::uint8_t> weaponMask_;
     int animClipIndex_ = -1;
     float animTime_ = 0.0f;
     Uint64 animLastTicks_ = 0;
@@ -7868,6 +8539,7 @@ private:
     int idleClip_ = -1;
     int crouchClip_ = -1;
     bool crouchEnabled_ = false;
+    int punchClip_ = -1, swordAttackClip_ = -1, swordIdleClip_ = -1;
     int attackClip_ = -1;
     int jumpStartClip_ = -1;
     int jumpLoopClip_ = -1;
@@ -7920,17 +8592,27 @@ private:
     gameplay::MinimapTerrain minimapTerrain_;
     // Rasterise the map at half frame rate; the GL quad keeps drawing it.
     Uint32 minimapFrameTick_ = 0;
+    std::string activeSceneKey_, preloadSceneKey_;
+    std::map<std::string, GlesTerrainCache> terrainCache_;
+    std::vector<std::string> preloadPaths_;
+    size_t preloadAssetIndex_ = 0;
+    gameplay::ParkourProgress parkourProgress_;
+    Uint64 portalReadyTicks_ = 0;
     const scene::Definition* sceneDefinition_ = nullptr;
     physics::JoltGameplayPhysics* physicsWorld_ = nullptr;
     bool physicsReset_ = false;
+    camera::ObstructionCamera cameraObstruction_;
+    bool cameraWasObstructed_ = false;
     float camYaw_ = 0.0f;
     float camPitch_ = 0.0f;
     float camDistance_ = kCameraDistance;
     float camPanX_ = 0.0f;
-    float camPanY_ = 0.0f;
+    float camPanY_ = camera::kHeadFocusOffset;
     float camPanZ_ = 0.0f;
     // Third-person player state: ground position, facing yaw and the move
     // flag the animation state machine reads (see UpdateSceneUniforms).
+    gameplay::SwordState sword_;
+    Mat4 swordMatrix_ = Mat4Identity();
     gameplay::PistolState pistol_;
     float shotMuzzle_[3]{};
     Mat4 pistolMatrix_ = Mat4Identity();
@@ -7941,6 +8623,7 @@ private:
     float playerYaw_ = 0.0f;
     bool playerMoving_ = false;
     float playerMaxHealth_ = 100.0f;
+    float playerDeathHold_=0;
     float playerHealth_ = 100.0f;
     float playerAttackCooldown_ = 0.0f;
     float playerAttackInvulnerability_ = 0.0f;
@@ -7977,6 +8660,13 @@ private:
     // Top-level app screen + menu-owned settings.  The renderer owns this
     // state; the main loop feeds it back to the touch layer via
     // IRenderer::CurrentScreen so input routing follows the screen.
+    saves::Store saveStore_;
+    saves::Record pendingSave_;
+    std::string saveRoot_,saveSceneRequest_,saveMessage_;
+    bool saveStoreReady_=false,saveSelection_=false,pendingSaveLoad_=false;
+    unsigned activeSaveId_=0;
+    int savePage_=0;
+    Uint64 saveMessageUntil_=0;
     rhi::UiScreen uiScreen_ = rhi::UiScreen::MainMenu;
     float settingsScroll_=0;
     int shadowQuality_=2;
@@ -8085,6 +8775,9 @@ private:
     std::vector<GLuint> modelTextures_;
     std::vector<ohos_model::Material> materials_;
     // Static helmet prop (LoadHelmetModel).
+    std::vector<GlesMesh> swordMeshes_;
+    std::vector<GLuint> swordTextures_;
+    std::vector<ohos_model::Material> swordMaterials_;
     std::vector<GlesMesh> pistolMeshes_;
     std::vector<GLuint> pistolTextures_;
     std::vector<ohos_model::Material> pistolMaterials_;

@@ -1,5 +1,4 @@
 #include "scene_definition.h"
-
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -659,6 +658,11 @@ std::vector<StaticBoxCollider> BuildStaticBoxColliders(const Definition& definit
     std::vector<StaticBoxCollider> colliders;
     colliders.reserve(definition.StaticCubeCount());
     for (const Entity& entity : definition.entities) {
+        if (definition.workshop.enabled && (entity.id == definition.workshop.crateId ||
+            entity.id == definition.workshop.gateId || entity.id == definition.workshop.liftId)) continue;
+        bool moving=false;
+        for (const auto& platform:definition.workshop.movingPlatforms) moving |= entity.id==platform.entityId;
+        if (moving) continue;
         const ColliderSettings& settings = entity.collider;
         if (!entity.importAsStaticCube || !settings.present || settings.isTrigger ||
             settings.shapeType != 0) {
@@ -737,6 +741,115 @@ bool ParseMikanScene(const char* json, std::size_t size, Definition& output,
         return false;
     }
     parsed.game = StringOr(root, "game");
+    if (const JsonValue* gameplay = Member(root, "gameplay")) {
+        if (gameplay->type != JsonValue::Type::Object ||
+            (Member(*gameplay, "playerSpawn") &&
+                !ReadVec3(Member(*gameplay, "playerSpawn"), parsed.playerSpawn))) {
+            error = "gameplay.playerSpawn must contain three finite numbers";
+            return false;
+        }
+        parsed.enemyEnabled = BoolOr(*gameplay, "enemyEnabled", true);
+        parsed.demoPropsEnabled = BoolOr(*gameplay, "demoPropsEnabled", true);
+        parsed.groundEnabled = BoolOr(*gameplay, "groundEnabled", true);
+        if (const auto* points = Member(*gameplay, "savePoints")) {
+            if (points->type != JsonValue::Type::Array || points->array.size()>32) {
+                error="savePoints must be an array of at most 32 positions"; return false;
+            }
+            for (const auto& point : points->array) {
+                Vec3 position;
+                if (!ReadVec3(&point, position)) { error="savePoints requires finite positions"; return false; }
+                parsed.savePoints.push_back(position);
+            }
+        }
+        if (const auto* workshop = Member(*gameplay, "workshop")) {
+            auto& w = parsed.workshop;
+            w.enabled = true;
+            w.crateId = UIntOr(Member(*workshop,"crateId"), kNoParent);
+            w.gateId = UIntOr(Member(*workshop,"gateId"), kNoParent);
+            w.liftId = UIntOr(Member(*workshop,"liftId"), kNoParent);
+            w.liftTravel = FloatOr(*workshop,"liftTravel",4);
+            if (const auto* platforms=Member(*workshop,"movingPlatforms")) {
+                if (platforms->type!=JsonValue::Type::Array || platforms->array.size()>16) {
+                    error="movingPlatforms must be an array of at most 16 entries"; return false;
+                }
+                for (const auto& value:platforms->array) {
+                    Definition::Workshop::MovingPlatform platform;
+                    platform.entityId=UIntOr(Member(value,"entityId"),kNoParent);
+                    platform.period=FloatOr(value,"period",12);
+                    if (platform.entityId==kNoParent || !ReadVec3(Member(value,"travel"),platform.travel) ||
+                        !std::isfinite(platform.period) || platform.period<4 || platform.period>60 ||
+                        std::fabs(platform.travel.x)>10 || std::fabs(platform.travel.y)>10 || std::fabs(platform.travel.z)>10) {
+                        error="invalid moving platform travel, period or entityId"; return false;
+                    }
+                    w.movingPlatforms.push_back(platform);
+                }
+            }
+            if (!ReadVec3(Member(*workshop,"plate"),w.plate) || w.crateId==kNoParent ||
+                w.gateId==kNoParent || w.liftId==kNoParent || w.crateId==w.gateId ||
+                w.crateId==w.liftId || w.gateId==w.liftId ||
+                !std::isfinite(w.liftTravel) || w.liftTravel<1 || w.liftTravel>8) {
+                error="invalid workshop body IDs, plate or liftTravel"; return false;
+            }
+        }
+        auto readPortal = [&](const JsonValue* portal) {
+            Portal result;
+            result.target = StringOr(*portal, "target");
+            result.label = StringOr(*portal, "label");
+            result.radius = FloatOr(*portal, "radius", 0.9f);
+            result.opacity = FloatOr(*portal, "opacity", 0.32f);
+            if ((Member(*portal, "color") && !ReadVec3(Member(*portal, "color"), result.color)) ||
+                result.color.x < 0 || result.color.x > 1 ||
+                result.color.y < 0 || result.color.y > 1 ||
+                result.color.z < 0 || result.color.z > 1 ||
+                !std::isfinite(result.opacity) || result.opacity < 0 || result.opacity > 1) {
+                error = "portal color and opacity must be within [0, 1]";
+                return false;
+            }
+            if (portal->type != JsonValue::Type::Object ||
+                !ReadVec3(Member(*portal, "position"), result.position) ||
+                result.target.rfind("scenes/", 0) != 0 ||
+                result.target.find("..") != std::string::npos ||
+                result.target.find('\\') != std::string::npos ||
+                result.target.size() < 12 ||
+                result.target.substr(result.target.size() - 5) != ".json" ||
+                !std::isfinite(result.radius) || result.radius < 0.25f ||
+                result.radius > 3.0f) {
+                error = "invalid gameplay portal position, target or radius";
+                return false;
+            }
+            parsed.portals.push_back(std::move(result));
+            return true;
+        };
+        // Keep the original single-portal scene format compatible.
+        if (const auto* portal = Member(*gameplay, "portal"))
+            if (!readPortal(portal)) return false;
+        if (const auto* portals = Member(*gameplay, "portals")) {
+            if (portals->type != JsonValue::Type::Array || portals->array.size() + parsed.portals.size() > 8) {
+                error = "gameplay.portals must be an array of at most eight portals"; return false;
+            }
+            for (const auto& portal : portals->array) if (!readPortal(&portal)) return false;
+        }
+        if (const auto* course = Member(*gameplay, "parkour")) {
+            const auto* points = Member(*course, "checkpoints");
+            auto& c = parsed.parkour;
+            c.enabled = true;
+            c.fallY = FloatOr(*course, "fallY", 0);
+            if (course->type != JsonValue::Type::Object || !std::isfinite(c.fallY) ||
+                !points || points->type != JsonValue::Type::Array || points->array.size() < 2 || points->array.size() > 16) {
+                error = "parkour requires finite fallY and 2..16 checkpoints"; return false;
+            }
+            for (const auto& value : points->array) {
+                CourseCheckpoint point;
+                if (!ReadVec3(Member(value, "spawn"), point.spawn) ||
+                    !ReadVec3(Member(value, "halfExtents"), point.halfExtents) ||
+                    point.spawn.y <= c.fallY || point.halfExtents.x <= 0 ||
+                    point.halfExtents.y <= 0 || point.halfExtents.z <= 0) {
+                    error = "invalid parkour checkpoint spawn or halfExtents"; return false;
+                }
+                c.checkpoints.push_back(point);
+            }
+        }
+    }
     if (const JsonValue* water = Member(root, "water")) {
         if (water->type != JsonValue::Type::Object) {
             error = "water must be an object";
@@ -746,6 +859,11 @@ bool ParseMikanScene(const char* json, std::size_t size, Definition& output,
         w.enabled = BoolOr(*water, "enabled", true);
         w.height = FloatOr(*water, "height", w.height);
         w.size = FloatOr(*water, "size", w.size);
+        if ((Member(*water,"center") && !ReadVec3(Member(*water,"center"),w.center)) ||
+            (Member(*water,"halfExtents") && (!ReadVec3(Member(*water,"halfExtents"),w.halfExtents) ||
+                w.halfExtents.x<=0 || w.halfExtents.z<=0 || w.halfExtents.x>2048 || w.halfExtents.z>2048))) {
+            error="invalid water center or rectangular extents"; return false;
+        }
         w.roughness = FloatOr(*water, "roughness", w.roughness);
         ReadVec3(Member(*water, "color"), w.color);
         if (!std::isfinite(w.height) || std::fabs(w.height) > 10000 ||
@@ -912,6 +1030,22 @@ bool ParseMikanScene(const char* json, std::size_t size, Definition& output,
         parsed.entities.push_back(std::move(entity));
     }
 
+    if (parsed.workshop.enabled) {
+        std::vector<std::uint32_t> ids{parsed.workshop.crateId,parsed.workshop.gateId,parsed.workshop.liftId};
+        for (const auto& platform:parsed.workshop.movingPlatforms) {
+            if (std::find(ids.begin(),ids.end(),platform.entityId)!=ids.end()) {
+                error="workshop moving body IDs must be unique"; return false;
+            }
+            ids.push_back(platform.entityId);
+        }
+        for (const auto id : ids) {
+            int count=0;
+            for (const auto& e : parsed.entities)
+                if (e.id==id && e.importAsStaticCube && e.transform.scale.x>.04f &&
+                    e.transform.scale.y>.04f && e.transform.scale.z>.04f) ++count;
+            if (count!=1) { error="workshop requires three unique solid cube entities"; return false; }
+        }
+    }
     output = std::move(parsed);
     return true;
 }
@@ -934,6 +1068,7 @@ bool LoadMikanSceneRawFile(const char* rawFilePath, Definition& output,
         return false;
     }
     const bool parsed = ParseMikanScene(static_cast<const char*>(bytes), size, output, error);
+    if (parsed) output.sourcePath = rawFilePath;
     OHOS_FreeRawFile(bytes);
     return parsed;
 }

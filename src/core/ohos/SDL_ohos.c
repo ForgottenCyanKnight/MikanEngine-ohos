@@ -16,6 +16,7 @@
 
 #include "../../video/ohos/SDL_ohoskeyboard.h"
 #include "../../video/ohos/SDL_ohostouch.h"
+#include "../../video/ohos/SDL_ohostouch_filter.h"
 #include "../../video/ohos/SDL_ohosvideo.h"
 #include "SDL3/SDL_init.h"
 #include "SDL3/SDL_mutex.h"
@@ -306,11 +307,11 @@ bool OHOS_IsScreenKeyboardShown()
     data->argCount = 0;
     data->type = Int;
     data->returned = false;
-    
+
     napi_call_threadsafe_function(napiEnv.func, data, napi_tsfn_nonblocking);
-    
+
     while (!data->returned) {}
-    
+
     bool d = data->ret.data.i == 1;
     SDL_free(data);
     return d;
@@ -324,11 +325,11 @@ bool OHOS_IsBatteryPresent()
     data->argCount = 0;
     data->type = Int;
     data->returned = false;
-    
+
     napi_call_threadsafe_function(napiEnv.func, data, napi_tsfn_nonblocking);
-    
+
     while (!data->returned) {}
-    
+
     bool d = data->ret.data.i == 1;
     SDL_free(data);
     return d;
@@ -342,11 +343,11 @@ bool OHOS_IsBatteryCharging()
     data->argCount = 0;
     data->type = Int;
     data->returned = false;
-    
+
     napi_call_threadsafe_function(napiEnv.func, data, napi_tsfn_nonblocking);
-    
+
     while (!data->returned) {}
-    
+
     bool d = data->ret.data.i == 1;
     SDL_free(data);
     return d;
@@ -360,11 +361,11 @@ bool OHOS_IsBatteryCharged()
     data->argCount = 0;
     data->type = Int;
     data->returned = false;
-    
+
     napi_call_threadsafe_function(napiEnv.func, data, napi_tsfn_nonblocking);
-    
+
     while (!data->returned) {}
-    
+
     bool d = data->ret.data.i == 1;
     SDL_free(data);
     return d;
@@ -378,11 +379,11 @@ int OHOS_GetBatteryPercent()
     data->argCount = 0;
     data->type = Int;
     data->returned = false;
-    
+
     napi_call_threadsafe_function(napiEnv.func, data, napi_tsfn_nonblocking);
-    
+
     while (!data->returned) {}
-    
+
     int d = data->ret.data.i;
     SDL_free(data);
     return d;
@@ -447,14 +448,22 @@ const char* OHOS_Locale()
     data->argCount = 0;
     data->type = String;
     data->returned = false;
-    
+
     napi_call_threadsafe_function(napiEnv.func, data, napi_tsfn_nonblocking);
-    
+
     while (!data->returned) {}
-    
+
     const char* d = data->ret.data.str;
     SDL_free(data);
     return d;
+}
+
+/* Captured on the ArkTS thread before launching SDL; native gameplay must not
+ * call N-API from its render thread. filesDir survives ordinary HAP updates. */
+static char g_ohosSaveDirectory[4096];
+__attribute__((visibility("default"))) const char *OHOS_GetSaveDirectory(void)
+{
+    return g_ohosSaveDirectory;
 }
 
 static napi_value sdlCallbackInit(napi_env env, napi_callback_info info)
@@ -466,6 +475,21 @@ static napi_value sdlCallbackInit(napi_env env, napi_callback_info info)
     napi_get_cb_info(env, info, &argc, args, NULL, NULL);
 
     napi_create_reference(env, args[0], 1, &napiEnv.interface);
+
+    napi_value getPath, path;
+    size_t pathSize = 0;
+    if (napi_get_named_property(env, args[0], "getInternalPath", &getPath) == napi_ok &&
+        napi_call_function(env, args[0], getPath, 0, NULL, &path) == napi_ok &&
+        napi_get_value_string_utf8(env, path, g_ohosSaveDirectory,
+            sizeof(g_ohosSaveDirectory), &pathSize) == napi_ok) {
+        if (pathSize == 0 || pathSize >= sizeof(g_ohosSaveDirectory)-1)
+            g_ohosSaveDirectory[0] = '\0';
+    } else {
+        bool pending = false;
+        napi_is_exception_pending(env, &pending);
+        if (pending) { napi_value exception; napi_get_and_clear_last_exception(env, &exception); }
+        g_ohosSaveDirectory[0] = '\0';
+    }
 
     napi_value resName = NULL;
     napi_create_string_utf8(env, "SDLThreadSafe", NAPI_AUTO_LENGTH, &resName);
@@ -492,7 +516,7 @@ static int sdlLaunchMainInternal(void* reserved)
     int d = ((test)func)();
     dlclose(lib);
     SDL_free(reserved);
-    
+
     return d;
 }
 
@@ -526,7 +550,7 @@ static napi_value sdlLaunchMain(napi_env env, napi_callback_info info)
         return result;
     }
     napi_get_value_string_utf8(env, args[1], fname, fstringSize + 1, &fstringSize);
-    
+
     entrypoint_info *entry = (entrypoint_info*)SDL_malloc(sizeof(entrypoint_info));
     if (!entry) {
         SDL_free(fname);
@@ -589,7 +613,7 @@ static void OnSurfaceCreatedCB(OH_NativeXComponent *component, void *window)
             win = win->next;
         }
     }
-    
+
     napiCallbackData *data = SDL_malloc(sizeof(napiCallbackData));
     data->func = "onMainLaunch";
     data->argCount = 0;
@@ -703,20 +727,16 @@ static void onNativeTouch(OH_NativeXComponent *component, void *window)
     OH_NativeXComponent_TouchPointToolType toolType = OH_NATIVEXCOMPONENT_TOOL_TYPE_UNKNOWN;
 
     OHOS_LockPage();
-    OH_NativeXComponent_GetTouchEvent(component, window, &touchEvent);
+    if (OH_NativeXComponent_GetTouchEvent(component, window, &touchEvent) != OH_NATIVEXCOMPONENT_RESULT_SUCCESS) {
+        OHOS_UnlockPage(); return;
+    }
     OH_NativeXComponent_GetTouchPointToolType(component, 0, &toolType);
 
     // Diagnostics: dump every batch that contains a non-MOVE point (down/up/
     // cancel) so multi-touch fingerId stability is observable on device via
     // hilog.  MOVE-only batches stay silent to avoid flooding the log.
     {
-        bool batchHasLiftEvents = false;
-        for (int i = 0; i < touchEvent.numPoints; i++) {
-            if (touchEvent.touchPoints[i].type != OH_NATIVEXCOMPONENT_MOVE) {
-                batchHasLiftEvents = true;
-                break;
-            }
-        }
+        bool batchHasLiftEvents = touchEvent.type != OH_NATIVEXCOMPONENT_MOVE;
         if (batchHasLiftEvents) {
             for (int i = 0; i < touchEvent.numPoints; i++) {
                 SDL_Log("SDL3_OHOS_TOUCH batch pt=%d id=%d type=%d x=%.3f y=%.3f",
@@ -729,7 +749,7 @@ static void onNativeTouch(OH_NativeXComponent *component, void *window)
             // (the pinch path), single-point moves every 60th batch.
             static int moveBatchCount = 0;
             moveBatchCount++;
-            if (touchEvent.numPoints > 1 || (moveBatchCount % 60) == 0) {
+            if ((moveBatchCount % 60) == 0) {
                 for (int i = 0; i < touchEvent.numPoints; i++) {
                     SDL_Log("SDL3_OHOS_TOUCH move#%d pt=%d id=%d x=%.3f y=%.3f",
                         moveBatchCount, i, touchEvent.touchPoints[i].id,
@@ -739,7 +759,15 @@ static void onNativeTouch(OH_NativeXComponent *component, void *window)
         }
     }
 
-    for (int i = 0; i < touchEvent.numPoints; i++) {
+    Uint32 callbackAction = 0;
+    switch (touchEvent.type) {
+    case OH_NATIVEXCOMPONENT_DOWN: callbackAction=SDL_EVENT_FINGER_DOWN; break;
+    case OH_NATIVEXCOMPONENT_MOVE: callbackAction=SDL_EVENT_FINGER_MOTION; break;
+    case OH_NATIVEXCOMPONENT_UP: callbackAction=SDL_EVENT_FINGER_UP; break;
+    case OH_NATIVEXCOMPONENT_CANCEL: callbackAction=SDL_EVENT_FINGER_CANCELED; break;
+    default: break;
+    }
+    for (int i = 0; callbackAction && i < touchEvent.numPoints; i++) {
         SDL_OHOSTouchEvent e;
         e.timestamp = touchEvent.timeStamp;
         // skip assertions
@@ -750,25 +778,13 @@ static void onNativeTouch(OH_NativeXComponent *component, void *window)
         e.y = touchEvent.touchPoints[i].y / (float)hei;
         e.p = touchEvent.touchPoints[i].force;
 
-        switch (touchEvent.touchPoints[i].type) {
-        case OH_NATIVEXCOMPONENT_DOWN:
-            e.type = SDL_EVENT_FINGER_DOWN;
-            break;
-        case OH_NATIVEXCOMPONENT_MOVE:
-            e.type = SDL_EVENT_FINGER_MOTION;
-            break;
-        case OH_NATIVEXCOMPONENT_UP:
-            e.type = SDL_EVENT_FINGER_UP;
-            break;
-        case OH_NATIVEXCOMPONENT_CANCEL:
-        case OH_NATIVEXCOMPONENT_UNKNOWN:
-            e.type = SDL_EVENT_FINGER_CANCELED;
-            break;
-        }
-        
+        e.type = SDL_OHOS_NormalizeTouchAction(callbackAction,
+            touchEvent.touchPoints[i].id == touchEvent.id, touchEvent.touchPoints[i].isPressed);
+        if (!e.type) continue;
+
         OHOS_OnTouch(e);
     }
-    
+
     OHOS_UnlockPage();
 }
 // TODO mouse data
@@ -801,15 +817,15 @@ static void onNativeMouse(OH_NativeXComponent *component, void *window) {
         e.button = SDL_BUTTON_X2;
         break;
     }
-    
+
     if (event.action == OH_NATIVEXCOMPONENT_MOUSE_MOVE) {
-        e.motion = true;    
+        e.motion = true;
     }
     else {
         e.down = event.action == OH_NATIVEXCOMPONENT_MOUSE_PRESS;
     }
     OHOS_OnMouse(e);
-    
+
     OHOS_UnlockPage();
 }
 
@@ -818,18 +834,18 @@ static napi_value sdlKeyEvent(napi_env env, napi_callback_info info)
     size_t argc = 2;
     napi_value args[2] = { NULL, NULL };
     napi_get_cb_info(env, info, &argc, args, NULL, NULL);
-    
+
     int keycode, type;
     napi_get_value_int32(env, args[0], &keycode);
     napi_get_value_int32(env, args[1], &type);
-    
+
     if (type == 0) {
-        OHOS_OnKeyDown(keycode);    
+        OHOS_OnKeyDown(keycode);
     }
     else {
         OHOS_OnKeyUp(keycode);
     }
-    
+
     napi_value result;
     napi_create_int32(env, 0, &result);
     return result;
@@ -840,14 +856,14 @@ static napi_value sdlTextAppend(napi_env env, napi_callback_info info)
     size_t argc = 1;
     napi_value args[1] = { NULL };
     napi_get_cb_info(env, info, &argc, args, NULL, NULL);
-    
+
     size_t fstringSize = 0;
     napi_get_value_string_utf8(env, args[0], NULL, 0, &fstringSize);
     char *fname = SDL_malloc(fstringSize + 1);
     napi_get_value_string_utf8(env, args[0], fname, fstringSize + 1, &fstringSize);
-    
+
     SDL_SendKeyboardText(fname);
-    
+
     napi_value result;
     napi_create_int32(env, 0, &result);
     return result;
@@ -858,18 +874,18 @@ static napi_value sdlTextEditing(napi_env env, napi_callback_info info)
     size_t argc = 3;
     napi_value args[3] = { NULL, NULL, NULL };
     napi_get_cb_info(env, info, &argc, args, NULL, NULL);
-    
+
     size_t fstringSize = 0;
     napi_get_value_string_utf8(env, args[0], NULL, 0, &fstringSize);
     char *fname = SDL_malloc(fstringSize + 1);
     napi_get_value_string_utf8(env, args[0], fname, fstringSize + 1, &fstringSize);
-    
+
     int start, len;
     napi_get_value_int32(env, args[1], &start);
     napi_get_value_int32(env, args[2], &len);
-    
+
     SDL_SendEditingText(fname, start, len);
-    
+
     napi_value result;
     napi_create_int32(env, 0, &result);
     return result;
@@ -1072,9 +1088,9 @@ static napi_value SDL_OHOS_NAPI_Init(napi_env env, napi_value exports)
 
     napi_property_descriptor desc[] = {
         { "sdlCallbackInit", NULL, sdlCallbackInit, NULL, NULL, NULL, napi_default, NULL },
-        { "sdlLaunchMain", NULL, sdlLaunchMain, NULL, NULL, NULL, napi_default, NULL }, 
+        { "sdlLaunchMain", NULL, sdlLaunchMain, NULL, NULL, NULL, napi_default, NULL },
         { "sdlKeyEvent", NULL, sdlKeyEvent, NULL, NULL, NULL, napi_default, NULL },
-        { "sdlTextAppend", NULL, sdlTextAppend, NULL, NULL, NULL, napi_default, NULL }, 
+        { "sdlTextAppend", NULL, sdlTextAppend, NULL, NULL, NULL, napi_default, NULL },
         { "sdlTextEditing", NULL, sdlTextEditing, NULL, NULL, NULL, napi_default, NULL },
         { "sdlDialogExecCallback", NULL, sdlDialogExecCallback, NULL, NULL, NULL, napi_default, NULL },
         { "sdlDialogClearSelection", NULL, sdlDialogClearSelection, NULL, NULL, NULL, napi_default, NULL },

@@ -1,0 +1,1287 @@
+{
+  "formatVersion": 1,
+  "game": "physics_workshop",
+  "water": {
+    "enabled": false
+  },
+  "gameplay": {
+    "playerSpawn": [
+      0,
+      0.98,
+      6
+    ],
+    "enemyEnabled": false,
+    "demoPropsEnabled": false,
+    "groundEnabled": false,
+    "workshop": {
+      "crateId": 10001,
+      "gateId": 10002,
+      "liftId": 10003,
+      "plate": [
+        0,
+        0.04,
+        -1.2
+      ],
+      "liftTravel": 4
+    },
+    "portals": [
+      {
+        "target": "scenes/main.json",
+        "label": "RETURN TO HUB",
+        "position": [
+          -1.7,
+          0.98,
+          7
+        ],
+        "radius": 0.8,
+        "color": [
+          0.35,
+          0.18,
+          1
+        ],
+        "opacity": 0.32
+      },
+      {
+        "target": "scenes/main.json",
+        "label": "WORKSHOP CLEAR - RETURN TO HUB",
+        "position": [
+          0,
+          4.98,
+          -13.5
+        ],
+        "radius": 0.8,
+        "color": [
+          0.35,
+          0.18,
+          1
+        ],
+        "opacity": 0.32
+      }
+    ]
+  },
+  "entities": [
+    {
+      "id": 0,
+      "name": {
+        "name": "Main Camera"
+      },
+      "transform": {
+        "position": [
+          -5.13074e-07,
+          2.19747,
+          -5.86889
+        ],
+        "rotation": [
+          4.34719e-08,
+          -4.56909e-09,
+          -0.994522,
+          -0.104528
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
+      "camera": {
+        "fov": 60,
+        "nearPlane": 0.1,
+        "farPlane": 600,
+        "isMainCamera": true,
+        "isOrthographic": false,
+        "orthographicSize": 5,
+        "postProcessChain": "",
+        "enableFrustumCulling": true,
+        "showFrustumWireframe": false,
+        "useSubMeshCulling": false,
+        "showBVHWireframe": false,
+        "showCollisionWireframe": false,
+        "useBVHCulling": false,
+        "thirdPersonEnabled": true,
+        "thirdPersonTargetName": "AnimationPlayer",
+        "thirdPersonTargetOffset": [
+          0,
+          0.95,
+          0
+        ],
+        "thirdPersonDistance": 6,
+        "thirdPersonMinDistance": 2,
+        "thirdPersonMaxDistance": 12,
+        "thirdPersonYaw": 180,
+        "thirdPersonPitch": 12,
+        "thirdPersonMinPitch": -25,
+        "thirdPersonMaxPitch": 70,
+        "thirdPersonOrbitSensitivity": 0.12,
+        "thirdPersonZoomSensitivity": 1,
+        "thirdPersonPositionDamping": 12,
+        "thirdPersonRotationDamping": 16,
+        "thirdPersonCaptureMouse": false,
+        "thirdPersonPreserveDistanceWhenOccluded": true,
+        "thirdPersonCollisionEnabled": true,
+        "thirdPersonCollisionRadius": 0.22,
+        "thirdPersonCollisionBuffer": 0.08,
+        "thirdPersonCollisionMinDistance": 0.75,
+        "thirdPersonCollisionDampingIn": 24,
+        "thirdPersonCollisionDampingOut": 6,
+        "thirdPersonCollisionSmoothingTime": 0.12,
+        "thirdPersonAimEnabled": true,
+        "thirdPersonAimShoulderOffset": 0.75,
+        "thirdPersonAimFov": 50,
+        "thirdPersonAimSensitivity": 0.08,
+        "thirdPersonAimPositionDamping": 18,
+        "thirdPersonAimRotationDamping": 20,
+        "thirdPersonLockOnEnabled": true,
+        "thirdPersonLockTargetName": "",
+        "thirdPersonLockOnMaxDistance": 25,
+        "thirdPersonLockOnLookAtBlend": 0.5
+      },
+      "script": {
+        "scriptName": ""
+      }
+    },
+    {
+      "id": 1,
+      "name": {
+        "name": "Directional Light"
+      },
+      "transform": {
+        "position": [
+          0,
+          12,
+          10
+        ],
+        "rotation": [
+          0.875426,
+          0.408218,
+          -0.23457,
+          0.109382
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
+      "light": {
+        "type": 0,
+        "color": [
+          1,
+          1,
+          1
+        ],
+        "intensity": 1.2,
+        "range": 10,
+        "spotAngle": 45,
+        "castShadow": true
+      },
+      "script": {
+        "scriptName": ""
+      }
+    },
+    {
+      "id": 2,
+      "name": {
+        "name": "Skybox"
+      },
+      "transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
+      "skybox": {
+        "enabled": true,
+        "textureName": "skybox",
+        "tint": [
+          1,
+          1,
+          1
+        ],
+        "intensity": 1
+      },
+      "script": {
+        "scriptName": ""
+      }
+    },
+    {
+      "id": 10000,
+      "name": {
+        "name": "Workshop lower floor"
+      },
+      "transform": {
+        "position": [
+          0,
+          -0.35,
+          0.8
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          3.2,
+          0.35,
+          7.2
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10001,
+      "name": {
+        "name": "Workshop push crate"
+      },
+      "transform": {
+        "position": [
+          0,
+          0.65,
+          2
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.6,
+          0.6,
+          0.6
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10002,
+      "name": {
+        "name": "Workshop sliding gate"
+      },
+      "transform": {
+        "position": [
+          0,
+          1.6,
+          -4.6
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          3.15,
+          1.6,
+          0.18
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10003,
+      "name": {
+        "name": "Workshop lift"
+      },
+      "transform": {
+        "position": [
+          0,
+          -0.25,
+          -7.8
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1.4,
+          0.25,
+          1.4
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10004,
+      "name": {
+        "name": "Workshop upper landing"
+      },
+      "transform": {
+        "position": [
+          0,
+          3.65,
+          -12
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          3.2,
+          0.35,
+          2.8
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10005,
+      "name": {
+        "name": "Workshop left wall"
+      },
+      "transform": {
+        "position": [
+          -3.4,
+          1.1,
+          0.8
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.2,
+          1.1,
+          7.2
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10006,
+      "name": {
+        "name": "Workshop right wall"
+      },
+      "transform": {
+        "position": [
+          3.4,
+          1.1,
+          0.8
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.2,
+          1.1,
+          7.2
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10007,
+      "name": {
+        "name": "Workshop back wall"
+      },
+      "transform": {
+        "position": [
+          0,
+          1.1,
+          8.2
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          3.6,
+          1.1,
+          0.2
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10008,
+      "name": {
+        "name": "Gate overhead frame"
+      },
+      "transform": {
+        "position": [
+          0,
+          3.5,
+          -4.6
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          3.6,
+          0.25,
+          0.4
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10009,
+      "name": {
+        "name": "Lift left guide"
+      },
+      "transform": {
+        "position": [
+          -1.7,
+          2,
+          -7.8
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.12,
+          2.4,
+          0.12
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10010,
+      "name": {
+        "name": "Lift right guide"
+      },
+      "transform": {
+        "position": [
+          1.7,
+          2,
+          -7.8
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.12,
+          2.4,
+          0.12
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10011,
+      "name": {
+        "name": "Upper left rail"
+      },
+      "transform": {
+        "position": [
+          -3.3,
+          4.45,
+          -12
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.12,
+          0.45,
+          2.8
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10012,
+      "name": {
+        "name": "Upper right rail"
+      },
+      "transform": {
+        "position": [
+          3.3,
+          4.45,
+          -12
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.12,
+          0.45,
+          2.8
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10013,
+      "name": {
+        "name": "Upper back rail"
+      },
+      "transform": {
+        "position": [
+          0,
+          4.45,
+          -15
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          3.4,
+          0.45,
+          0.12
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10014,
+      "name": {
+        "name": "Pressure plate"
+      },
+      "transform": {
+        "position": [
+          0,
+          0.025,
+          -1.2
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          0.025,
+          1
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/amber.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10100,
+      "name": {
+        "name": "Workshop route marking"
+      },
+      "transform": {
+        "position": [
+          0,
+          0.012,
+          4.5
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.15,
+          0.012,
+          0.18
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10101,
+      "name": {
+        "name": "Workshop route marking"
+      },
+      "transform": {
+        "position": [
+          0,
+          0.012,
+          3.6
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.15,
+          0.012,
+          0.18
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10102,
+      "name": {
+        "name": "Workshop route marking"
+      },
+      "transform": {
+        "position": [
+          0,
+          0.012,
+          0.6
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.15,
+          0.012,
+          0.18
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10103,
+      "name": {
+        "name": "Workshop route marking"
+      },
+      "transform": {
+        "position": [
+          0,
+          0.012,
+          -0.2
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.15,
+          0.012,
+          0.18
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10104,
+      "name": {
+        "name": "Workshop route marking"
+      },
+      "transform": {
+        "position": [
+          0,
+          0.012,
+          -2.7
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.15,
+          0.012,
+          0.18
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10105,
+      "name": {
+        "name": "Workshop route marking"
+      },
+      "transform": {
+        "position": [
+          0,
+          0.012,
+          -3.6
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.15,
+          0.012,
+          0.18
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10106,
+      "name": {
+        "name": "Workshop route marking"
+      },
+      "transform": {
+        "position": [
+          0,
+          0.012,
+          -5.5
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.15,
+          0.012,
+          0.18
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10110,
+      "name": {
+        "name": "Plate edge light"
+      },
+      "transform": {
+        "position": [
+          -1,
+          0.05,
+          -1.2
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.035,
+          0.025,
+          1
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/amber.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10111,
+      "name": {
+        "name": "Plate edge light"
+      },
+      "transform": {
+        "position": [
+          1,
+          0.05,
+          -1.2
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.035,
+          0.025,
+          1
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/amber.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10200,
+      "name": {
+        "name": "Workshop start return left"
+      },
+      "transform": {
+        "position": [
+          -2.8,
+          1.4,
+          7
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.16,
+          1.4,
+          0.2
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10201,
+      "name": {
+        "name": "Workshop start return right"
+      },
+      "transform": {
+        "position": [
+          -0.5999999999999999,
+          1.4,
+          7
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.16,
+          1.4,
+          0.2
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10202,
+      "name": {
+        "name": "Workshop start return lintel"
+      },
+      "transform": {
+        "position": [
+          -1.7,
+          2.95,
+          7
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1.26,
+          0.15,
+          0.2
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10203,
+      "name": {
+        "name": "Workshop start return pad"
+      },
+      "transform": {
+        "position": [
+          -1.7,
+          -0.025,
+          7
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1.3,
+          0.025,
+          0.85
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10210,
+      "name": {
+        "name": "Workshop finish return left"
+      },
+      "transform": {
+        "position": [
+          -1.1,
+          5.4,
+          -13.5
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.16,
+          1.4,
+          0.2
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10211,
+      "name": {
+        "name": "Workshop finish return right"
+      },
+      "transform": {
+        "position": [
+          1.1,
+          5.4,
+          -13.5
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.16,
+          1.4,
+          0.2
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10212,
+      "name": {
+        "name": "Workshop finish return lintel"
+      },
+      "transform": {
+        "position": [
+          0,
+          6.95,
+          -13.5
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1.26,
+          0.15,
+          0.2
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10213,
+      "name": {
+        "name": "Workshop finish return pad"
+      },
+      "transform": {
+        "position": [
+          0,
+          3.975,
+          -13.5
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1.3,
+          0.025,
+          0.85
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    }
+  ]
+}

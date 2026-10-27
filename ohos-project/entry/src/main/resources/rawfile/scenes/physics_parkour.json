@@ -1,0 +1,5528 @@
+{
+  "formatVersion": 1,
+  "game": "physics_parkour",
+  "water": {
+    "enabled": true,
+    "height": 12.4,
+    "size": 10,
+    "center": [
+      0,
+      0,
+      -89.4
+    ],
+    "halfExtents": [
+      3.2,
+      0,
+      5
+    ],
+    "roughness": 0.08,
+    "color": [
+      0.035,
+      0.2,
+      0.25
+    ]
+  },
+  "gameplay": {
+    "playerSpawn": [
+      0,
+      6.98,
+      0
+    ],
+    "enemyEnabled": false,
+    "demoPropsEnabled": false,
+    "groundEnabled": false,
+    "portals": [
+      {
+        "target": "scenes/main.json",
+        "label": "RETURN TO HUB",
+        "position": [
+          0,
+          6.98,
+          1.4
+        ],
+        "radius": 0.8,
+        "color": [
+          0.35,
+          0.18,
+          1
+        ],
+        "opacity": 0.32
+      },
+      {
+        "target": "scenes/main.json",
+        "label": "COURSE CLEAR - RETURN TO HUB",
+        "position": [
+          0,
+          13.88,
+          -100
+        ],
+        "radius": 0.8,
+        "color": [
+          0.35,
+          0.18,
+          1
+        ],
+        "opacity": 0.32
+      }
+    ],
+    "parkour": {
+      "fallY": 1,
+      "checkpoints": [
+        {
+          "spawn": [
+            0,
+            6.98,
+            0
+          ],
+          "halfExtents": [
+            2.4,
+            0.2,
+            2.4
+          ]
+        },
+        {
+          "spawn": [
+            0,
+            7.98,
+            -15.05
+          ],
+          "halfExtents": [
+            2.0,
+            0.2,
+            2.0
+          ]
+        },
+        {
+          "spawn": [
+            0,
+            8.93,
+            -29.6
+          ],
+          "halfExtents": [
+            2.0,
+            0.2,
+            2.0
+          ]
+        },
+        {
+          "spawn": [
+            0,
+            9.88,
+            -44.0
+          ],
+          "halfExtents": [
+            2.3,
+            0.2,
+            2.0
+          ]
+        },
+        {
+          "spawn": [
+            0,
+            13.88,
+            -64
+          ],
+          "halfExtents": [
+            2.8,
+            0.2,
+            2.2
+          ]
+        },
+        {
+          "spawn": [
+            0,
+            13.88,
+            -81.8
+          ],
+          "halfExtents": [
+            2.8,
+            0.2,
+            1.5
+          ]
+        },
+        {
+          "spawn": [
+            0,
+            13.88,
+            -99
+          ],
+          "halfExtents": [
+            2.8,
+            0.2,
+            1.9
+          ]
+        }
+      ]
+    },
+    "workshop": {
+      "crateId": 10001,
+      "gateId": 10002,
+      "liftId": 10003,
+      "plate": [
+        0,
+        8.94,
+        -53.2
+      ],
+      "liftTravel": 4,
+      "movingPlatforms": [
+        {
+          "entityId": 11000,
+          "travel": [
+            0,
+            0,
+            -2
+          ],
+          "period": 10
+        },
+        {
+          "entityId": 11001,
+          "travel": [
+            3.6,
+            0,
+            0
+          ],
+          "period": 12
+        }
+      ]
+    },
+    "savePoints": [
+      [
+        -1.0,
+        6.98,
+        0
+      ],
+      [
+        -1.0,
+        7.98,
+        -15.05
+      ],
+      [
+        -1.0,
+        8.93,
+        -29.6
+      ],
+      [
+        -1.0,
+        9.88,
+        -44.0
+      ],
+      [
+        -1.0,
+        13.88,
+        -64
+      ],
+      [
+        -1.0,
+        13.88,
+        -81.8
+      ],
+      [
+        -1.0,
+        13.88,
+        -99
+      ]
+    ]
+  },
+  "entities": [
+    {
+      "id": 0,
+      "name": {
+        "name": "Main Camera"
+      },
+      "transform": {
+        "position": [
+          -5.13074e-07,
+          2.19747,
+          -5.86889
+        ],
+        "rotation": [
+          4.34719e-08,
+          -4.56909e-09,
+          -0.994522,
+          -0.104528
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
+      "camera": {
+        "fov": 60,
+        "nearPlane": 0.1,
+        "farPlane": 600,
+        "isMainCamera": true,
+        "isOrthographic": false,
+        "orthographicSize": 5,
+        "postProcessChain": "",
+        "enableFrustumCulling": true,
+        "showFrustumWireframe": false,
+        "useSubMeshCulling": false,
+        "showBVHWireframe": false,
+        "showCollisionWireframe": false,
+        "useBVHCulling": false,
+        "thirdPersonEnabled": true,
+        "thirdPersonTargetName": "AnimationPlayer",
+        "thirdPersonTargetOffset": [
+          0,
+          0.95,
+          0
+        ],
+        "thirdPersonDistance": 6,
+        "thirdPersonMinDistance": 2,
+        "thirdPersonMaxDistance": 12,
+        "thirdPersonYaw": 180,
+        "thirdPersonPitch": 12,
+        "thirdPersonMinPitch": -25,
+        "thirdPersonMaxPitch": 70,
+        "thirdPersonOrbitSensitivity": 0.12,
+        "thirdPersonZoomSensitivity": 1,
+        "thirdPersonPositionDamping": 12,
+        "thirdPersonRotationDamping": 16,
+        "thirdPersonCaptureMouse": false,
+        "thirdPersonPreserveDistanceWhenOccluded": true,
+        "thirdPersonCollisionEnabled": true,
+        "thirdPersonCollisionRadius": 0.22,
+        "thirdPersonCollisionBuffer": 0.08,
+        "thirdPersonCollisionMinDistance": 0.75,
+        "thirdPersonCollisionDampingIn": 24,
+        "thirdPersonCollisionDampingOut": 6,
+        "thirdPersonCollisionSmoothingTime": 0.12,
+        "thirdPersonAimEnabled": true,
+        "thirdPersonAimShoulderOffset": 0.75,
+        "thirdPersonAimFov": 50,
+        "thirdPersonAimSensitivity": 0.08,
+        "thirdPersonAimPositionDamping": 18,
+        "thirdPersonAimRotationDamping": 20,
+        "thirdPersonLockOnEnabled": true,
+        "thirdPersonLockTargetName": "",
+        "thirdPersonLockOnMaxDistance": 25,
+        "thirdPersonLockOnLookAtBlend": 0.5
+      },
+      "script": {
+        "scriptName": ""
+      }
+    },
+    {
+      "id": 1,
+      "name": {
+        "name": "Directional Light"
+      },
+      "transform": {
+        "position": [
+          0,
+          12,
+          10
+        ],
+        "rotation": [
+          0.875426,
+          0.408218,
+          -0.23457,
+          0.109382
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
+      "light": {
+        "type": 0,
+        "color": [
+          1,
+          1,
+          1
+        ],
+        "intensity": 1.2,
+        "range": 10,
+        "spotAngle": 45,
+        "castShadow": true
+      },
+      "script": {
+        "scriptName": ""
+      }
+    },
+    {
+      "id": 2,
+      "name": {
+        "name": "Skybox"
+      },
+      "transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
+      "skybox": {
+        "enabled": true,
+        "textureName": "skybox",
+        "tint": [
+          1,
+          1,
+          1
+        ],
+        "intensity": 1
+      },
+      "script": {
+        "scriptName": ""
+      }
+    },
+    {
+      "id": 9500,
+      "name": {
+        "name": "Course_00"
+      },
+      "transform": {
+        "position": [
+          0,
+          5.75,
+          0
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          2.6,
+          0.25,
+          2.6
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9501,
+      "name": {
+        "name": "Route edge 0"
+      },
+      "transform": {
+        "position": [
+          -2.52,
+          6.012,
+          0
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.045,
+          0.012,
+          2.52
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9502,
+      "name": {
+        "name": "Route edge 0"
+      },
+      "transform": {
+        "position": [
+          2.52,
+          6.012,
+          0
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.045,
+          0.012,
+          2.52
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9503,
+      "name": {
+        "name": "Forward arrow 0"
+      },
+      "transform": {
+        "position": [
+          -0.14,
+          6.015,
+          -0.16
+        ],
+        "rotation": [
+          0.955336489125606,
+          0,
+          -0.29552020666133955,
+          0
+        ],
+        "scale": [
+          0.035,
+          0.015,
+          0.24
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9504,
+      "name": {
+        "name": "Forward arrow 0"
+      },
+      "transform": {
+        "position": [
+          0.14,
+          6.015,
+          -0.16
+        ],
+        "rotation": [
+          0.955336489125606,
+          0,
+          0.29552020666133955,
+          0
+        ],
+        "scale": [
+          0.035,
+          0.015,
+          0.24
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9505,
+      "name": {
+        "name": "Checkpoint beacon 0"
+      },
+      "transform": {
+        "position": [
+          -2.45,
+          6.35,
+          -2.45
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.07,
+          0.35,
+          0.07
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9506,
+      "name": {
+        "name": "Checkpoint beacon 0"
+      },
+      "transform": {
+        "position": [
+          2.45,
+          6.35,
+          -2.45
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.07,
+          0.35,
+          0.07
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9507,
+      "name": {
+        "name": "Checkpoint beacon 0"
+      },
+      "transform": {
+        "position": [
+          -2.45,
+          6.35,
+          2.45
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.07,
+          0.35,
+          0.07
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9508,
+      "name": {
+        "name": "Checkpoint beacon 0"
+      },
+      "transform": {
+        "position": [
+          2.45,
+          6.35,
+          2.45
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.07,
+          0.35,
+          0.07
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9510,
+      "name": {
+        "name": "Course_01"
+      },
+      "transform": {
+        "position": [
+          0,
+          6.05,
+          -4.65
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1.3,
+          0.25,
+          1.3
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9511,
+      "name": {
+        "name": "Route edge 1"
+      },
+      "transform": {
+        "position": [
+          -1.22,
+          6.311999999999999,
+          -4.65
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.045,
+          0.012,
+          1.22
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9512,
+      "name": {
+        "name": "Route edge 1"
+      },
+      "transform": {
+        "position": [
+          1.22,
+          6.311999999999999,
+          -4.65
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.045,
+          0.012,
+          1.22
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9513,
+      "name": {
+        "name": "Forward arrow 1"
+      },
+      "transform": {
+        "position": [
+          -0.14,
+          6.3149999999999995,
+          -4.8100000000000005
+        ],
+        "rotation": [
+          0.955336489125606,
+          0,
+          -0.29552020666133955,
+          0
+        ],
+        "scale": [
+          0.035,
+          0.015,
+          0.24
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9514,
+      "name": {
+        "name": "Forward arrow 1"
+      },
+      "transform": {
+        "position": [
+          0.14,
+          6.3149999999999995,
+          -4.8100000000000005
+        ],
+        "rotation": [
+          0.955336489125606,
+          0,
+          0.29552020666133955,
+          0
+        ],
+        "scale": [
+          0.035,
+          0.015,
+          0.24
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9520,
+      "name": {
+        "name": "Course_02"
+      },
+      "transform": {
+        "position": [
+          0,
+          6.4,
+          -7.9
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1.2,
+          0.25,
+          1.2
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9521,
+      "name": {
+        "name": "Route edge 2"
+      },
+      "transform": {
+        "position": [
+          -1.1199999999999999,
+          6.662,
+          -7.9
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.045,
+          0.012,
+          1.1199999999999999
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9522,
+      "name": {
+        "name": "Route edge 2"
+      },
+      "transform": {
+        "position": [
+          1.1199999999999999,
+          6.662,
+          -7.9
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.045,
+          0.012,
+          1.1199999999999999
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9523,
+      "name": {
+        "name": "Forward arrow 2"
+      },
+      "transform": {
+        "position": [
+          -0.14,
+          6.665,
+          -8.06
+        ],
+        "rotation": [
+          0.955336489125606,
+          0,
+          -0.29552020666133955,
+          0
+        ],
+        "scale": [
+          0.035,
+          0.015,
+          0.24
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9524,
+      "name": {
+        "name": "Forward arrow 2"
+      },
+      "transform": {
+        "position": [
+          0.14,
+          6.665,
+          -8.06
+        ],
+        "rotation": [
+          0.955336489125606,
+          0,
+          0.29552020666133955,
+          0
+        ],
+        "scale": [
+          0.035,
+          0.015,
+          0.24
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9530,
+      "name": {
+        "name": "Course_03"
+      },
+      "transform": {
+        "position": [
+          0,
+          6.75,
+          -11
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1.15,
+          0.25,
+          1.15
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9531,
+      "name": {
+        "name": "Route edge 3"
+      },
+      "transform": {
+        "position": [
+          -1.0699999999999998,
+          7.012,
+          -11
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.045,
+          0.012,
+          1.0699999999999998
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9532,
+      "name": {
+        "name": "Route edge 3"
+      },
+      "transform": {
+        "position": [
+          1.0699999999999998,
+          7.012,
+          -11
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.045,
+          0.012,
+          1.0699999999999998
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9533,
+      "name": {
+        "name": "Forward arrow 3"
+      },
+      "transform": {
+        "position": [
+          -0.14,
+          7.015,
+          -11.16
+        ],
+        "rotation": [
+          0.955336489125606,
+          0,
+          -0.29552020666133955,
+          0
+        ],
+        "scale": [
+          0.035,
+          0.015,
+          0.24
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9534,
+      "name": {
+        "name": "Forward arrow 3"
+      },
+      "transform": {
+        "position": [
+          0.14,
+          7.015,
+          -11.16
+        ],
+        "rotation": [
+          0.955336489125606,
+          0,
+          0.29552020666133955,
+          0
+        ],
+        "scale": [
+          0.035,
+          0.015,
+          0.24
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9540,
+      "name": {
+        "name": "Course_04"
+      },
+      "transform": {
+        "position": [
+          0,
+          6.75,
+          -15.05
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          2.2,
+          0.25,
+          2.2
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9541,
+      "name": {
+        "name": "Route edge 4"
+      },
+      "transform": {
+        "position": [
+          -2.12,
+          7.012,
+          -15.05
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.045,
+          0.012,
+          2.12
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9542,
+      "name": {
+        "name": "Route edge 4"
+      },
+      "transform": {
+        "position": [
+          2.12,
+          7.012,
+          -15.05
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.045,
+          0.012,
+          2.12
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9543,
+      "name": {
+        "name": "Forward arrow 4"
+      },
+      "transform": {
+        "position": [
+          -0.14,
+          7.015,
+          -15.21
+        ],
+        "rotation": [
+          0.955336489125606,
+          0,
+          -0.29552020666133955,
+          0
+        ],
+        "scale": [
+          0.035,
+          0.015,
+          0.24
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9544,
+      "name": {
+        "name": "Forward arrow 4"
+      },
+      "transform": {
+        "position": [
+          0.14,
+          7.015,
+          -15.21
+        ],
+        "rotation": [
+          0.955336489125606,
+          0,
+          0.29552020666133955,
+          0
+        ],
+        "scale": [
+          0.035,
+          0.015,
+          0.24
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9545,
+      "name": {
+        "name": "Checkpoint beacon 4"
+      },
+      "transform": {
+        "position": [
+          -2.0500000000000003,
+          7.35,
+          -17.1
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.07,
+          0.35,
+          0.07
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9546,
+      "name": {
+        "name": "Checkpoint beacon 4"
+      },
+      "transform": {
+        "position": [
+          2.0500000000000003,
+          7.35,
+          -17.1
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.07,
+          0.35,
+          0.07
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9547,
+      "name": {
+        "name": "Checkpoint beacon 4"
+      },
+      "transform": {
+        "position": [
+          -2.0500000000000003,
+          7.35,
+          -13.0
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.07,
+          0.35,
+          0.07
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9548,
+      "name": {
+        "name": "Checkpoint beacon 4"
+      },
+      "transform": {
+        "position": [
+          2.0500000000000003,
+          7.35,
+          -13.0
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.07,
+          0.35,
+          0.07
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9550,
+      "name": {
+        "name": "Course_05"
+      },
+      "transform": {
+        "position": [
+          1.4,
+          7.05,
+          -19.2
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1.2,
+          0.25,
+          1.2
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9551,
+      "name": {
+        "name": "Route edge 5"
+      },
+      "transform": {
+        "position": [
+          0.28,
+          7.311999999999999,
+          -19.2
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.045,
+          0.012,
+          1.1199999999999999
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/amber.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9552,
+      "name": {
+        "name": "Route edge 5"
+      },
+      "transform": {
+        "position": [
+          2.5199999999999996,
+          7.311999999999999,
+          -19.2
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.045,
+          0.012,
+          1.1199999999999999
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/amber.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9553,
+      "name": {
+        "name": "Forward arrow 5"
+      },
+      "transform": {
+        "position": [
+          1.2599999999999998,
+          7.3149999999999995,
+          -19.36
+        ],
+        "rotation": [
+          0.955336489125606,
+          0,
+          -0.29552020666133955,
+          0
+        ],
+        "scale": [
+          0.035,
+          0.015,
+          0.24
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/amber.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9554,
+      "name": {
+        "name": "Forward arrow 5"
+      },
+      "transform": {
+        "position": [
+          1.54,
+          7.3149999999999995,
+          -19.36
+        ],
+        "rotation": [
+          0.955336489125606,
+          0,
+          0.29552020666133955,
+          0
+        ],
+        "scale": [
+          0.035,
+          0.015,
+          0.24
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/amber.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9560,
+      "name": {
+        "name": "Course_06"
+      },
+      "transform": {
+        "position": [
+          2.8,
+          7.4,
+          -22.35
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1.2,
+          0.25,
+          1.2
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9561,
+      "name": {
+        "name": "Route edge 6"
+      },
+      "transform": {
+        "position": [
+          1.68,
+          7.662,
+          -22.35
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.045,
+          0.012,
+          1.1199999999999999
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/amber.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9562,
+      "name": {
+        "name": "Route edge 6"
+      },
+      "transform": {
+        "position": [
+          3.92,
+          7.662,
+          -22.35
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.045,
+          0.012,
+          1.1199999999999999
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/amber.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9563,
+      "name": {
+        "name": "Forward arrow 6"
+      },
+      "transform": {
+        "position": [
+          2.6599999999999997,
+          7.665,
+          -22.51
+        ],
+        "rotation": [
+          0.955336489125606,
+          0,
+          -0.29552020666133955,
+          0
+        ],
+        "scale": [
+          0.035,
+          0.015,
+          0.24
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/amber.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9564,
+      "name": {
+        "name": "Forward arrow 6"
+      },
+      "transform": {
+        "position": [
+          2.94,
+          7.665,
+          -22.51
+        ],
+        "rotation": [
+          0.955336489125606,
+          0,
+          0.29552020666133955,
+          0
+        ],
+        "scale": [
+          0.035,
+          0.015,
+          0.24
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/amber.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9570,
+      "name": {
+        "name": "Course_07"
+      },
+      "transform": {
+        "position": [
+          1.2,
+          7.7,
+          -25.5
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1.15,
+          0.25,
+          1.15
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9571,
+      "name": {
+        "name": "Route edge 7"
+      },
+      "transform": {
+        "position": [
+          0.13000000000000012,
+          7.962,
+          -25.5
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.045,
+          0.012,
+          1.0699999999999998
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/amber.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9572,
+      "name": {
+        "name": "Route edge 7"
+      },
+      "transform": {
+        "position": [
+          2.2699999999999996,
+          7.962,
+          -25.5
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.045,
+          0.012,
+          1.0699999999999998
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/amber.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9573,
+      "name": {
+        "name": "Forward arrow 7"
+      },
+      "transform": {
+        "position": [
+          1.06,
+          7.965,
+          -25.66
+        ],
+        "rotation": [
+          0.955336489125606,
+          0,
+          -0.29552020666133955,
+          0
+        ],
+        "scale": [
+          0.035,
+          0.015,
+          0.24
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/amber.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9574,
+      "name": {
+        "name": "Forward arrow 7"
+      },
+      "transform": {
+        "position": [
+          1.3399999999999999,
+          7.965,
+          -25.66
+        ],
+        "rotation": [
+          0.955336489125606,
+          0,
+          0.29552020666133955,
+          0
+        ],
+        "scale": [
+          0.035,
+          0.015,
+          0.24
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/amber.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9580,
+      "name": {
+        "name": "Course_08"
+      },
+      "transform": {
+        "position": [
+          0,
+          7.7,
+          -29.6
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          2.2,
+          0.25,
+          2.2
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9581,
+      "name": {
+        "name": "Route edge 8"
+      },
+      "transform": {
+        "position": [
+          -2.12,
+          7.962,
+          -29.6
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.045,
+          0.012,
+          2.12
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/amber.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9582,
+      "name": {
+        "name": "Route edge 8"
+      },
+      "transform": {
+        "position": [
+          2.12,
+          7.962,
+          -29.6
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.045,
+          0.012,
+          2.12
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/amber.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9583,
+      "name": {
+        "name": "Forward arrow 8"
+      },
+      "transform": {
+        "position": [
+          -0.14,
+          7.965,
+          -29.76
+        ],
+        "rotation": [
+          0.955336489125606,
+          0,
+          -0.29552020666133955,
+          0
+        ],
+        "scale": [
+          0.035,
+          0.015,
+          0.24
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/amber.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9584,
+      "name": {
+        "name": "Forward arrow 8"
+      },
+      "transform": {
+        "position": [
+          0.14,
+          7.965,
+          -29.76
+        ],
+        "rotation": [
+          0.955336489125606,
+          0,
+          0.29552020666133955,
+          0
+        ],
+        "scale": [
+          0.035,
+          0.015,
+          0.24
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/amber.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9585,
+      "name": {
+        "name": "Checkpoint beacon 8"
+      },
+      "transform": {
+        "position": [
+          -2.0500000000000003,
+          8.3,
+          -31.650000000000002
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.07,
+          0.35,
+          0.07
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/amber.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9586,
+      "name": {
+        "name": "Checkpoint beacon 8"
+      },
+      "transform": {
+        "position": [
+          2.0500000000000003,
+          8.3,
+          -31.650000000000002
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.07,
+          0.35,
+          0.07
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/amber.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9587,
+      "name": {
+        "name": "Checkpoint beacon 8"
+      },
+      "transform": {
+        "position": [
+          -2.0500000000000003,
+          8.3,
+          -27.55
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.07,
+          0.35,
+          0.07
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/amber.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9588,
+      "name": {
+        "name": "Checkpoint beacon 8"
+      },
+      "transform": {
+        "position": [
+          2.0500000000000003,
+          8.3,
+          -27.55
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.07,
+          0.35,
+          0.07
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/amber.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9590,
+      "name": {
+        "name": "Course_09"
+      },
+      "transform": {
+        "position": [
+          0,
+          8.0,
+          -33.85
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.8,
+          0.25,
+          1.3
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9591,
+      "name": {
+        "name": "Route edge 9"
+      },
+      "transform": {
+        "position": [
+          -0.7200000000000001,
+          8.262,
+          -33.85
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.045,
+          0.012,
+          1.22
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/violet.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9592,
+      "name": {
+        "name": "Route edge 9"
+      },
+      "transform": {
+        "position": [
+          0.7200000000000001,
+          8.262,
+          -33.85
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.045,
+          0.012,
+          1.22
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/violet.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9593,
+      "name": {
+        "name": "Forward arrow 9"
+      },
+      "transform": {
+        "position": [
+          -0.14,
+          8.265,
+          -34.01
+        ],
+        "rotation": [
+          0.955336489125606,
+          0,
+          -0.29552020666133955,
+          0
+        ],
+        "scale": [
+          0.035,
+          0.015,
+          0.24
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/violet.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9594,
+      "name": {
+        "name": "Forward arrow 9"
+      },
+      "transform": {
+        "position": [
+          0.14,
+          8.265,
+          -34.01
+        ],
+        "rotation": [
+          0.955336489125606,
+          0,
+          0.29552020666133955,
+          0
+        ],
+        "scale": [
+          0.035,
+          0.015,
+          0.24
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/violet.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9600,
+      "name": {
+        "name": "Course_10"
+      },
+      "transform": {
+        "position": [
+          0,
+          8.35,
+          -37.15
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.7,
+          0.25,
+          1.2
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9601,
+      "name": {
+        "name": "Route edge 10"
+      },
+      "transform": {
+        "position": [
+          -0.62,
+          8.612,
+          -37.15
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.045,
+          0.012,
+          1.1199999999999999
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/violet.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9602,
+      "name": {
+        "name": "Route edge 10"
+      },
+      "transform": {
+        "position": [
+          0.62,
+          8.612,
+          -37.15
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.045,
+          0.012,
+          1.1199999999999999
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/violet.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9603,
+      "name": {
+        "name": "Forward arrow 10"
+      },
+      "transform": {
+        "position": [
+          -0.14,
+          8.615,
+          -37.309999999999995
+        ],
+        "rotation": [
+          0.955336489125606,
+          0,
+          -0.29552020666133955,
+          0
+        ],
+        "scale": [
+          0.035,
+          0.015,
+          0.24
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/violet.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9604,
+      "name": {
+        "name": "Forward arrow 10"
+      },
+      "transform": {
+        "position": [
+          0.14,
+          8.615,
+          -37.309999999999995
+        ],
+        "rotation": [
+          0.955336489125606,
+          0,
+          0.29552020666133955,
+          0
+        ],
+        "scale": [
+          0.035,
+          0.015,
+          0.24
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/violet.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9610,
+      "name": {
+        "name": "Course_11"
+      },
+      "transform": {
+        "position": [
+          0,
+          8.65,
+          -40.35
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.7,
+          0.25,
+          1.2
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9611,
+      "name": {
+        "name": "Route edge 11"
+      },
+      "transform": {
+        "position": [
+          -0.62,
+          8.912,
+          -40.35
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.045,
+          0.012,
+          1.1199999999999999
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/violet.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9612,
+      "name": {
+        "name": "Route edge 11"
+      },
+      "transform": {
+        "position": [
+          0.62,
+          8.912,
+          -40.35
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.045,
+          0.012,
+          1.1199999999999999
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/violet.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9613,
+      "name": {
+        "name": "Forward arrow 11"
+      },
+      "transform": {
+        "position": [
+          -0.14,
+          8.915000000000001,
+          -40.51
+        ],
+        "rotation": [
+          0.955336489125606,
+          0,
+          -0.29552020666133955,
+          0
+        ],
+        "scale": [
+          0.035,
+          0.015,
+          0.24
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/violet.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9614,
+      "name": {
+        "name": "Forward arrow 11"
+      },
+      "transform": {
+        "position": [
+          0.14,
+          8.915000000000001,
+          -40.51
+        ],
+        "rotation": [
+          0.955336489125606,
+          0,
+          0.29552020666133955,
+          0
+        ],
+        "scale": [
+          0.035,
+          0.015,
+          0.24
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/violet.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9620,
+      "name": {
+        "name": "Course_12"
+      },
+      "transform": {
+        "position": [
+          0,
+          8.65,
+          -44.5
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          2.5,
+          0.25,
+          2.2
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9621,
+      "name": {
+        "name": "Route edge 12"
+      },
+      "transform": {
+        "position": [
+          -2.42,
+          8.912,
+          -44.5
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.045,
+          0.012,
+          2.12
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/violet.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9622,
+      "name": {
+        "name": "Route edge 12"
+      },
+      "transform": {
+        "position": [
+          2.42,
+          8.912,
+          -44.5
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.045,
+          0.012,
+          2.12
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/violet.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9623,
+      "name": {
+        "name": "Forward arrow 12"
+      },
+      "transform": {
+        "position": [
+          -0.14,
+          8.915000000000001,
+          -44.66
+        ],
+        "rotation": [
+          0.955336489125606,
+          0,
+          -0.29552020666133955,
+          0
+        ],
+        "scale": [
+          0.035,
+          0.015,
+          0.24
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/violet.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9624,
+      "name": {
+        "name": "Forward arrow 12"
+      },
+      "transform": {
+        "position": [
+          0.14,
+          8.915000000000001,
+          -44.66
+        ],
+        "rotation": [
+          0.955336489125606,
+          0,
+          0.29552020666133955,
+          0
+        ],
+        "scale": [
+          0.035,
+          0.015,
+          0.24
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/violet.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9625,
+      "name": {
+        "name": "Checkpoint beacon 12"
+      },
+      "transform": {
+        "position": [
+          -2.35,
+          9.25,
+          -46.55
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.07,
+          0.35,
+          0.07
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/violet.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9626,
+      "name": {
+        "name": "Checkpoint beacon 12"
+      },
+      "transform": {
+        "position": [
+          2.35,
+          9.25,
+          -46.55
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.07,
+          0.35,
+          0.07
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/violet.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9627,
+      "name": {
+        "name": "Checkpoint beacon 12"
+      },
+      "transform": {
+        "position": [
+          -2.35,
+          9.25,
+          -42.45
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.07,
+          0.35,
+          0.07
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/violet.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9628,
+      "name": {
+        "name": "Checkpoint beacon 12"
+      },
+      "transform": {
+        "position": [
+          2.35,
+          9.25,
+          -42.45
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.07,
+          0.35,
+          0.07
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/violet.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9800,
+      "name": {
+        "name": "Start return left"
+      },
+      "transform": {
+        "position": [
+          -1.1,
+          7.4,
+          1.4
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.16,
+          1.4,
+          0.2
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/violet.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9801,
+      "name": {
+        "name": "Start return right"
+      },
+      "transform": {
+        "position": [
+          1.1,
+          7.4,
+          1.4
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.16,
+          1.4,
+          0.2
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/violet.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9802,
+      "name": {
+        "name": "Start return lintel"
+      },
+      "transform": {
+        "position": [
+          0,
+          8.95,
+          1.4
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1.26,
+          0.15,
+          0.2
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/violet.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 9803,
+      "name": {
+        "name": "Start return pad"
+      },
+      "transform": {
+        "position": [
+          0,
+          5.975,
+          1.4
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1.3,
+          0.025,
+          0.85
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10000,
+      "name": {
+        "name": "Workshop lower floor"
+      },
+      "transform": {
+        "position": [
+          0,
+          8.55,
+          -51.2
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          3.2,
+          0.35,
+          7.2
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10001,
+      "name": {
+        "name": "Workshop push crate"
+      },
+      "transform": {
+        "position": [
+          0,
+          9.55,
+          -50
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.6,
+          0.6,
+          0.6
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10002,
+      "name": {
+        "name": "Workshop sliding gate"
+      },
+      "transform": {
+        "position": [
+          0,
+          10.5,
+          -56.6
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          3.15,
+          1.6,
+          0.18
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10003,
+      "name": {
+        "name": "Workshop lift"
+      },
+      "transform": {
+        "position": [
+          0,
+          8.65,
+          -59.8
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1.4,
+          0.25,
+          1.4
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10004,
+      "name": {
+        "name": "Workshop upper landing"
+      },
+      "transform": {
+        "position": [
+          0,
+          12.55,
+          -64
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          3.2,
+          0.35,
+          2.8
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10005,
+      "name": {
+        "name": "Workshop left wall"
+      },
+      "transform": {
+        "position": [
+          -3.4,
+          10.0,
+          -51.2
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.2,
+          1.1,
+          7.2
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10006,
+      "name": {
+        "name": "Workshop right wall"
+      },
+      "transform": {
+        "position": [
+          3.4,
+          10.0,
+          -51.2
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.2,
+          1.1,
+          7.2
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10008,
+      "name": {
+        "name": "Gate overhead frame"
+      },
+      "transform": {
+        "position": [
+          0,
+          12.4,
+          -56.6
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          3.6,
+          0.25,
+          0.4
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10009,
+      "name": {
+        "name": "Lift left guide"
+      },
+      "transform": {
+        "position": [
+          -1.7,
+          10.9,
+          -59.8
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.12,
+          2.4,
+          0.12
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10010,
+      "name": {
+        "name": "Lift right guide"
+      },
+      "transform": {
+        "position": [
+          1.7,
+          10.9,
+          -59.8
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.12,
+          2.4,
+          0.12
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10011,
+      "name": {
+        "name": "Upper left rail"
+      },
+      "transform": {
+        "position": [
+          -3.3,
+          13.350000000000001,
+          -64
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.12,
+          0.45,
+          2.8
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10012,
+      "name": {
+        "name": "Upper right rail"
+      },
+      "transform": {
+        "position": [
+          3.3,
+          13.350000000000001,
+          -64
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.12,
+          0.45,
+          2.8
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10014,
+      "name": {
+        "name": "Pressure plate"
+      },
+      "transform": {
+        "position": [
+          0,
+          8.925,
+          -53.2
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          0.025,
+          1
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/amber.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10100,
+      "name": {
+        "name": "Workshop route marking"
+      },
+      "transform": {
+        "position": [
+          0,
+          8.912,
+          -47.5
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.15,
+          0.012,
+          0.18
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10101,
+      "name": {
+        "name": "Workshop route marking"
+      },
+      "transform": {
+        "position": [
+          0,
+          8.912,
+          -48.4
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.15,
+          0.012,
+          0.18
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10102,
+      "name": {
+        "name": "Workshop route marking"
+      },
+      "transform": {
+        "position": [
+          0,
+          8.912,
+          -51.4
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.15,
+          0.012,
+          0.18
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10103,
+      "name": {
+        "name": "Workshop route marking"
+      },
+      "transform": {
+        "position": [
+          0,
+          8.912,
+          -52.2
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.15,
+          0.012,
+          0.18
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10104,
+      "name": {
+        "name": "Workshop route marking"
+      },
+      "transform": {
+        "position": [
+          0,
+          8.912,
+          -54.7
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.15,
+          0.012,
+          0.18
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10105,
+      "name": {
+        "name": "Workshop route marking"
+      },
+      "transform": {
+        "position": [
+          0,
+          8.912,
+          -55.6
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.15,
+          0.012,
+          0.18
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10106,
+      "name": {
+        "name": "Workshop route marking"
+      },
+      "transform": {
+        "position": [
+          0,
+          8.912,
+          -57.5
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.15,
+          0.012,
+          0.18
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10110,
+      "name": {
+        "name": "Plate edge light"
+      },
+      "transform": {
+        "position": [
+          -1,
+          8.950000000000001,
+          -53.2
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.035,
+          0.025,
+          1
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/amber.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 10111,
+      "name": {
+        "name": "Plate edge light"
+      },
+      "transform": {
+        "position": [
+          1,
+          8.950000000000001,
+          -53.2
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.035,
+          0.025,
+          1
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/amber.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 11000,
+      "name": {
+        "name": "Longitudinal shuttle"
+      },
+      "transform": {
+        "position": [
+          0,
+          12.65,
+          -68.2
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1.3,
+          0.25,
+          1.3
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 11001,
+      "name": {
+        "name": "Lateral shuttle"
+      },
+      "transform": {
+        "position": [
+          -1.8,
+          12.65,
+          -77.6
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1.3,
+          0.25,
+          1.3
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 11002,
+      "name": {
+        "name": "Moving course rest island"
+      },
+      "transform": {
+        "position": [
+          0,
+          12.65,
+          -73.4
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          3.2,
+          0.25,
+          1.8
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 11003,
+      "name": {
+        "name": "Pool approach checkpoint"
+      },
+      "transform": {
+        "position": [
+          0,
+          12.65,
+          -81.8
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          3.2,
+          0.25,
+          1.8
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 11004,
+      "name": {
+        "name": "Pool entry step"
+      },
+      "transform": {
+        "position": [
+          0,
+          12.1,
+          -84
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          3.2,
+          0.3,
+          0.4
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 11005,
+      "name": {
+        "name": "Pool floor"
+      },
+      "transform": {
+        "position": [
+          0,
+          10.35,
+          -89.4
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          3.2,
+          0.25,
+          5
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 11006,
+      "name": {
+        "name": "Pool left wall"
+      },
+      "transform": {
+        "position": [
+          -3.4,
+          11.9,
+          -89.4
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.2,
+          1.55,
+          5.4
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 11007,
+      "name": {
+        "name": "Pool right wall"
+      },
+      "transform": {
+        "position": [
+          3.4,
+          11.9,
+          -89.4
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.2,
+          1.55,
+          5.4
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 11008,
+      "name": {
+        "name": "Final deck"
+      },
+      "transform": {
+        "position": [
+          0,
+          12.55,
+          -99
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          3.2,
+          0.35,
+          2.4
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 11009,
+      "name": {
+        "name": "Final back railing"
+      },
+      "transform": {
+        "position": [
+          0,
+          13.35,
+          -101.6
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          3.4,
+          0.45,
+          0.12
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 11100,
+      "name": {
+        "name": "Pool exit stair"
+      },
+      "transform": {
+        "position": [
+          0,
+          11.200000000000001,
+          -94.4
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          3.2,
+          0.2,
+          0.3
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 11101,
+      "name": {
+        "name": "Pool exit stair"
+      },
+      "transform": {
+        "position": [
+          0,
+          11.500000000000002,
+          -94.95
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          3.2,
+          0.2,
+          0.3
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 11102,
+      "name": {
+        "name": "Pool exit stair"
+      },
+      "transform": {
+        "position": [
+          0,
+          11.8,
+          -95.5
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          3.2,
+          0.2,
+          0.3
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 11103,
+      "name": {
+        "name": "Pool exit stair"
+      },
+      "transform": {
+        "position": [
+          0,
+          12.100000000000001,
+          -96.05000000000001
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          3.2,
+          0.2,
+          0.3
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 11104,
+      "name": {
+        "name": "Pool exit stair"
+      },
+      "transform": {
+        "position": [
+          0,
+          12.4,
+          -96.60000000000001
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          3.2,
+          0.2,
+          0.3
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 11200,
+      "name": {
+        "name": "Combined finish left"
+      },
+      "transform": {
+        "position": [
+          -1.1,
+          14.3,
+          -100
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.16,
+          1.4,
+          0.2
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 11201,
+      "name": {
+        "name": "Combined finish right"
+      },
+      "transform": {
+        "position": [
+          1.1,
+          14.3,
+          -100
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.16,
+          1.4,
+          0.2
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 11202,
+      "name": {
+        "name": "Combined finish lintel"
+      },
+      "transform": {
+        "position": [
+          0,
+          15.850000000000001,
+          -100
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1.26,
+          0.15,
+          0.2
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 11203,
+      "name": {
+        "name": "Combined finish pad"
+      },
+      "transform": {
+        "position": [
+          0,
+          12.875,
+          -100
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1.3,
+          0.025,
+          0.85
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "engine/models/Base Model/cube.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 11300,
+      "name": {
+        "name": "Safe island beacon"
+      },
+      "transform": {
+        "position": [
+          -2.6,
+          13.3,
+          -73.4
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.07,
+          0.4,
+          0.07
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 11301,
+      "name": {
+        "name": "Safe island beacon"
+      },
+      "transform": {
+        "position": [
+          2.6,
+          13.3,
+          -73.4
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.07,
+          0.4,
+          0.07
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 11302,
+      "name": {
+        "name": "Safe island beacon"
+      },
+      "transform": {
+        "position": [
+          -2.6,
+          13.3,
+          -81.8
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.07,
+          0.4,
+          0.07
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 11303,
+      "name": {
+        "name": "Safe island beacon"
+      },
+      "transform": {
+        "position": [
+          2.6,
+          13.3,
+          -81.8
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.07,
+          0.4,
+          0.07
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 11304,
+      "name": {
+        "name": "Safe island beacon"
+      },
+      "transform": {
+        "position": [
+          -2.6,
+          13.3,
+          -99
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.07,
+          0.4,
+          0.07
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 11305,
+      "name": {
+        "name": "Safe island beacon"
+      },
+      "transform": {
+        "position": [
+          2.6,
+          13.3,
+          -99
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.07,
+          0.4,
+          0.07
+        ]
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 12000,
+      "name": {
+        "name": "SavePoint 1 0"
+      },
+      "transform": {
+        "position": [
+          -0.09999999999999998,
+          6.08,
+          0
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.32,
+          0.08,
+          0.32
+        ]
+      },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/violet.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 12001,
+      "name": {
+        "name": "SavePoint 1 1"
+      },
+      "transform": {
+        "position": [
+          -0.09999999999999998,
+          6.55,
+          0
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.095,
+          0.4,
+          0.095
+        ]
+      },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 12002,
+      "name": {
+        "name": "SavePoint 1 2"
+      },
+      "transform": {
+        "position": [
+          -0.09999999999999998,
+          7.04,
+          0
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.22,
+          0.1,
+          0.22
+        ]
+      },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 12003,
+      "name": {
+        "name": "SavePoint 2 0"
+      },
+      "transform": {
+        "position": [
+          -0.09999999999999998,
+          7.08,
+          -15.05
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.32,
+          0.08,
+          0.32
+        ]
+      },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/violet.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 12004,
+      "name": {
+        "name": "SavePoint 2 1"
+      },
+      "transform": {
+        "position": [
+          -0.09999999999999998,
+          7.55,
+          -15.05
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.095,
+          0.4,
+          0.095
+        ]
+      },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 12005,
+      "name": {
+        "name": "SavePoint 2 2"
+      },
+      "transform": {
+        "position": [
+          -0.09999999999999998,
+          8.04,
+          -15.05
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.22,
+          0.1,
+          0.22
+        ]
+      },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 12006,
+      "name": {
+        "name": "SavePoint 3 0"
+      },
+      "transform": {
+        "position": [
+          -0.09999999999999998,
+          8.03,
+          -29.6
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.32,
+          0.08,
+          0.32
+        ]
+      },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/violet.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 12007,
+      "name": {
+        "name": "SavePoint 3 1"
+      },
+      "transform": {
+        "position": [
+          -0.09999999999999998,
+          8.5,
+          -29.6
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.095,
+          0.4,
+          0.095
+        ]
+      },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 12008,
+      "name": {
+        "name": "SavePoint 3 2"
+      },
+      "transform": {
+        "position": [
+          -0.09999999999999998,
+          8.989999999999998,
+          -29.6
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.22,
+          0.1,
+          0.22
+        ]
+      },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 12009,
+      "name": {
+        "name": "SavePoint 4 0"
+      },
+      "transform": {
+        "position": [
+          -0.09999999999999998,
+          8.98,
+          -44.0
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.32,
+          0.08,
+          0.32
+        ]
+      },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/violet.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 12010,
+      "name": {
+        "name": "SavePoint 4 1"
+      },
+      "transform": {
+        "position": [
+          -0.09999999999999998,
+          9.450000000000001,
+          -44.0
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.095,
+          0.4,
+          0.095
+        ]
+      },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 12011,
+      "name": {
+        "name": "SavePoint 4 2"
+      },
+      "transform": {
+        "position": [
+          -0.09999999999999998,
+          9.940000000000001,
+          -44.0
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.22,
+          0.1,
+          0.22
+        ]
+      },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 12012,
+      "name": {
+        "name": "SavePoint 5 0"
+      },
+      "transform": {
+        "position": [
+          -0.09999999999999998,
+          12.98,
+          -64
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.32,
+          0.08,
+          0.32
+        ]
+      },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/violet.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 12013,
+      "name": {
+        "name": "SavePoint 5 1"
+      },
+      "transform": {
+        "position": [
+          -0.09999999999999998,
+          13.450000000000001,
+          -64
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.095,
+          0.4,
+          0.095
+        ]
+      },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 12014,
+      "name": {
+        "name": "SavePoint 5 2"
+      },
+      "transform": {
+        "position": [
+          -0.09999999999999998,
+          13.940000000000001,
+          -64
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.22,
+          0.1,
+          0.22
+        ]
+      },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 12015,
+      "name": {
+        "name": "SavePoint 6 0"
+      },
+      "transform": {
+        "position": [
+          -0.09999999999999998,
+          12.98,
+          -81.8
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.32,
+          0.08,
+          0.32
+        ]
+      },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/violet.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 12016,
+      "name": {
+        "name": "SavePoint 6 1"
+      },
+      "transform": {
+        "position": [
+          -0.09999999999999998,
+          13.450000000000001,
+          -81.8
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.095,
+          0.4,
+          0.095
+        ]
+      },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 12017,
+      "name": {
+        "name": "SavePoint 6 2"
+      },
+      "transform": {
+        "position": [
+          -0.09999999999999998,
+          13.940000000000001,
+          -81.8
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.22,
+          0.1,
+          0.22
+        ]
+      },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 12018,
+      "name": {
+        "name": "SavePoint 7 0"
+      },
+      "transform": {
+        "position": [
+          -0.09999999999999998,
+          12.98,
+          -99
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.32,
+          0.08,
+          0.32
+        ]
+      },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/violet.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 12019,
+      "name": {
+        "name": "SavePoint 7 1"
+      },
+      "transform": {
+        "position": [
+          -0.09999999999999998,
+          13.450000000000001,
+          -99
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.095,
+          0.4,
+          0.095
+        ]
+      },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    },
+    {
+      "id": 12020,
+      "name": {
+        "name": "SavePoint 7 2"
+      },
+      "transform": {
+        "position": [
+          -0.09999999999999998,
+          13.940000000000001,
+          -99
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.22,
+          0.1,
+          0.22
+        ]
+      },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/parkour/cyan.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": false,
+        "receiveShadow": true
+      }
+    }
+  ]
+}
