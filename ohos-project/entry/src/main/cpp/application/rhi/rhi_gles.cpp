@@ -1,4 +1,5 @@
 #include "../gameplay/parkour_course.h"
+#include "../gameplay/arena_waves.h"
 #include "../gameplay/save_store.h"
 #include "../camera/camera_collision.h"
 #include "../inventory_ui.h"
@@ -939,6 +940,7 @@ uniform int useShadowMap;
 // inline Reinhard + gamma LDR path (used when the driver cannot render to a
 // float attachment).
 uniform int hdrOutput;
+uniform int demoLightsEnabled;
 // Debug output switch: 1 = albedo buffer, 2 = decoded world normal.
 uniform int debugNormal;
 
@@ -1166,7 +1168,8 @@ void main()
 
     // Only the shadow-casting sun contributes directional lighting.
 
-    vec3 pointLights =
+    vec3 pointLights = vec3(0.0);
+    if (demoLightsEnabled != 0) pointLights =
         PointLight(vec3(12.0, -0.64, -12.0), vec3(1.0, 0.12, 0.10) * 8.0,
             N, V, NoV, albedo, metallic, roughness, F0, worldPos)
       + PointLight(vec3(0.0, -0.64, 0.0), vec3(0.10, 0.25, 1.0) * 8.0,
@@ -1358,6 +1361,8 @@ vec3 LightBillboard(vec3 camera, vec3 ray, float sceneDistance,
 
 vec3 SceneLightBillboards(vec3 camera, vec3 ray, float sceneDistance)
 {
+    // Only the hub enables the fixed demo light orbs.
+    if (WATER_COLOR.w < 0.5) return vec3(0.0);
     return LightBillboard(camera, ray, sceneDistance,
         vec3(12.0,-0.64,-12.0), vec3(1.0,0.12,0.10)*8.0) +
         LightBillboard(camera, ray, sceneDistance,
@@ -2764,7 +2769,19 @@ public:
         if (physicsWorld_ && physicsWorld_->GetWorkshopTransform(entity.id,transform)) {
             Mat4 matrix{}; scene::BuildModelMatrix(transform,matrix.value); return matrix;
         }
-        return Mat4FromSceneEntity(*sceneDefinition_,entity);
+        Mat4 matrix=Mat4FromSceneEntity(*sceneDefinition_,entity);
+        if(entity.motionParentId!=scene::kNoParent && physicsWorld_ &&
+           physicsWorld_->GetWorkshopTransform(entity.motionParentId,transform)) {
+            for(const auto& parent:sceneDefinition_->entities) if(parent.id==entity.motionParentId) {
+                const auto initial=scene::RuntimeTransform(*sceneDefinition_,parent,
+                    physics::kGroundCollider.centerY+physics::kGroundCollider.halfExtentY);
+                matrix.value[12]+=transform.position.x-initial.position.x;
+                matrix.value[13]+=transform.position.y-initial.position.y;
+                matrix.value[14]+=transform.position.z-initial.position.z;
+                break;
+            }
+        }
+        return matrix;
     }
 
     std::string ConsumeSceneRequest() override
@@ -3320,109 +3337,9 @@ public:
 
 
     struct MenuButtonPos { float cx; float cy; float hw; float hh; float r; };
-    void EnsureSaveStore() {
-        if (saveStoreReady_) return;
-        const char* root=OHOS_GetSaveDirectory();
-        if(root && *root) { saveRoot_=std::string(root)+"/"; saveStore_.Open(saveRoot_); }
-        else SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,"SDL3_SAVE stage=storage_unavailable");
-        saveStoreReady_=true;
-    }
-    void SaveMessage(const char* text) { saveMessage_=text;saveMessageUntil_=SDL_GetTicks()+3500; }
-    const scene::Vec3* NearSavePoint() const {
-        if(!sceneDefinition_ || uiScreen_!=rhi::UiScreen::Gameplay || playerHealth_<=0) return nullptr;
-        for(const auto& p:sceneDefinition_->savePoints) {
-            float dx=p.x-playerX_,dz=p.z-playerZ_;
-            if(dx*dx+dz*dz<=2.25f && std::fabs(p.y-playerY_)<.45f &&
-               (!physicsWorld_ || physicsWorld_->GetPlayerState().grounded)) return &p;
-        }
-        return nullptr;
-    }
-    saves::Record CaptureSave(const scene::Vec3& point) {
-        saves::Record r;r.id=activeSaveId_;r.savedAt=std::time(nullptr);r.scene=activeSceneKey_;
-        r.x=point.x;r.y=point.y;r.z=point.z;r.yaw=playerYaw_;r.health=playerHealth_;
-        r.gold=gold_;r.inventory=inventory_;r.ammo=pistol_.ammo;r.reserve=pistol_.reserve;
-        r.weapon=pistol_.equipped?0:(sword_.drawn?1:-1);
-        r.checkpoint=int(parkourProgress_.checkpoint);r.falls=parkourProgress_.falls;r.seconds=parkourProgress_.seconds;
-        r.gateOpen=physicsWorld_ && physicsWorld_->GetWorkshopState().gateOpen;
-        r.chestOpened=ChestOpened();r.enemyDead=sceneDefinition_->enemyEnabled && !enemyAlive_;
-        return r;
-    }
-    void SaveAtPoint() {
-        const auto* p=NearSavePoint();if(!p || !activeSaveId_)return;
-        auto record=CaptureSave(*p);
-        if(saveStore_.Put(record)) {SaveMessage("存档成功");SDL_Log("SDL3_SAVE stage=saved id=%u scene=%s",record.id,record.scene.c_str());}
-        else SaveMessage("存档失败请重试");
-    }
-    void OpenSaveList() { EnsureSaveStore();if(!saveRoot_.empty())saveStore_.Open(saveRoot_);savePage_=0;saveSelection_=true; }
-    void BeginSaveLoad(const saves::Record& record) {
-        pendingSave_=record;pendingSaveLoad_=true;saveSelection_=false;
-        if(record.scene==activeSceneKey_) { ResetGameplayScene();ApplySave(); }
-        else {saveSceneRequest_=record.scene;uiScreen_=rhi::UiScreen::MainMenu;}
-    }
-    void ApplySave() {
-        const auto r=pendingSave_;pendingSaveLoad_=false;activeSaveId_=r.id;
-        playerX_=r.x;playerY_=r.y;playerZ_=r.z;playerYaw_=r.yaw;playerHealth_=r.health;
-        gold_=r.gold;inventory_=r.inventory;pistol_.ammo=r.ammo;pistol_.reserve=r.reserve;
-        pistol_.equipped=r.weapon==0 && inventory_.HasPistol();sword_.drawn=r.weapon==1 && inventory_.HasSword();
-        parkourProgress_.checkpoint=sceneDefinition_->parkour.checkpoints.empty()?0:
-            std::min(std::size_t(r.checkpoint),sceneDefinition_->parkour.checkpoints.size()-1);
-        parkourProgress_.falls=r.falls;parkourProgress_.seconds=r.seconds;
-        parkourProgress_.finished=sceneDefinition_->parkour.enabled && parkourProgress_.checkpoint+1==sceneDefinition_->parkour.checkpoints.size();
-        chestOpenStartTicks_=r.chestOpened?SDL_GetTicks():0;
-        if(r.enemyDead) {enemyAlive_=enemyVisible_=false;enemyHealth_=0;}
-        if(physicsWorld_ && physicsWorld_->IsReady()) {
-            physicsWorld_->RestoreGateProgress(r.gateOpen);
-            physicsWorld_->RespawnPlayer(playerX_,playerY_-physics::kPlayerVisualOriginOffset,playerZ_);
-            physicsWorld_->SetEnemyCollisionEnabled(enemyAlive_);
-        }
-        camPanX_=playerX_;camPanY_=playerY_+camera::kHeadFocusOffset;camPanZ_=playerZ_;
-        cameraObstruction_.Reset();portalReadyTicks_=SDL_GetTicks()+2500;
-        uiScreen_=rhi::UiScreen::Gameplay;cameraInput_={};
-        SDL_Log("SDL3_SAVE stage=loaded id=%u scene=%s",r.id,r.scene.c_str());
-    }
-    MenuButtonPos SaveButton(int i) const {
-        float w=float(width_),h=float(height_),m=std::min(w,h);
-        if(i<3) return {w*.5f,h*(.31f+.16f*i),m*.48f,m*.065f,m*.016f};
-        if(i==3)return {w*.5f,h*.83f,m*.24f,m*.052f,m*.024f};
-        if(i==4)return {m*.12f,m*.09f,m*.08f,m*.035f,m*.014f};
-        return {w*.5f+(i==5?-1:1)*m*.35f,h*.83f,m*.07f,m*.042f,m*.014f};
-    }
-    void HandleSaveTap(float x,float y) {
-        if(pendingSaveLoad_)return;
-        if(HitRect(x,y,SaveButton(4))) {saveSelection_=false;return;}
-        if(HitRect(x,y,SaveButton(5))) {if(savePage_>0)--savePage_;return;}
-        if(HitRect(x,y,SaveButton(6))) {if((savePage_+1)*3<int(saveStore_.records.size()))++savePage_;return;}
-        if(HitRect(x,y,SaveButton(3))) {
-            saves::Record fresh;fresh.id=saveStore_.NextId();fresh.savedAt=std::time(nullptr);
-            // The hub's render origin is the original gameplay spawn.
-            fresh.x=gameplay::kPlayerSpawnX;fresh.z=gameplay::kPlayerSpawnZ;
-            if(!saveStore_.Put(fresh)) {SaveMessage("存档失败请重试");return;}
-            BeginSaveLoad(fresh);return;
-        }
-        for(int i=0;i<3;++i) {int at=savePage_*3+i;if(at<int(saveStore_.records.size())&&HitRect(x,y,SaveButton(i))){BeginSaveLoad(saveStore_.records[at]);return;}}
-    }
-    void DrawSaveList() {
-        float w=float(width_),h=float(height_),m=std::min(w,h);
-        const float white[4]={1,1,1,.96f},panel[4]={.07f,.13f,.21f,.85f},accent[4]={.12f,.42f,.55f,.95f};
-        DrawTextCentered("选择存档",w*.5f,h*.12f,m*.054f,white);
-        if(saveStore_.records.empty())DrawTextCentered("没有存档请创建新游戏",w*.5f,h*.43f,m*.035f,white);
-        for(int i=0;i<3;++i) {int at=savePage_*3+i;if(at>=int(saveStore_.records.size()))break;
-            const auto& r=saveStore_.records[at];auto b=SaveButton(i);DrawMenuRect(b,panel);
-            const char* place=r.scene=="scenes/main.json"?"主场景":(r.scene=="scenes/forest_test.json"?"森林场景":"跑酷场景");
-            std::string title="存档 "+std::to_string(r.id)+"  "+place;
-            DrawTextCentered(title.c_str(),b.cx,b.cy-b.hh*.4f,m*.029f,white);
-            std::string date="最后保存 "+saves::Date(r.savedAt);
-            DrawTextCentered(date.c_str(),b.cx,b.cy+b.hh*.45f,m*.024f,white);
-        }
-        for(int i=3;i<=6;++i) {
-            if((i==5&&savePage_==0)||(i==6&&(savePage_+1)*3>=int(saveStore_.records.size())))continue;
-            auto b=SaveButton(i);DrawMenuRect(b,i==3?accent:panel);
-            DrawTextCentered(i==3?"创建新游戏":(i==4?"返回":(i==5?"上页":"下页")),b.cx,b.cy,m*.027f,white);
-        }
-        std::string page=std::to_string(savePage_+1)+" / "+std::to_string(std::max(1,(int(saveStore_.records.size())+2)/3));
-        DrawTextCentered(page.c_str(),w*.5f,h*.94f,m*.023f,white);
-        if(SDL_GetTicks()<saveMessageUntil_)DrawTextCentered(saveMessage_.c_str(),w*.5f,h*.72f,m*.025f,white);
-    }
+    float SaveUiWidth() const {return float(width_);}
+    float SaveUiHeight() const {return float(height_);}
+#include "../gameplay/save_session.inl"
 
     // ---- main menu / settings ------------------------------------------------
     // The renderer owns menu layout, drawing and hit-testing; the touch layer
@@ -4277,7 +4194,7 @@ public:
         // geometry pass consumes the skin UBO.
         if (uiScreen_ == rhi::UiScreen::Gameplay) {
             UpdateAnimation();
-            UpdateEnemyAnimation();
+            if(ArenaMode()) UpdateArenaAnimations(); else UpdateEnemyAnimation();
         }
         const int characterInstanceCount = UploadCharacterInstanceData();
 
@@ -4307,6 +4224,7 @@ public:
             glUseProgram(shadowProgram_);
             if (!meshes_.empty()) {
                 DrawShadowCharacterBatch(meshes_, characterInstanceCount);
+                DrawArenaEnemies(true);
             }
             if(pistol_.equipped && pistolPoseReady_ && !playerSwimming_ && playerHealth_>0)
                 DrawShadowMeshList(pistolMeshes_,false,pistolMatrix_);
@@ -4435,6 +4353,7 @@ public:
             glUniform1i(modelEmissiveSampler_, 4);
             glUniform1f(materialAlphaCutoffLocation_, 0.0f);
             DrawCharacterMeshBatch(meshes_, characterInstanceCount);
+            DrawArenaEnemies(false);
 
             // ---- static props: helmet + ground slab.  Same program,
             // skinning off, per-draw modelMvp/modelMatrix in the scene UBO
@@ -4555,6 +4474,7 @@ public:
         glUseProgram(lightingProgram_);
         glUniformMatrix4fv(lightingInvViewProjLocation_, 1, GL_FALSE, invViewProj_.value);
         glUniform3f(lightingCameraPositionLocation_, camPosX_, camPosY_, camPosZ_);
+        glUniform1i(lightingDemoLightsLocation_, sceneDefinition_ == nullptr || sceneDefinition_->demoPropsEnabled);
 
         glUniform1f(lightingMaxLodLocation_, skyboxMaxLod_);
         glUniform1i(lightingEnvPrefilteredLocation_, prefilteredTexture_ != 0 ? 1 : 0);
@@ -4618,7 +4538,8 @@ public:
             glUniform4f(waterCameraLocation_, camPosX_, camPosY_, camPosZ_, water.enabled ? 1.0f : 2.0f);
             glUniform4f(waterParamsLocation_, water.height, water.size * 0.5f, water.roughness,
                 static_cast<float>(SDL_GetTicks() % 3600000U) * 0.001f);
-            glUniform4f(waterColorLocation_, water.color.x, water.color.y, water.color.z, 1.0f);
+            glUniform4f(waterColorLocation_, water.color.x, water.color.y, water.color.z,
+                sceneDefinition_->demoPropsEnabled ? 1.0f : 0.0f);
             glUniform4f(waterBoundsLocation_,water.center.x,water.center.z,
                 water.halfExtents.x>0 ? water.halfExtents.x : water.size*.5f,
                 water.halfExtents.z>0 ? water.halfExtents.z : water.size*.5f);
@@ -4809,7 +4730,10 @@ public:
             glDisable(GL_DEPTH_TEST);
             DrawMinimapTexture();
             DrawPlayerHealthBar();
-            DrawEnemyHealthBar();
+            if(ArenaMode()) {
+                for(auto& actor:arenaEnemies_) {SwapArena(actor);DrawEnemyHealthBar();SwapArena(actor);}
+                DrawArenaHud();
+            } else DrawEnemyHealthBar();
             const Uint64 uiT1 = SDL_GetPerformanceCounter();
             // Rects and labels render in two passes: land the queued rects
             // (minimap, health bars) first so UiFlushText paints the labels on
@@ -4919,14 +4843,17 @@ public:
                 const char* step=!state.gateOpen ? "1  PUSH CRATE ONTO THE GOLD PLATE" :
                     (playerY_>4.5f ? "3  UPPER DECK - RETURN GATE AHEAD" : "2  GATE OPEN - BOARD THE LIFT");
                 const float workshopColor[4]={.4f,.85f,1,1};
-                if (sceneDefinition_->parkour.enabled) {
+                if (sceneDefinition_->parkour.enabled && sceneDefinition_->parkour.checkpoints.size()>=5) {
                     const auto& w=sceneDefinition_->workshop;
                     const auto& pool=sceneDefinition_->water;
-                    step=playerZ_>w.plate.z+9 ? "1  JUMP TRAIL - FOLLOW CYAN MARKERS" :
-                        (!state.gateOpen ? "2  PUSH CRATE ONTO THE GOLD PLATE" :
-                        (playerZ_>w.plate.z-18 ? "3  BOARD LIFT TO THE UPPER DECK" :
-                        (playerZ_>pool.center.z+pool.halfExtents.z+1 ? "4  RIDE THE MOVING PLATFORMS" :
-                        (playerSwimming_ ? "5  SWIM TO THE EXIT STAIRS" : "6  FOLLOW THE ROUTE TO THE RETURN GATE"))));
+                    const auto& points=sceneDefinition_->parkour.checkpoints;
+                    step=playerZ_>points[1].spawn.z+2 ? "1  JUMP THE THREE STATIC BRICKS" :
+                        (playerZ_>points[2].spawn.z+2 ? "2  TIME THE FORWARD MOVING PLATFORM" :
+                        (playerZ_>w.plate.z+9 ? "3  CROSS THE THREE SIDE-MOVING BRICKS" :
+                        (!state.gateOpen ? "4  PUSH CRATE ONTO THE GOLD PLATE" :
+                        (playerY_<points[4].spawn.y-.3f ? "5  RIDE LIFT TO THE UPPER DECK" :
+                        (playerZ_>pool.center.z+pool.halfExtents.z ? "6  ENTER THE POOL AND SWIM" :
+                        (playerSwimming_ ? "7  SWIM TO THE EXIT STAIRS" : "8  FINISH - CLAIM 100 GOLD"))))));
                 }
                 DrawTextCentered(step,width_*.5f,mnF*(sceneDefinition_->parkour.enabled?.19f:.15f),mnF*.025f,workshopColor,false);
               }
@@ -5345,6 +5272,7 @@ public:
             physicsReset_ = false;
         }
         uiScreen_ = rhi::UiScreen::Gameplay;
+        ResetArena();
     }
 
 private:
@@ -5478,6 +5406,7 @@ private:
         lightingUseShadowMapLocation_ = glGetUniformLocation(lightingProgram_, "useShadowMap");
         lightingDebugNormalLocation_ = glGetUniformLocation(lightingProgram_, "debugNormal");
         lightingHdrOutputLocation_ = glGetUniformLocation(lightingProgram_, "hdrOutput");
+        lightingDemoLightsLocation_ = glGetUniformLocation(lightingProgram_, "demoLightsEnabled");
         waterInverseLocation_ = glGetUniformLocation(waterProgram_, "waterInvViewProj");
         waterCameraLocation_ = glGetUniformLocation(waterProgram_, "waterCamera");
         waterParamsLocation_ = glGetUniformLocation(waterProgram_, "waterParams");
@@ -6862,6 +6791,125 @@ private:
     // pattern; the three on-screen buttons replace its keyboard/touch input.
     enum class AnimState { SwimIdle, SwimForward, Idle, Walk, Sprint, Attack, JumpStart, JumpLoop, JumpLand, Crouch, Hit, Death };
 
+    struct ArenaEnemy {
+        float X=0;
+        float Y=0;
+        float Z=0;
+        float Yaw=0;
+        float Health=100;
+        float AttackCooldown=0;
+        float HitInvulnerability=0;
+        float HitLockTimer=0;
+        bool Alive=false;
+        bool ReturningHome=false;
+        bool Visible=false;
+        bool DeathPlaying=false;
+        float DeathTime=0;
+        float DissolveTimer=-1;
+        float DissolveAmount=0;
+        bool Moving=false;
+        bool AttackRequested=false;
+        int AnimClipIndex=-1;
+        float AnimTime=0;
+        Uint64 AnimLastTicks=0;
+        AnimState State=AnimState::Idle;
+        float AnimStateTime=0;
+        bool AnimLoop=true;
+        animation::PoseTransition BodyTransition={};
+        std::vector<float> JointMatrices={};
+        Mat4 Matrix={};
+    };
+    ArenaEnemy arenaEnemies_[4];
+    gameplay::ArenaWaves arenaWaves_;
+    void SwapArena(ArenaEnemy& actor) {
+        std::swap(enemyX_,actor.X);
+        std::swap(enemyY_,actor.Y);
+        std::swap(enemyZ_,actor.Z);
+        std::swap(enemyYaw_,actor.Yaw);
+        std::swap(enemyHealth_,actor.Health);
+        std::swap(enemyAttackCooldown_,actor.AttackCooldown);
+        std::swap(enemyHitInvulnerability_,actor.HitInvulnerability);
+        std::swap(enemyHitLockTimer_,actor.HitLockTimer);
+        std::swap(enemyAlive_,actor.Alive);
+        std::swap(enemyReturningHome_,actor.ReturningHome);
+        std::swap(enemyVisible_,actor.Visible);
+        std::swap(enemyDeathPlaying_,actor.DeathPlaying);
+        std::swap(enemyDeathTime_,actor.DeathTime);
+        std::swap(enemyDissolveTimer_,actor.DissolveTimer);
+        std::swap(enemyDissolveAmount_,actor.DissolveAmount);
+        std::swap(enemyMoving_,actor.Moving);
+        std::swap(enemyAttackRequested_,actor.AttackRequested);
+        std::swap(enemyAnimClipIndex_,actor.AnimClipIndex);
+        std::swap(enemyAnimTime_,actor.AnimTime);
+        std::swap(enemyAnimLastTicks_,actor.AnimLastTicks);
+        std::swap(enemyAnimState_,actor.State);
+        std::swap(enemyAnimStateTime_,actor.AnimStateTime);
+        std::swap(enemyAnimLoop_,actor.AnimLoop);
+        std::swap(enemyBodyTransition_,actor.BodyTransition);
+        std::swap(enemyJointMatrices_,actor.JointMatrices);
+        std::swap(enemyMatrix_,actor.Matrix);
+    }
+
+
+    bool ArenaMode() const {return sceneDefinition_ && sceneDefinition_->arena.enabled;}
+    void ResetArena() {
+        arenaWaves_={};
+        if(physicsWorld_)physicsWorld_->DisableArenaEnemies();
+        ArenaEnemy seed;SwapArena(seed);
+        for(auto& actor:arenaEnemies_) {actor=seed;actor.Alive=actor.Visible=false;actor.BodyTransition.Reset();}
+        SwapArena(seed);
+        if(ArenaMode()) {enemyAlive_=enemyVisible_=false;if(physicsWorld_)physicsWorld_->SetEnemyCollisionEnabled(false);}
+    }
+    void SpawnArenaWave(int count) {
+        for(int i=0;i<count;++i) {
+            auto& actor=arenaEnemies_[i];
+            // Rotate the first door each wave; the final wave uses all four.
+            const auto& gate=sceneDefinition_->arena.spawnGates[(i+count-1)%4];
+            actor.X=gate.x;actor.Y=gate.y;actor.Z=gate.z;
+            actor.Yaw=std::atan2(playerX_-gate.x,playerZ_-gate.z);
+            actor.Health=100;actor.Alive=actor.Visible=true;
+            actor.DeathPlaying=false;actor.DeathTime=0;actor.DissolveTimer=-1;actor.DissolveAmount=0;
+            actor.AttackCooldown=.7f+i*.2f;actor.HitInvulnerability=actor.HitLockTimer=0;
+            actor.Moving=actor.AttackRequested=false;actor.State=AnimState::Idle;
+            actor.AnimClipIndex=enemyIdleClip_;actor.AnimTime=actor.AnimStateTime=0;
+            actor.AnimLastTicks=SDL_GetTicks();actor.AnimLoop=true;actor.BodyTransition.Reset();
+            actor.Matrix=Mat4Multiply(Mat4Translation(actor.X,actor.Y,actor.Z),Mat4RotationY(actor.Yaw));
+            if(physicsWorld_)physicsWorld_->SetArenaEnemy(i,actor.X,actor.Y-physics::kPlayerVisualOriginOffset,actor.Z,true);
+        }
+        SDL_Log("SDL3_ARENA stage=wave_start wave=%d count=%d",arenaWaves_.wave,count);
+    }
+    float ArenaAttackDuration() const {return ClipDurationOr(attackClip_,.87f);}
+    const std::vector<ohos_model::AnimationClip>& ArenaPlayerClips() const {return clips_;}
+    void EnterPlayerDeathState() {EnterAnimState(AnimState::Death);}
+#include "../gameplay/arena_combat.inl"
+    void UpdateArenaAnimations() {
+        for(auto& actor:arenaEnemies_)if(actor.Visible) {
+            SwapArena(actor);if(playerHealth_<=0)enemyMoving_=false;
+            UpdateEnemyAnimation();SwapArena(actor);
+        }
+    }
+    void DrawArenaEnemies(bool shadow) {
+        if(!ArenaMode())return;
+        for(auto& actor:arenaEnemies_)if(actor.Visible && !actor.JointMatrices.empty()) {
+            SwapArena(actor);
+            glBindBuffer(GL_UNIFORM_BUFFER,enemyJointBuffer_);
+            glBufferSubData(GL_UNIFORM_BUFFER,0,GLsizeiptr(enemyJointMatrices_.size()*sizeof(float)),enemyJointMatrices_.data());
+            UploadCharacterInstanceData();
+            if(shadow)DrawShadowCharacterBatch(meshes_,2,true);else DrawCharacterMeshBatch(meshes_,2,true);
+            SwapArena(actor);
+        }
+        UploadCharacterInstanceData();
+    }
+    void DrawArenaHud() {
+        float w=float(width_),h=float(height_),m=std::min(w,h);
+        const float white[4]={1,1,1,.96f};int alive=0;for(const auto& a:arenaEnemies_)alive+=a.Alive;
+        char text[100];
+        if(arenaWaves_.complete)std::snprintf(text,sizeof(text),"竞技场通关  4 / 4");
+        else if(alive>0)std::snprintf(text,sizeof(text),"第 %d / 4 波  剩余 %d",arenaWaves_.wave,alive);
+        else std::snprintf(text,sizeof(text),"第 %d / 4 波准备  %.0f",std::min(4,arenaWaves_.wave+1),std::ceil(arenaWaves_.countdown));
+        DrawTextCentered(text,w*.5f,m*.18f,m*.031f,white);
+    }
+
     static float AnimTransitionDuration(AnimState state)
     {
         using T = animation::Transition;
@@ -7568,13 +7616,16 @@ private:
         glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
 
-    void DrawShadowCharacterBatch(const std::vector<GlesMesh>& meshes, int instanceCount)
+    void DrawShadowCharacterBatch(const std::vector<GlesMesh>& meshes, int instanceCount, bool enemyOnly=false)
     {
         if (meshes.empty() || instanceCount <= 0 || characterInstanceVbo_ == 0) {
             return;
         }
         int base = 0;
-        instanceCount = VisibleCharacters(shadowMatrix_, instanceCount, base);
+        if(enemyOnly) {
+            base=1;const terrain::Frustum frustum(shadowMatrix_.value,false);
+            instanceCount=enemyVisible_ && frustum.Intersects(terrain::TransformBounds(terrain::ActorBounds(true),enemyMatrix_.value))?1:0;
+        } else instanceCount = VisibleCharacters(shadowMatrix_, instanceCount, base);
         if (!instanceCount) return;
         glUniform1i(shadowInstanceBaseLocation_, base);
         glUniform1i(shadowSkinningOnLocation_, 1);
@@ -7598,13 +7649,16 @@ private:
         glBindVertexArray(0);
     }
 
-    void DrawCharacterMeshBatch(const std::vector<GlesMesh>& meshes, int instanceCount)
+    void DrawCharacterMeshBatch(const std::vector<GlesMesh>& meshes, int instanceCount, bool enemyOnly=false)
     {
         if (meshes.empty() || instanceCount <= 0 || characterInstanceVbo_ == 0) {
             return;
         }
         int base = 0;
-        instanceCount = VisibleCharacters(viewProj_, instanceCount, base);
+        if(enemyOnly) {
+            base=1;const terrain::Frustum frustum(viewProj_.value,false);
+            instanceCount=enemyVisible_ && frustum.Intersects(terrain::TransformBounds(terrain::ActorBounds(true),enemyMatrix_.value))?1:0;
+        } else instanceCount = VisibleCharacters(viewProj_, instanceCount, base);
         if (!instanceCount) return;
         glUniform1i(instanceBaseLocation_, base);
         glUniform1i(skinningOnLocation_, 1);
@@ -8252,6 +8306,13 @@ private:
                     EnterAnimState(AnimState::Idle);
                     SDL_Log("SDL3_PARKOUR stage=respawn checkpoint=%zu falls=%d", parkourProgress_.checkpoint, parkourProgress_.falls);
                 }
+                const int reward=parkourProgress_.ClaimCompletionReward(course);
+                if(reward>0) {
+                    gold_+=reward;
+                    std::string message="跑酷通关 金币 +"+std::to_string(reward);
+                    SaveMessage(message.c_str());
+                    SDL_Log("SDL3_PARKOUR stage=reward amount=%d gold=%d",reward,gold_);
+                }
                 if (previous != parkourProgress_.checkpoint)
                     SDL_Log("SDL3_PARKOUR stage=%s checkpoint=%zu seconds=%.2f",
                         parkourProgress_.finished ? "finish" : "checkpoint", parkourProgress_.checkpoint, parkourProgress_.seconds);
@@ -8308,12 +8369,14 @@ private:
                 Mat4Translation(-placement.focus.x, -placement.focus.y, -placement.focus.z))));
         camPosX_ = placement.eye.x; camPosY_ = placement.eye.y; camPosZ_ = placement.eye.z;
         if (gameplayInput) {
-            UpdateEnemyAi(dt, cameraInput_.actionButtonPressedMask);
-            if (uiScreen_ == rhi::UiScreen::Gameplay && playerHealth_>0) {
+            if(ArenaMode()) UpdateArena(dt,cameraInput_.actionButtonPressedMask);
+            else UpdateEnemyAi(dt, cameraInput_.actionButtonPressedMask);
+            if (uiScreen_ == rhi::UiScreen::Gameplay && playerHealth_>0 &&
+                (sceneDefinition_ == nullptr || sceneDefinition_->demoPropsEnabled)) {
                 playerHealth_ = gameplay::HealNearLight(playerHealth_, playerMaxHealth_,
                     playerX_, playerY_, playerZ_, dt);
             }
-            if (uiScreen_ == rhi::UiScreen::Gameplay && physicsReady) {
+            if (uiScreen_ == rhi::UiScreen::Gameplay && physicsReady && !ArenaMode()) {
                 physicsWorld_->MoveEnemy(enemyDesiredVelocityX_, enemyDesiredVelocityZ_, dt);
                 const physics::CharacterState state = physicsWorld_->GetEnemyState();
                 enemyX_ = state.x;
@@ -8426,6 +8489,7 @@ private:
     static constexpr int kBloomUpLevels = 5;
     bool hdrPipeline_ = false;
     GLint lightingHdrOutputLocation_ = -1;
+    GLint lightingDemoLightsLocation_ = -1;
     GLuint bloomThProgram_ = 0;
     GLuint bloomDownProgram_ = 0;
     GLuint bloomUpProgram_ = 0;

@@ -664,7 +664,9 @@ std::vector<StaticBoxCollider> BuildStaticBoxColliders(const Definition& definit
         for (const auto& platform:definition.workshop.movingPlatforms) moving |= entity.id==platform.entityId;
         if (moving) continue;
         const ColliderSettings& settings = entity.collider;
-        if (!entity.importAsStaticCube || !settings.present || settings.isTrigger ||
+        // Imported models may author an explicit normalized-space box, too.
+        // Unlike built-in cubes they never receive an implicit collider.
+        if ((!entity.importAsStaticCube && !entity.importAsStaticModel) || !settings.present || settings.isTrigger ||
             settings.shapeType != 0) {
             continue;
         }
@@ -751,6 +753,18 @@ bool ParseMikanScene(const char* json, std::size_t size, Definition& output,
         parsed.enemyEnabled = BoolOr(*gameplay, "enemyEnabled", true);
         parsed.demoPropsEnabled = BoolOr(*gameplay, "demoPropsEnabled", true);
         parsed.groundEnabled = BoolOr(*gameplay, "groundEnabled", true);
+        if (const auto* arena = Member(*gameplay,"arena")) {
+            const auto* gates=Member(*arena,"spawnGates");
+            if(arena->type!=JsonValue::Type::Object || !gates ||
+               gates->type!=JsonValue::Type::Array || gates->array.size()!=4) {
+                error="arena requires four spawnGates";return false;
+            }
+            parsed.arena.enabled=true;
+            for(const auto& gate:gates->array) {
+                Vec3 p;if(!ReadVec3(&gate,p)) {error="invalid arena spawn gate";return false;}
+                parsed.arena.spawnGates.push_back(p);
+            }
+        }
         if (const auto* points = Member(*gameplay, "savePoints")) {
             if (points->type != JsonValue::Type::Array || points->array.size()>32) {
                 error="savePoints must be an array of at most 32 positions"; return false;
@@ -834,6 +848,11 @@ bool ParseMikanScene(const char* json, std::size_t size, Definition& output,
             auto& c = parsed.parkour;
             c.enabled = true;
             c.fallY = FloatOr(*course, "fallY", 0);
+            c.revision = IntOr(*course,"revision",1);
+            c.completionReward = IntOr(*course,"completionReward",0);
+            if(c.revision<1 || c.revision>100000 || c.completionReward<0 || c.completionReward>10000) {
+                error="invalid parkour revision or completion reward";return false;
+            }
             if (course->type != JsonValue::Type::Object || !std::isfinite(c.fallY) ||
                 !points || points->type != JsonValue::Type::Array || points->array.size() < 2 || points->array.size() > 16) {
                 error = "parkour requires finite fallY and 2..16 checkpoints"; return false;
@@ -894,6 +913,7 @@ bool ParseMikanScene(const char* json, std::size_t size, Definition& output,
         }
         Entity entity{};
         entity.id = UIntOr(Member(source, "id"), 0);
+        entity.motionParentId = UIntOr(Member(source,"motionParent"),kNoParent);
         entity.transform = ParseTransform(Member(source, "transform"));
         if (const JsonValue* name = Member(source, "name")) {
             entity.name = StringOr(*name, "name");
@@ -1044,6 +1064,13 @@ bool ParseMikanScene(const char* json, std::size_t size, Definition& output,
                 if (e.id==id && e.importAsStaticCube && e.transform.scale.x>.04f &&
                     e.transform.scale.y>.04f && e.transform.scale.z>.04f) ++count;
             if (count!=1) { error="workshop requires three unique solid cube entities"; return false; }
+        }
+    }
+    for(const auto& entity:parsed.entities) if(entity.motionParentId!=kNoParent) {
+        bool valid=false;
+        for(const auto& moving:parsed.workshop.movingPlatforms) valid |= moving.entityId==entity.motionParentId;
+        if(!valid || entity.id==entity.motionParentId || !entity.importAsStaticModel || entity.collider.present) {
+            error="motionParent requires a decorative model and a moving platform";return false;
         }
     }
     output = std::move(parsed);

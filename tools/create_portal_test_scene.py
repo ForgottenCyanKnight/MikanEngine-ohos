@@ -1,6 +1,6 @@
 """Build the small independent forest scene and the original scene's test gate."""
 from pathlib import Path
-import copy,json,math,struct
+import copy,json,math,struct,random
 from PIL import Image
 ROOT=Path(__file__).resolve().parents[1]/'ohos-project/entry/src/main/resources/rawfile'
 
@@ -16,7 +16,7 @@ def gate(first,x,z,ground):
 mainpath=ROOT/'scenes/main.json'
 main=json.loads(mainpath.read_text(encoding='utf-8'))
 main['entities']=[e for e in main['entities'] if not e.get('name',{}).get('name','').startswith('PortalTest_')]
-ground=next(e for e in main['entities'] if e.get('name',{}).get('name')=='Ground')
+ground=next((e for e in main['entities'] if e.get('name',{}).get('name')=='Ground'), {'transform':{'position':[0,-1.14,0],'scale':[20,.2,20]}})
 authored_top=ground['transform']['position'][1]+abs(ground['transform']['scale'][1])
 main.setdefault('gameplay',{})['portal']={'target':'scenes/forest_test.json','label':'FOREST TEST - WALK THROUGH GATE','position':[0,.02,-4],'radius':.85,'color':[.08,.85,.4],'opacity':.32}
 main['entities']+=gate(9100,0,-4,authored_top)
@@ -25,7 +25,7 @@ mainpath.write_text(json.dumps(main,ensure_ascii=False,indent=2)+'\n',encoding='
 image=Image.new('I;16',(65,65))
 for row in range(65):
  for col in range(65):
-    x=(col/64-.5)*24;z=(.5-row/64)*24
+    x=(col/64-.5)*36;z=(.5-row/64)*36
     image.putpixel((col,row),round(hill(x,z)/2*65535))
 image.save(ROOT/'terrain/forest_test_height16.png')
 scene={'formatVersion':1,'game':'forest_portal_test','water':{'enabled':False},'gameplay':{'playerSpawn':[0,round(hill(0,0)+.02,4),0],'enemyEnabled':False,'demoPropsEnabled':False,'portal':{'target':'scenes/main.json','label':'RETURN - WALK THROUGH GATE','position':[0,round(hill(0,3)+.02,4),3],'radius':.85,'color':[.35,.18,1.0],'opacity':.32}},'entities':[]}
@@ -34,7 +34,7 @@ for e in main['entities']:
     scene['entities'].append(copy.deepcopy(e))
 terrain=json.loads((ROOT/'scenes/terrain_demo.json').read_text())['entities'][0]
 terrain['transform']['position']=[0,-.94,0]
-terrain['terrain'].update({'heightmapPath':'terrain/forest_test_height16.png','worldSize':[24,24],'heightScale':2,'materialTiling':10})
+terrain['terrain'].update({'heightmapPath':'terrain/forest_test_height16.png','worldSize':[36,36],'heightScale':2,'materialTiling':10})
 scene['entities'].append(terrain)
 # The loader normalises every model's largest dimension to 2 and centres it.
 # Compute the baked bounding-box height so all props sit on the heightmap.
@@ -60,14 +60,21 @@ def halfheight(name):
  return spans[1]/max(spans)
 props=[('tree',x,z,s) for x,z,s in [(-5,-4,2.5),(5,-5,2.8),(-7,1,2.4),(7,2,2.6),(-4,-9,2.7),(3,-9,2.4),(-8,7,2.2),(7,7,2.5)]]
 props += [('rock1',-3,-5,.65),('rock2',4,-3,.8),('rock3',-6,4,.65),('rock1',6,5,.55)]
-props += [('grass',x,z,.35) for x,z in [(-2,-3),(2,-4),(-4,-2),(4,-6),(-6,-3),(6,1),(-5,5),(5,4),(-8,-6),(8,-5),(-2,-8),(1,-7)]]
-props += [('flower_blue',-3,1,.45),('flower_white',3,1,.4),('flower_yellow',-4,-6,.45)]
+rng=random.Random(20261102)
+for kind,count in [('grass',150),('flowers',60)]:
+ for i in range(count):
+  while True:
+   x=rng.uniform(-16.5,16.5);z=rng.uniform(-16.5,16.5)
+   if x*x+z*z>4 and x*x+(z-3)**2>6.25:break
+  name=kind if kind=='grass' else ['flower_blue','flower_white','flower_yellow'][i%3]
+  props.append((name,x,z,rng.uniform(.3,.48)))
+props += [('tree',x,z,2.5) for x,z in [(-13,-12),(13,-12),(-14,7),(14,8),(-7,14),(8,14)]]
 heights={name:halfheight(name) for name,_,_,_ in props}
 for i,(name,x,z,s) in enumerate(props):
- scene['entities'].append(entity(9200+i,f'EZTree_{name}_{i}',[x,round(-.94+hill(x,z)+heights[name]*s-.025,4),z],[s,s,s],f'models/EZTree/{name}.glb',i*.83))
+ scene['entities'].append(entity(20000+i,f'EZTree_{name}_{i}',[x,round(-.94+hill(x,z)+heights[name]*s-.025,4),z],[s,s,s],f'models/EZTree/{name}.glb',i*.83))
 scene['entities']+=gate(9100,0,3,-.94+hill(0,3))
 # Low stone perimeter keeps the player inside the loaded terrain.
-for i,(pos,scale) in enumerate([([0,.35,-12],[12,.8,.2]),([0,.35,12],[12,.8,.2]),([-12,.35,0],[.2,.8,12]),([12,.35,0],[.2,.8,12])]):
+for i,(pos,scale) in enumerate([([0,-.3,-18],[18,1.7,.25]),([0,-.3,18],[18,1.7,.25]),([-18,-.3,0],[.25,1.7,18]),([18,-.3,0],[.25,1.7,18])]):
  scene['entities'].append(entity(9300+i,'Forest boundary',pos,scale))
 (ROOT/'scenes/forest_test.json').write_text(json.dumps(scene,ensure_ascii=False,indent=2)+'\n',encoding='utf-8',newline='\n')
-print(f'Created 24x24m forest, {len(props)} EZTree props, two reciprocal portals.')
+print(f'Created 36x36m forest, {len(props)} EZTree props, two reciprocal portals.')

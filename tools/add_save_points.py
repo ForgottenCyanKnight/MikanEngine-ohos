@@ -11,6 +11,9 @@ root = Path(__file__).resolve().parents[1] / 'ohos-project/entry/src/main/resour
 for name in ('main', 'forest_test', 'physics_parkour'):
     path = root / (name + '.json')
     scene = json.loads(path.read_text(encoding='utf-8'))
+    if name == 'main' and scene.get('game') == 'portal_hub':
+        print(name, 'hub save position retained without decorative props')
+        continue
     gameplay = scene.setdefault('gameplay', {})
     if name == 'main':
         points = [[-3, .02, 3]]

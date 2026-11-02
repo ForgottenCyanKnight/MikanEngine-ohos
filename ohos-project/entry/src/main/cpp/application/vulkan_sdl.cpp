@@ -25,6 +25,10 @@
 #include "SDL3/SDL_vulkan.h"
 
 #include "inventory.h"
+#include "gameplay/save_store.h"
+#include "gameplay/parkour_course.h"
+#include "gameplay/arena_waves.h"
+#include <map>
 #include "gameplay_lights.h"
 #include "enemy_activity.h"
 #include "weapon_gameplay.h"
@@ -478,9 +482,11 @@ struct SceneUniforms {
     Mat4 cameraToWorld;
     Mat4 shadowMvp;
     Mat4 viewProj;
+    float gameplayFlags[4] = {}; // x = fixed demo point lights enabled
+    float waterBounds[4]={};float portalPositions[8][4]={};float portalColors[8][4]={};float portalInfo[4]={};
 };
 
-static_assert(sizeof(SceneUniforms) == sizeof(float) * 116,
+static_assert(sizeof(SceneUniforms) == sizeof(float) * 192,
     "Scene UBO must contain camera data, shadow matrix and view projection");
 
 // Vertex layout of the model pipeline.  Separate from CubeVertex because glTF
@@ -727,6 +733,7 @@ struct ModelGpuAsset {
     int swimForwardClip = -1;
     int crouchClip = -1;
     int attackClip = -1;
+    int punchClip=-1,swordAttackClip=-1,swordIdleClip=-1;
     int jumpStartClip = -1;
     int jumpLoopClip = -1;
     int jumpLandClip = -1;
@@ -891,6 +898,8 @@ constexpr const char* kModelPath = "models/DamagedHelmet/glTF/DamagedHelmet.gltf
 // origin without intersecting.
 constexpr bool kDrawLegacyCube = false;
 
+extern "C" const char* OHOS_GetSaveDirectory();
+
 class VulkanRenderer final : public rhi::IRenderer {
 public:
     ~VulkanRenderer() override
@@ -917,6 +926,62 @@ public:
     void SetSceneDefinition(const scene::Definition& definition) override
     {
         sceneDefinition_ = &definition;
+        if(activeSceneKey_.empty())activeSceneKey_=definition.sourcePath;
+    }
+
+    std::string ConsumeSceneRequest() override
+    {
+        if (!saveSceneRequest_.empty()) { auto path=saveSceneRequest_; saveSceneRequest_.clear(); return path; }
+        if (uiScreen_ != rhi::UiScreen::Gameplay || playerHealth_ <= 0 ||
+            sceneDefinition_ == nullptr ||
+            SDL_GetTicks() < portalReadyTicks_) return {};
+        for (const auto& portal : sceneDefinition_->portals) {
+            const auto& p = portal.position;
+            const float dx = playerX_ - p.x, dz = playerZ_ - p.z;
+            if (dx * dx + dz * dz <= portal.radius * portal.radius &&
+                std::fabs(playerY_ - p.y) <= 1.5f) {
+                portalReadyTicks_ = SDL_GetTicks() + 2500;
+                return portal.target;
+            }
+        }
+        return {};
+    }
+
+
+    bool SupportsScenePreload() const override {return true;}
+    bool DrawLoadingScreen(float progress,const char* label) override {
+        loadingProgress_=std::clamp(progress,0.0f,1.0f);loadingLabel_=label?label:"加载场景";
+        loadingScreen_=true;const bool result=DrawOnce();loadingScreen_=false;return result;
+    }
+    void SceneRequestFailed() override {if(pendingSaveLoad_){pendingSaveLoad_=false;saveSelection_=true;uiScreen_=rhi::UiScreen::MainMenu;SaveMessage("读取失败请重试");}}
+    rhi::ScenePreloadStatus PreloadSceneStep(const scene::Definition& definition) override {
+        const auto& key=definition.sourcePath;
+        if(key==activeSceneKey_ || terrainCache_.count(key))return {1,true,{}};
+        for(const auto& e:definition.entities)if(e.importAsStaticModel && !FindSceneModelAsset(e.modelPath)) {
+            sceneModelAssets_.push_back({});auto& item=sceneModelAssets_.back();item.path=e.modelPath;
+            if(!LoadModelAsset(item.path.c_str(),item.asset,false)) {sceneModelAssets_.pop_back();return {0,false,"Vulkan model preload failed"};}
+            return {.5f,false,{}};
+        }
+        ohos_model::Model terrain;std::string error;
+        if(!terrain::BuildModel(definition,physics::kGroundCollider.centerY+physics::kGroundCollider.halfExtentY,terrain,error))return {0,false,error};
+        auto& asset=terrainCache_[key];
+        if(!terrain.meshes.empty() && !UploadModelAsset(key.c_str(),terrain,asset,false)) {terrainCache_.erase(key);return {0,false,"Vulkan terrain preload failed"};}
+        if(!RecreateSwapchain())return {0,false,"Vulkan descriptor refresh failed"};
+        return {1,true,{}};
+    }
+    bool ReloadScene(const scene::Definition& definition) override {
+        auto next=terrainCache_.find(definition.sourcePath);if(next==terrainCache_.end())return false;
+        if(vkDeviceWaitIdle(device_)!=VK_SUCCESS)return false;
+        terrainCache_.emplace(activeSceneKey_,std::move(terrainAsset_));
+        terrainAsset_=std::move(next->second);terrainCache_.erase(next);
+        activeSceneKey_=definition.sourcePath;sceneDefinition_=&definition;
+        ohos_model::Model mapTerrain;std::string error;
+        if(terrain::BuildModel(definition,physics::kGroundCollider.centerY+physics::kGroundCollider.halfExtentY,mapTerrain,error))minimapTerrain_.Build(mapTerrain);
+        const auto pistol=pistol_;const auto sword=sword_;const float health=playerHealth_;
+        ResetGameplayScene();pistol_=pistol;sword_=sword;playerHealth_=health;
+        if(pendingSaveLoad_)ApplySave();
+        portalReadyTicks_=SDL_GetTicks()+2500;
+        return RecreateSwapchain();
     }
 
     void OnApplicationBackground() override
@@ -942,7 +1007,9 @@ public:
         return true;
     }
 
-    bool WeaponAvailable() const override {return inventory_.HasPistol();}
+    bool WeaponAvailable() const override {return inventory_.HasPistol()||inventory_.PistolInBag();}
+    bool SwordAvailable() const override {return inventory_.HasSword()||inventory_.SwordInBag();}
+    bool ChestPromptActive() const override {return NearSavePoint() || (!ChestOpened()&&ChestNear());}
     bool WeaponEquipped() const override { return pistol_.equipped; }
 
     rhi::UiScreen CurrentScreen() const override
@@ -1089,7 +1156,7 @@ public:
         }
         if (uiScreen_ == rhi::UiScreen::Gameplay) {
             UpdatePlayerAnimation();
-            UpdateEnemyAnimation();
+            if(ArenaMode())UpdateArenaAnimations();else UpdateEnemyAnimation();
         }
 
         // Keep the CPU-side UI staging capacity across frames. Geometry is
@@ -1223,11 +1290,12 @@ public:
     // both Jolt characters, animation cursors and the third-person camera.
     void ResetGameplayScene()
     {
+        parkourProgress_={};sword_.Holster();
         pistol_.Reset();
         pistolPoseReady_ = false;
-        playerX_ = gameplay::kPlayerSpawnX;
-        playerY_ = 0.0f;
-        playerZ_ = gameplay::kPlayerSpawnZ;
+        playerX_=sceneDefinition_?sceneDefinition_->playerSpawn.x:0;
+        playerY_=sceneDefinition_?sceneDefinition_->playerSpawn.y:0;
+        playerZ_=sceneDefinition_?sceneDefinition_->playerSpawn.z:0;
         playerYaw_ = 0.0f;
         playerMoving_ = false;
         playerSprinting_ = false;
@@ -1250,9 +1318,9 @@ public:
         enemyAttackCooldown_ = 0.0f;
         enemyHitInvulnerability_ = 0.0f;
         enemyHitLockTimer_ = 0.0f;
-        enemyAlive_ = true;
+        enemyAlive_ = sceneDefinition_==nullptr || sceneDefinition_->enemyEnabled;
         enemyReturningHome_ = false;
-        enemyVisible_ = true;
+        enemyVisible_ = enemyAlive_;
         enemyDeathPlaying_ = false;
         enemyDeathTime_ = 0.0f;
         enemyDissolveTimer_ = -1.0f;
@@ -1264,11 +1332,11 @@ public:
 
         cameraObstruction_.Reset(); cameraWasObstructed_ = false;
         camYaw_ = 0.0f;
-        camPitch_ = 0.0f;
-        camDistance_ = 2.8f;
-        camPanX_ = 0.0f;
+        camPitch_ = sceneDefinition_ && sceneDefinition_->parkour.enabled?.38f:0;
+        camDistance_ = sceneDefinition_ && sceneDefinition_->parkour.enabled?4.2f:2.8f;
+        camPanX_ = playerX_;
         camPanY_ = playerY_ + camera::kHeadFocusOffset;
-        camPanZ_ = 0.0f;
+        camPanZ_ = playerZ_;
         camPosX_ = 0.0f;
         camPosY_ = 0.0f;
         camPosZ_ = camDistance_;
@@ -1302,11 +1370,13 @@ public:
                     + physics::kPlayerCapsuleRadius)
                     - physics::kGameplayCharacterPadding,
                 enemyZ_);
+            physicsWorld_->SetEnemyCollisionEnabled(enemyAlive_);
             physicsReset_ = true;
         } else {
             physicsReset_ = false;
         }
         uiScreen_ = rhi::UiScreen::Gameplay;
+        ResetArena();
     }
 
 private:
@@ -1473,10 +1543,12 @@ private:
         };
         destroyAsset(playerAsset_);
         destroyAsset(enemyAsset_);
-        destroyAsset(pistolAsset_);
+        destroyAsset(pistolAsset_);destroyAsset(swordAsset_);
+        for(auto& actor:arenaEnemies_)destroyAsset(actor.Asset);
         destroyAsset(helmetAsset_);
         destroyAsset(groundAsset_);
         destroyAsset(terrainAsset_);
+        for(auto& entry:terrainCache_)destroyAsset(entry.second);terrainCache_.clear();
         for (SceneModelGpuAsset& sceneAsset : sceneModelAssets_) {
             destroyAsset(sceneAsset.asset);
         }
@@ -1520,10 +1592,13 @@ private:
         // Material sets died with the pool reset above; clear the handles so
         // RecordModelDraw cannot bind a stale set if recording runs again.
         playerAsset_.materialSets.clear();
+        swordAsset_.materialSets.clear();
+        for(auto& actor:arenaEnemies_)actor.Asset.materialSets.clear();
         enemyAsset_.materialSets.clear();
         helmetAsset_.materialSets.clear();
         groundAsset_.materialSets.clear();
         terrainAsset_.materialSets.clear();
+        for(auto& entry:terrainCache_)entry.second.materialSets.clear();
         for (SceneModelGpuAsset& sceneAsset : sceneModelAssets_) {
             sceneAsset.asset.materialSets.clear();
         }
@@ -3386,11 +3461,137 @@ private:
         return true;
     }
 
+    struct StaticBatch {const ModelGpuAsset* asset;std::size_t first;uint32_t count;};
+    std::vector<StaticBatch> visibleStaticBatches_,shadowStaticBatches_;
+    Mat4 LiveSceneMatrix(const scene::Entity& e) const {
+        scene::Transform live;
+        if(physicsWorld_ && physicsWorld_->GetWorkshopTransform(e.id,live)) {
+            Mat4 matrix{};scene::BuildModelMatrix(live,matrix.value);return matrix;
+        }
+        Mat4 matrix=Mat4FromSceneEntity(*sceneDefinition_,e);
+        if(e.motionParentId!=scene::kNoParent && physicsWorld_ && physicsWorld_->GetWorkshopTransform(e.motionParentId,live))
+            for(const auto& parent:sceneDefinition_->entities)if(parent.id==e.motionParentId) {
+                const auto initial=scene::RuntimeTransform(*sceneDefinition_,parent,physics::kGroundCollider.centerY+physics::kGroundCollider.halfExtentY);
+                matrix.value[12]+=live.position.x-initial.position.x;matrix.value[13]+=live.position.y-initial.position.y;matrix.value[14]+=live.position.z-initial.position.z;break;
+            }
+        return matrix;
+    }
+    void BuildStaticBatches(const Mat4& projection,bool shadow,std::size_t& next,std::vector<StaticBatch>& batches) {
+        batches.clear();if(!sceneDefinition_)return;
+        const terrain::Frustum frustum(projection.value,true);
+        std::vector<const ModelGpuAsset*> assets;
+        for(const auto& e:sceneDefinition_->entities) {
+            const auto* asset=e.importAsStaticCube?&groundAsset_:(e.importAsStaticModel?FindSceneModelAsset(e.modelPath):nullptr);
+            if(asset && asset->loaded && std::find(assets.begin(),assets.end(),asset)==assets.end())assets.push_back(asset);
+        }
+        for(const auto* asset:assets) {
+            const auto first=next;
+            for(const auto& e:sceneDefinition_->entities) {
+                if(shadow && !e.castShadow)continue;
+                const auto* candidate=e.importAsStaticCube?&groundAsset_:(e.importAsStaticModel?FindSceneModelAsset(e.modelPath):nullptr);
+                if(candidate!=asset)continue;
+                const auto matrix=LiveSceneMatrix(e);bool visible=false;
+                for(const auto& mesh:asset->meshes)if((!shadow||mesh.castShadow) && frustum.Intersects(terrain::TransformBounds(mesh.bounds,matrix.value))) {visible=true;break;}
+                if(!visible || next>=modelInstanceData_.size()-3)continue;
+                modelInstanceData_[next].model=matrix;modelInstanceData_[next].skinIndex=0;++next;
+            }
+            if(next>first)batches.push_back({asset,first,uint32_t(next-first)});
+        }
+    }
+
+    struct ArenaEnemy {
+        float X=0;
+        float Y=0;
+        float Z=0;
+        float Yaw=0;
+        float Health=100;
+        float AttackCooldown=0;
+        float HitInvulnerability=0;
+        float HitLockTimer=0;
+        bool Alive=false;
+        bool ReturningHome=false;
+        bool Visible=false;
+        bool DeathPlaying=false;
+        float DeathTime=0;
+        float DissolveTimer=-1;
+        float DissolveAmount=0;
+        bool Moving=false;
+        bool AttackRequested=false;
+        Mat4 Matrix={};
+        ModelGpuAsset Asset;
+    };
+    ArenaEnemy arenaEnemies_[4];gameplay::ArenaWaves arenaWaves_;
+    void SwapArena(ArenaEnemy& actor) {
+        std::swap(enemyX_,actor.X);
+        std::swap(enemyY_,actor.Y);
+        std::swap(enemyZ_,actor.Z);
+        std::swap(enemyYaw_,actor.Yaw);
+        std::swap(enemyHealth_,actor.Health);
+        std::swap(enemyAttackCooldown_,actor.AttackCooldown);
+        std::swap(enemyHitInvulnerability_,actor.HitInvulnerability);
+        std::swap(enemyHitLockTimer_,actor.HitLockTimer);
+        std::swap(enemyAlive_,actor.Alive);
+        std::swap(enemyReturningHome_,actor.ReturningHome);
+        std::swap(enemyVisible_,actor.Visible);
+        std::swap(enemyDeathPlaying_,actor.DeathPlaying);
+        std::swap(enemyDeathTime_,actor.DeathTime);
+        std::swap(enemyDissolveTimer_,actor.DissolveTimer);
+        std::swap(enemyDissolveAmount_,actor.DissolveAmount);
+        std::swap(enemyMoving_,actor.Moving);
+        std::swap(enemyAttackRequested_,actor.AttackRequested);
+        std::swap(enemyMatrix_,actor.Matrix);
+        std::swap(enemyAsset_,actor.Asset);
+    }
+    bool ArenaMode() const {return sceneDefinition_ && sceneDefinition_->arena.enabled;}
+    float ArenaAttackDuration() const {return AnimationClipDurationOr(playerAsset_,playerAsset_.attackClip,.87f);}
+    const std::vector<ohos_model::AnimationClip>& ArenaPlayerClips() const {return playerAsset_.animationClips;}
+    void EnterPlayerDeathState() {EnterPlayerAnimationState(ModelAnimationState::Death);}
+    void ResetArena() {
+        arenaWaves_={};if(physicsWorld_)physicsWorld_->DisableArenaEnemies();
+        for(auto& actor:arenaEnemies_) {auto asset=std::move(actor.Asset);actor={};actor.Asset=std::move(asset);}
+        if(ArenaMode()) {enemyAlive_=enemyVisible_=false;if(physicsWorld_)physicsWorld_->SetEnemyCollisionEnabled(false);}
+    }
+    void SpawnArenaWave(int count) {
+        for(int i=0;i<count;++i) {
+            auto& actor=arenaEnemies_[i];
+            // Rotate the first door each wave; the final wave uses all four.
+            const auto& gate=sceneDefinition_->arena.spawnGates[(i+count-1)%4];
+            actor.X=gate.x;actor.Y=gate.y;actor.Z=gate.z;
+            actor.Yaw=std::atan2(playerX_-gate.x,playerZ_-gate.z);
+            actor.Health=100;actor.Alive=actor.Visible=true;
+            actor.DeathPlaying=false;actor.DeathTime=0;actor.DissolveTimer=-1;actor.DissolveAmount=0;
+            actor.AttackCooldown=.7f+i*.2f;actor.HitInvulnerability=actor.HitLockTimer=0;
+            actor.Moving=actor.AttackRequested=false;actor.Asset.animationState=ModelAnimationState::Idle;
+            actor.Asset.animationClipIndex=actor.Asset.idleClip;actor.Asset.animationTime=actor.Asset.animationStateTime=0;
+            actor.Asset.animationLastTicks=SDL_GetTicks();actor.Asset.animationLoop=true;actor.Asset.bodyTransition.Reset();
+            actor.Matrix=Mat4Multiply(Mat4Translation(actor.X,actor.Y,actor.Z),Mat4RotationY(actor.Yaw));
+            if(physicsWorld_)physicsWorld_->SetArenaEnemy(i,actor.X,actor.Y-physics::kPlayerVisualOriginOffset,actor.Z,true);
+        }
+        SDL_Log("SDL3_ARENA stage=wave_start wave=%d count=%d",arenaWaves_.wave,count);
+    }
+#include "gameplay/arena_combat.inl"
+    void UpdateArenaAnimations() {
+        for(auto& actor:arenaEnemies_)if(actor.Visible) {
+            SwapArena(actor);if(playerHealth_<=0)enemyMoving_=false;
+            UpdateEnemyAnimation();SwapArena(actor);
+        }
+    }
+    void DrawArenaHud() {
+        float w=UiWidth(),h=UiHeight(),m=std::min(w,h);
+        const float white[4]={1,1,1,.96f};int alive=0;for(const auto& a:arenaEnemies_)alive+=a.Alive;
+        char text[100];
+        if(arenaWaves_.complete)std::snprintf(text,sizeof(text),"竞技场通关  4 / 4");
+        else if(alive>0)std::snprintf(text,sizeof(text),"第 %d / 4 波  剩余 %d",arenaWaves_.wave,alive);
+        else std::snprintf(text,sizeof(text),"第 %d / 4 波准备  %.0f",std::min(4,arenaWaves_.wave+1),std::ceil(arenaWaves_.countdown));
+        DrawTextCentered(text,w*.5f,m*.18f,m*.031f,white);
+    }
+
+
     bool CreateModelInstanceBuffer()
     {
         const std::size_t staticRenderableCount = sceneDefinition_ != nullptr
             ? sceneDefinition_->StaticCubeCount() + sceneDefinition_->StaticModelCount() : 0;
-        modelInstanceData_.assign(6 + staticRenderableCount, CharacterInstanceData{});
+        modelInstanceData_.assign(11 + 2 * 512, CharacterInstanceData{});
         return CreateBuffer(sizeof(CharacterInstanceData) * modelInstanceData_.size(),
             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
@@ -3490,10 +3691,10 @@ private:
         // Sets are allocated as: one per swapchain image (each binds its own
         // UBO) plus one per (swapchain image x model material), so the pool
         // has to cover both.  Headroom is kept for swapchain recreation.
-        constexpr uint32_t kMaxDescriptorSets = 160;
+        constexpr uint32_t kMaxDescriptorSets = 4096;
         VkDescriptorPoolSize poolSizes[2]{};
         poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        poolSizes[0].descriptorCount = kMaxDescriptorSets * 2;
+        poolSizes[0].descriptorCount = kMaxDescriptorSets * 3;
         poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         // Scene sets use three samplers today; the extra headroom covers the
         // SDF text set and keeps the pool valid if a material grows another
@@ -3574,8 +3775,10 @@ private:
     bool CreateModelDescriptorSets()
     {
         std::vector<ModelGpuAsset*> assets = {
-            &playerAsset_, &enemyAsset_, &helmetAsset_, &groundAsset_, &terrainAsset_, &pistolAsset_};
-        assets.reserve(assets.size() + sceneModelAssets_.size());
+            &playerAsset_, &enemyAsset_, &helmetAsset_, &groundAsset_, &terrainAsset_, &pistolAsset_, &swordAsset_};
+        for(auto& actor:arenaEnemies_)assets.push_back(&actor.Asset);
+        assets.reserve(assets.size() + sceneModelAssets_.size()+terrainCache_.size()+8);
+        for(auto& entry:terrainCache_)assets.push_back(&entry.second);
         for (SceneModelGpuAsset& sceneAsset : sceneModelAssets_) {
             assets.push_back(&sceneAsset.asset);
         }
@@ -3659,7 +3862,7 @@ private:
                     ? asset->jointBuffer : identityJointBuffer_;
                 jointBufferInfos[slot].buffer = jointBuffer.buffer;
                 jointBufferInfos[slot].range = sizeof(Mat4) * kMaxJoints;
-                const ModelGpuAsset* alternateAsset = nullptr;
+                const ModelGpuAsset* alternateAsset = asset;
                 if (asset == &playerAsset_) {
                     alternateAsset = &enemyAsset_;
                 } else if (asset == &enemyAsset_) {
@@ -4280,6 +4483,7 @@ private:
                 asset.swimForwardClip = findClip("Swim_Fwd_Loop");
                 asset.crouchClip = findClip("Crouch_Idle_Loop");
                 asset.attackClip = findClip("Punch_Jab");
+                asset.punchClip=asset.attackClip;asset.swordAttackClip=findClip("Sword_Attack");asset.swordIdleClip=findClip("Sword_Idle");
                 asset.jumpStartClip = findClip("Jump_Start");
                 asset.jumpLoopClip = findClip("Jump_Loop");
                 asset.jumpLandClip = findClip("Jump_Land");
@@ -4311,6 +4515,8 @@ private:
     {
         (void)LoadModelAsset(kModelPath, playerAsset_, true);
         (void)LoadModelAsset(kModelPath, enemyAsset_, true);
+        for(auto& actor:arenaEnemies_)(void)LoadModelAsset(kModelPath,actor.Asset,true);
+        (void)LoadModelAsset("models/Sword/sword.glb",swordAsset_,false);
         (void)LoadModelAsset("models/Pistol/pistol.glb",pistolAsset_,false);
         (void)LoadModelAsset(kHelmetPath, helmetAsset_, false);
         (void)LoadModelAsset(kCubePath, groundAsset_, false);
@@ -4956,7 +5162,7 @@ private:
         }
         const terrain::Frustum frustum(viewProj.value, true);
         const size_t firstInstance = static_cast<size_t>(instanceOffset / sizeof(CharacterInstanceData));
-        const bool actor = &asset == &playerAsset_ || &asset == &enemyAsset_;
+        const bool actor = asset.skinned;
         if (actor) {
             uint32_t visibleCount = 0;
             uint32_t visibleInstance = 0;
@@ -4984,7 +5190,7 @@ private:
         const size_t materialCount = asset.materials.empty() ? 1 : asset.materials.size();
 
         for (const ModelMeshResource& mesh : asset.meshes) {
-            if (!actor && firstInstance < modelInstanceData_.size() &&
+            if (!actor && instanceCount == 1 && firstInstance < modelInstanceData_.size() &&
                 !frustum.Intersects(terrain::TransformBounds(mesh.bounds,
                     modelInstanceData_[firstInstance].model.value))) continue;
             if (mesh.indexCount == 0 || mesh.vertexBuffer.buffer == VK_NULL_HANDLE ||
@@ -5027,7 +5233,7 @@ private:
         }
         const terrain::Frustum frustum(shadowViewProj.value, true);
         const size_t firstInstance = static_cast<size_t>(instanceOffset / sizeof(CharacterInstanceData));
-        const bool actor = &asset == &playerAsset_ || &asset == &enemyAsset_;
+        const bool actor = asset.skinned;
         if (actor) {
             uint32_t visibleCount = 0;
             uint32_t visibleInstance = 0;
@@ -5054,7 +5260,7 @@ private:
         const size_t materialCount = asset.materials.empty() ? 1 : asset.materials.size();
 
         for (const ModelMeshResource& mesh : asset.meshes) {
-            if (!actor && firstInstance < modelInstanceData_.size() &&
+            if (!actor && instanceCount == 1 && firstInstance < modelInstanceData_.size() &&
                 !frustum.Intersects(terrain::TransformBounds(mesh.bounds,
                     modelInstanceData_[firstInstance].model.value))) continue;
             if (!mesh.castShadow) continue;
@@ -5178,6 +5384,13 @@ private:
         }
     }
 
+    float SaveUiWidth() const {return UiWidth();}
+    float SaveUiHeight() const {return UiHeight();}
+    std::vector<OverlayVertex>* saveOverlayContext_=nullptr;
+    std::vector<TextVertex>* saveTextContext_=nullptr;
+    void DrawMenuRect(const MenuButtonPos& box,const float* color) {if(saveOverlayContext_)AppendRoundedRect(*saveOverlayContext_,box,color);}
+    void DrawTextCentered(const char* label,float x,float y,float em,const float* color,bool shadow=true) {if(saveTextContext_)AppendTextCentered(*saveTextContext_,label,x,y,em,color,shadow);}
+#include "gameplay/save_session.inl"
     static bool HitRect(float x, float y, const MenuButtonPos& button)
     {
         const float ex = std::fabs(x - button.cx);
@@ -5190,6 +5403,38 @@ private:
         return dx * dx + dy * dy <= button.r * button.r;
     }
 
+    const scene::Entity* FindChestEntity() const
+    {
+        if (sceneDefinition_ == nullptr) return nullptr;
+        for (const scene::Entity& entity : sceneDefinition_->entities) {
+            if (entity.importAsStaticModel && entity.modelPath.find("Chest")!=std::string::npos) {
+                return &entity;
+            }
+        }
+        return nullptr;
+    }
+
+    bool ChestOpened() const { return chestOpenStartTicks_ != 0; }
+
+    bool ChestNear() const
+    {
+        const scene::Entity* chest = FindChestEntity();
+        if (chest == nullptr) return false;
+        const Mat4 world = Mat4FromSceneEntity(*sceneDefinition_, *chest);
+        const float dx = world.value[12] - playerX_;
+        const float dz = world.value[14] - playerZ_;
+        return dx * dx + dz * dz <= 2.2f * 2.2f;
+    }
+
+    MenuButtonPos ChestButtonRect() const
+    {
+        const float w = UiWidth();
+        const float h = UiHeight();
+        const float mn = w < h ? w : h;
+        return {w * 0.5f, h - mn * 0.36f, mn * 0.095f, mn * 0.036f, mn * 0.036f};
+    }
+
+
     void HandleMenuTap(float x, float y)
     {
         SDL_Log("SDL3_VULKAN stage=menu_tap x=%.0f y=%.0f screen=%d win=%ux%u",
@@ -5201,7 +5446,8 @@ private:
         const float uiY = y * UiHeight() / inputHeight;
         if (uiScreen_ == rhi::UiScreen::GameplayRetry) {
             if (HitRect(uiX, uiY, MenuButtonLayout(0))) {
-                ResetGameplayScene();
+                const auto it=std::find_if(saveStore_.records.begin(),saveStore_.records.end(),[&](const saves::Record& r){return r.id==activeSaveId_;});
+                if(it!=saveStore_.records.end())BeginSaveLoad(*it);else ResetGameplayScene();
                 SDL_Log("SDL3_VULKAN stage=player_retry");
             } else if (HitRect(uiX, uiY, MenuButtonLayout(5))) {
                 uiScreen_ = rhi::UiScreen::MainMenu;
@@ -5210,10 +5456,15 @@ private:
             return;
         }
         if (uiScreen_ == rhi::UiScreen::Gameplay) {
+            if(NearSavePoint() && HitRect(uiX,uiY,ChestButtonRect())) {SaveAtPoint();return;}
+            if(!ChestOpened()&&ChestNear()&&HitRect(uiX,uiY,ChestButtonRect())) {chestOpenStartTicks_=SDL_GetTicks();gold_+=100;return;}
+            if(SwordAvailable()&&gameplay::HitSwordButton(x,y,float(width_),float(height_))) {
+                if(sword_.drawn)sword_.Holster();else {inventory_.EquipSword();sword_.drawn=inventory_.HasSword();pistol_.Holster();}return;
+            }
             if(gameplay::HitPotionButton(x,y,static_cast<float>(width_),static_cast<float>(height_))){inventory_.UsePotion(playerHealth_,playerMaxHealth_);return;}
             const int weaponButton = gameplay::HitPistolButton(x,y,
-                static_cast<float>(width_),static_cast<float>(height_),pistol_.equipped,inventory_.HasPistol());
-            if (weaponButton>=0) { pistol_.Button(weaponButton); return; }
+                static_cast<float>(width_),static_cast<float>(height_),pistol_.equipped,WeaponAvailable());
+            if (weaponButton>=0) {if(weaponButton==0){inventory_.EquipPistol();sword_.Holster();}pistol_.Button(weaponButton); return; }
             if (HitRect(uiX, uiY, MenuButtonLayout(0))) {
                 uiScreen_ = rhi::UiScreen::GameplaySettings;
                 SDL_Log("SDL3_VULKAN stage=gameplay_settings_open");
@@ -5313,9 +5564,11 @@ private:
                 }return;
             }return;
         }
+        if(loadingScreen_)return;
         if (uiScreen_ == rhi::UiScreen::MainMenu) {
+            if(saveSelection_) {HandleSaveTap(uiX,uiY);return;}
             if (HitRect(uiX, uiY, MenuButtonLayout(0))) {
-                ResetGameplayScene();
+                OpenSaveList();
                 SDL_Log("SDL3_VULKAN stage=menu_start");
             } else if (HitRect(uiX, uiY, MenuButtonLayout(1))) {
                 uiScreen_ = rhi::UiScreen::Settings;
@@ -5348,6 +5601,8 @@ private:
             cameraInput_.menuTapEdge = false;
         }
         if(!inventory_.HasPistol())pistol_.Holster();
+        if(!inventory_.HasSword())sword_.Holster();
+        playerAsset_.attackClip=sword_.drawn && playerAsset_.swordAttackClip>=0?playerAsset_.swordAttackClip:playerAsset_.punchClip;
 
 
         constexpr float kLookSensitivity = 0.0055f;
@@ -5639,6 +5894,7 @@ private:
     void BuildUiGeometry(std::vector<OverlayVertex>& overlay, std::vector<IconVertex>& icons,
         std::vector<TextVertex>& text)
     {
+        saveOverlayContext_=&overlay;saveTextContext_=&text;
         if (UiWidth() <= 0.0f || UiHeight() <= 0.0f) {
             return;
         }
@@ -5648,7 +5904,16 @@ private:
         const float white[4] = {1.0f, 1.0f, 1.0f, 0.92f};
         const float panel[4] = {0.30f, 0.32f, 0.36f, 0.55f};
         const float accent[4] = {0.20f, 0.48f, 0.66f, 1.0f};
+        if(loadingScreen_) {
+            const float background[4]={.025f,.045f,.075f,1};
+            AppendRoundedRect(overlay,{w*.5f,h*.5f,w*.5f,h*.5f,0},background);
+            AppendTextCentered(text,loadingLabel_.c_str(),w*.5f,h*.44f,mn*.036f,white);
+            AppendRoundedRect(overlay,{w*.5f,h*.56f,mn*.32f,mn*.018f,mn*.009f},panel);
+            if(loadingProgress_>0)AppendRoundedRect(overlay,{w*.5f-mn*.32f+mn*.32f*loadingProgress_,h*.56f,mn*.32f*loadingProgress_,mn*.018f,mn*.009f},accent);
+            return;
+        }
         if (uiScreen_ == rhi::UiScreen::MainMenu) {
+            if(saveSelection_) {DrawSaveList();return;}
             AppendTextCentered(text, "MikanEngine", w * 0.5f, h * 0.20f, mn * 0.105f, white, false);
             AppendTextCentered(text, "基于自研游戏引擎的鸿蒙系统客户端实例", w * 0.5f, h * 0.30f, mn * 0.026f, white);
             const MenuButtonPos start = MenuButtonLayout(0);
@@ -5710,12 +5975,26 @@ private:
             return;
         }
 
-        for(int i=0;i<(inventory_.HasPistol()?(pistol_.equipped?4:1):0);++i) {
+        if(NearSavePoint() || (!ChestOpened()&&ChestNear())) {
+            const auto box=ChestButtonRect();AppendRoundedRect(overlay,box,accent);
+            AppendTextCentered(text,NearSavePoint()?"保存游戏":"开启宝箱",box.cx,box.cy,box.hh*.52f,white);
+        }
+        if(SDL_GetTicks()<saveMessageUntil_)AppendTextCentered(text,saveMessage_.c_str(),w*.5f,mn*.16f,mn*.028f,white);
+        if(ArenaMode()) {
+            for(auto& actor:arenaEnemies_)if(actor.Alive) {SwapArena(actor);AppendEnemyHealthBar(overlay,text);SwapArena(actor);}
+            DrawArenaHud();
+        }
+        const float quickPanel[4]={.07f,.12f,.19f,.72f};
+        AppendRoundedRect(overlay,{w*.5f,h-mn*.085f,mn*.185f,mn*.064f,mn*.025f},quickPanel);
+        if(SwordAvailable()) {const auto button=gameplay::SwordButton(w,h);
+            AppendRoundedRect(overlay,{button.x,button.y,button.r,button.r,button.r},panel);
+            AppendTextCentered(text,inventory::kItemDefs[5].name,button.x,button.y,button.r*.55f,white);}
+        for(int i=0;i<(WeaponAvailable()?(pistol_.equipped?4:1):0);++i) {
             auto b=gameplay::PistolButton(i,w,h);
             const float active[4]={.22f,.48f,.68f,.75f};
             const bool selected=(i==0&&pistol_.equipped)||(i==1&&pistol_.aiming);
             AppendRoundedRect(overlay,{b.x,b.y,b.r,b.r,b.r},selected?active:panel);
-            const char* label=i==0?(pistol_.equipped?"收起":"枪械"):(i==1?"瞄准":(i==2?"射击":"换弹"));
+            const char* label=i==0?inventory::kItemDefs[0].name:(i==1?"瞄准":(i==2?"射击":"换弹"));
             AppendTextCentered(text,label,b.x,b.y,b.r*.55f,white,true);
         }
         auto potion=gameplay::PotionButton(w,h);const float potionColor[4]={.48f,.16f,.22f,.92f};
@@ -5723,12 +6002,65 @@ private:
         char potionLabel[32];std::snprintf(potionLabel,sizeof(potionLabel),"药水×%d",inventory_.PotionCount());
         AppendTextCentered(text,potionLabel,potion.x,potion.y,mn*.018f,white,true);
         if(pistol_.equipped){char ammo[32];std::snprintf(ammo,sizeof(ammo),pistol_.reloading?"换弹中":"弹量 %d/%d 备弹 %d",pistol_.ammo,pistol_.capacity,pistol_.reserve);
-            AppendTextCentered(text,ammo,w*.5f,h-mn*.115f,mn*.026f,white,true);}
+            AppendTextCentered(text,ammo,w*.5f,h-mn*.185f,mn*.026f,white,true);}
         if(pistol_.equipped && pistol_.aiming && !playerSwimming_) {
             const float hit[4]={1.f,.25f,.15f,1.f};
             AppendTextCentered(text,pistol_.hitFlash>0?"×":"+",w*.5f,h*.5f,
                 mn*(pistol_.shotAge<.10f?.050f:.036f),pistol_.hitFlash>0?hit:white,true);
         }
+            if (sceneDefinition_) {
+              const scene::Portal* nearest = nullptr;
+              float nearestSquared = 64;
+              for (const auto& portal : sceneDefinition_->portals) {
+                const auto& p = portal.position;
+                const float d = (playerX_-p.x)*(playerX_-p.x)+(playerZ_-p.z)*(playerZ_-p.z);
+                if (d < nearestSquared) { nearest = &portal; nearestSquared = d; }
+              }
+              if (nearest) {
+                const auto& p = nearest->position;
+                const float dx = playerX_ - p.x, dz = playerZ_ - p.z;
+                if (dx * dx + dz * dz < 64.0f) {
+                    const float gatePanel[4] = {.06f, .24f, .29f, .85f};
+                    const MenuButtonPos hint = {w * .5f, mn * .095f,
+                        mn * .30f, mn * .027f, mn * .012f};
+                    AppendRoundedRect(overlay,hint,gatePanel);
+                    AppendTextCentered(text,nearest->label.c_str(), hint.cx,
+                        hint.cy, mn * .022f, white);
+                }
+            }
+              if (sceneDefinition_->parkour.enabled) {
+                char status[160];
+                const auto count = sceneDefinition_->parkour.checkpoints.size();
+                if (parkourProgress_.finished)
+                    std::snprintf(status, sizeof(status), "COURSE CLEAR  |  %.1fs  |  FALLS %d  |  RETURN GATE AHEAD",
+                        parkourProgress_.seconds, parkourProgress_.falls);
+                else
+                    std::snprintf(status, sizeof(status), "PARKOUR  |  CHECKPOINT %zu/%zu  |  %.1fs  |  FALLS %d",
+                        parkourProgress_.checkpoint, count-1, parkourProgress_.seconds, parkourProgress_.falls);
+                const float courseColor[4] = {.98f, .80f, .35f, 1};
+                AppendTextCentered(text,status, w*.5f, mn*.15f, mn*.025f, courseColor, false);
+              }
+              if (sceneDefinition_->workshop.enabled && physicsWorld_) {
+                const auto state=physicsWorld_->GetWorkshopState();
+                const char* step=!state.gateOpen ? "1  PUSH CRATE ONTO THE GOLD PLATE" :
+                    (playerY_>4.5f ? "3  UPPER DECK - RETURN GATE AHEAD" : "2  GATE OPEN - BOARD THE LIFT");
+                const float workshopColor[4]={.4f,.85f,1,1};
+                if (sceneDefinition_->parkour.enabled && sceneDefinition_->parkour.checkpoints.size()>=5) {
+                    const auto& w=sceneDefinition_->workshop;
+                    const auto& pool=sceneDefinition_->water;
+                    const auto& points=sceneDefinition_->parkour.checkpoints;
+                    step=playerZ_>points[1].spawn.z+2 ? "1  JUMP THE THREE STATIC BRICKS" :
+                        (playerZ_>points[2].spawn.z+2 ? "2  TIME THE FORWARD MOVING PLATFORM" :
+                        (playerZ_>w.plate.z+9 ? "3  CROSS THE THREE SIDE-MOVING BRICKS" :
+                        (!state.gateOpen ? "4  PUSH CRATE ONTO THE GOLD PLATE" :
+                        (playerY_<points[4].spawn.y-.3f ? "5  RIDE LIFT TO THE UPPER DECK" :
+                        (playerZ_>pool.center.z+pool.halfExtents.z ? "6  ENTER THE POOL AND SWIM" :
+                        (playerSwimming_ ? "7  SWIM TO THE EXIT STAIRS" : "8  FINISH - CLAIM 100 GOLD"))))));
+                }
+                AppendTextCentered(text,step,w*.5f,mn*(sceneDefinition_->parkour.enabled?.19f:.15f),mn*.025f,workshopColor,false);
+              }
+            }
+
         gameplay::DrawMinimap(w,h,playerX_,playerZ_,playerYaw_,enemyX_,enemyZ_,enemyAlive_,sceneDefinition_,minimapTerrain_,
             [&overlay,this](float x,float y,float hw,float hh,float r,const float* c){
                 AppendRoundedRect(overlay,{x,y,hw,hh,r},c);
@@ -5905,20 +6237,13 @@ private:
         instances[2].skinIndex = 0;
         instances[3].model = groundTransform;
         instances[3].skinIndex = 0;
+        for(int i=0;i<4;++i) {instances[4+i].model=arenaEnemies_[i].Matrix;instances[4+i].skinIndex=1;instances[4+i].color[0]=1;instances[4+i].color[3]=1;}
+        instances[modelInstanceData_.size()-3].model=swordMatrix_;
         instances[modelInstanceData_.size() - 2].model = pistolMatrix_;
         instances[modelInstanceData_.size() - 1].model = Mat4Identity();
-        std::size_t nextStaticInstance = 4;
-        if (sceneDefinition_ != nullptr) {
-            for (const scene::Entity& entity : sceneDefinition_->entities) {
-                if ((!entity.importAsStaticCube && !entity.importAsStaticModel) ||
-                    nextStaticInstance >= modelInstanceData_.size()) {
-                    continue;
-                }
-                instances[nextStaticInstance].model = Mat4FromSceneEntity(*sceneDefinition_, entity);
-                instances[nextStaticInstance].skinIndex = 0;
-                ++nextStaticInstance;
-            }
-        }
+        std::size_t nextStaticInstance=8;
+        BuildStaticBatches(viewProj_,false,nextStaticInstance,visibleStaticBatches_);
+        BuildStaticBatches(shadowMatrix_,true,nextStaticInstance,shadowStaticBatches_);
         const VkDeviceSize instanceDataBytes =
             sizeof(CharacterInstanceData) * modelInstanceData_.size();
         if (!UploadToMappedBuffer(modelInstanceBuffer_, instances, instanceDataBytes)) {
@@ -5957,33 +6282,20 @@ private:
                 RecordShadowDraw(commandBuffer, static_cast<uint32_t>(index), playerAsset_,
                     shadowMatrix_, 0, characterInstanceCount, enemyDissolveAmount_);
             }
-            if (helmetAsset_.loaded) {
+            if (helmetAsset_.loaded && (sceneDefinition_ == nullptr || sceneDefinition_->demoPropsEnabled)) {
                 RecordShadowDraw(commandBuffer, static_cast<uint32_t>(index), helmetAsset_,
                     shadowMatrix_, sizeof(CharacterInstanceData) * 2, 1);
             }
-            if (groundAsset_.loaded) {
+            if (groundAsset_.loaded && (sceneDefinition_ == nullptr || sceneDefinition_->demoPropsEnabled)) {
                 RecordShadowDraw(commandBuffer, static_cast<uint32_t>(index), groundAsset_,
                     shadowMatrix_, sizeof(CharacterInstanceData) * 3, 1);
             }
-            if (sceneDefinition_ != nullptr) {
-                std::size_t staticInstance = 4;
-                for (const scene::Entity& entity : sceneDefinition_->entities) {
-                    if (!entity.importAsStaticCube && !entity.importAsStaticModel) {
-                        continue;
-                    }
-                    if (entity.importAsStaticCube && groundAsset_.loaded && entity.castShadow) {
-                        RecordShadowDraw(commandBuffer, static_cast<uint32_t>(index), groundAsset_,
-                            shadowMatrix_, sizeof(CharacterInstanceData) * staticInstance, 1);
-                    } else if (entity.importAsStaticModel && entity.castShadow) {
-                        const ModelGpuAsset* asset = FindSceneModelAsset(entity.modelPath);
-                        if (asset != nullptr && asset->loaded) {
-                            RecordShadowDraw(commandBuffer, static_cast<uint32_t>(index), *asset,
-                                shadowMatrix_, sizeof(CharacterInstanceData) * staticInstance, 1);
-                        }
-                    }
-                    ++staticInstance;
-                }
-            }
+            if(ArenaMode())for(int i=0;i<4;++i)if(arenaEnemies_[i].Visible)
+                RecordShadowDraw(commandBuffer,uint32_t(index),arenaEnemies_[i].Asset,shadowMatrix_,sizeof(CharacterInstanceData)*(4+i),1,arenaEnemies_[i].DissolveAmount);
+            if(sword_.drawn && pistolPoseReady_ && !playerSwimming_ && playerHealth_>0)
+                RecordShadowDraw(commandBuffer,uint32_t(index),swordAsset_,shadowMatrix_,sizeof(CharacterInstanceData)*(modelInstanceData_.size()-3),1);
+            for(const auto& batch:shadowStaticBatches_)
+                RecordShadowDraw(commandBuffer,static_cast<uint32_t>(index),*batch.asset,shadowMatrix_,sizeof(CharacterInstanceData)*batch.first,batch.count);
             if(pistolAsset_.loaded && pistol_.equipped && pistolPoseReady_ && !playerSwimming_ && playerHealth_>0)
                 RecordShadowDraw(commandBuffer,static_cast<uint32_t>(index),pistolAsset_,
                     shadowMatrix_,sizeof(CharacterInstanceData)*(modelInstanceData_.size()-2),1);
@@ -6033,35 +6345,20 @@ private:
                     if(pistolAsset_.loaded && pistol_.equipped && pistolPoseReady_ && !playerSwimming_ && playerHealth_>0)
                         RecordModelDraw(commandBuffer,static_cast<uint32_t>(index),pistolAsset_,
                             viewProj_,sizeof(CharacterInstanceData)*(modelInstanceData_.size()-2),1);
-                    if (helmetAsset_.loaded) {
+                    if (helmetAsset_.loaded && (sceneDefinition_ == nullptr || sceneDefinition_->demoPropsEnabled)) {
                         RecordModelDraw(commandBuffer, static_cast<uint32_t>(index), helmetAsset_,
                             viewProj_, sizeof(CharacterInstanceData) * 2, 1);
                     }
-                    if (groundAsset_.loaded) {
+                    if (groundAsset_.loaded && (sceneDefinition_ == nullptr || sceneDefinition_->demoPropsEnabled)) {
                         RecordModelDraw(commandBuffer, static_cast<uint32_t>(index), groundAsset_,
                             viewProj_, sizeof(CharacterInstanceData) * 3, 1);
                     }
-                    if (sceneDefinition_ != nullptr) {
-                        std::size_t staticInstance = 4;
-                        for (const scene::Entity& entity : sceneDefinition_->entities) {
-                            if (!entity.importAsStaticCube && !entity.importAsStaticModel) {
-                                continue;
-                            }
-                            if (entity.importAsStaticCube && groundAsset_.loaded) {
-                                RecordModelDraw(commandBuffer, static_cast<uint32_t>(index),
-                                    groundAsset_, viewProj_,
-                                    sizeof(CharacterInstanceData) * staticInstance, 1);
-                            } else if (entity.importAsStaticModel) {
-                                const ModelGpuAsset* asset = FindSceneModelAsset(entity.modelPath);
-                                if (asset != nullptr && asset->loaded) {
-                                    RecordModelDraw(commandBuffer, static_cast<uint32_t>(index),
-                                        *asset, viewProj_,
-                                        sizeof(CharacterInstanceData) * staticInstance, 1);
-                                }
-                            }
-                            ++staticInstance;
-                        }
-                    }
+                    if(ArenaMode())for(int i=0;i<4;++i)if(arenaEnemies_[i].Visible)
+                        RecordModelDraw(commandBuffer,uint32_t(index),arenaEnemies_[i].Asset,viewProj_,sizeof(CharacterInstanceData)*(4+i),1,arenaEnemies_[i].DissolveAmount);
+                    if(sword_.drawn && pistolPoseReady_ && !playerSwimming_ && playerHealth_>0)
+                        RecordModelDraw(commandBuffer,uint32_t(index),swordAsset_,viewProj_,sizeof(CharacterInstanceData)*(modelInstanceData_.size()-3),1);
+                    for(const auto& batch:visibleStaticBatches_)
+                        RecordModelDraw(commandBuffer,static_cast<uint32_t>(index),*batch.asset,viewProj_,sizeof(CharacterInstanceData)*batch.first,batch.count);
                 } else {
                     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
                     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
@@ -6094,6 +6391,8 @@ private:
         vkCmdSetScissor(commandBuffer, 0, 1, &waterScissor);
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, waterPipeline_);
         vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
+            0, 1, &descriptorSets_[index], 0, nullptr);
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
             2, 1, &waterDescriptorSet_, 0, nullptr);
         WaterPushConstants waterPush{};
         const bool inverseReady = water::InverseViewProjection(viewProj_.value, waterPush.inverseViewProjection.value);
@@ -6104,6 +6403,7 @@ private:
         waterPush.params[2] = waterSettings.roughness;
         waterPush.params[3] = static_cast<float>(SDL_GetTicks() % 3600000U) * 0.001f;
         waterPush.color[0] = waterSettings.color.x; waterPush.color[1] = waterSettings.color.y; waterPush.color[2] = waterSettings.color.z;
+        waterPush.color[3] = sceneDefinition_ == nullptr || sceneDefinition_->demoPropsEnabled ? 1.0f : 0.0f;
         for(int i=0;i<3;i++)waterPush.muzzle[i]=shotMuzzle_[i];
         waterPush.muzzle[3]=renderGameplayScene && pistolPoseReady_?pistol_.shotAge:10.f;
         vkCmdPushConstants(commandBuffer, pipelineLayout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(waterPush), &waterPush);
@@ -6819,6 +7119,18 @@ private:
         asset.bodyTransition.Apply(int(asset.animationState) * 1024 + asset.animationClipIndex, dt,
             AnimTransitionDuration(asset.animationState), translations, rotations, scales);
         int weaponPoseKey = 0;
+        if(sword_.drawn && !playerSwimming_ && playerHealth_>0 && playerHitLockTimer_<=0 &&
+            asset.animationState!=ModelAnimationState::Attack && asset.animationState!=ModelAnimationState::JumpStart &&
+            asset.animationState!=ModelAnimationState::JumpLoop && asset.animationState!=ModelAnimationState::JumpLand && asset.swordIdleClip>=0) {
+            weaponPoseKey=1+asset.swordIdleClip;
+            for(const auto& channel:asset.animationClips[asset.swordIdleClip].channels) {
+                if(channel.nodeIndex>=nodeCount || !gameplay::WeaponUpperBody(asset.animationNodes,channel.nodeIndex))continue;
+                SampleAnimationChannel(channel,0,sampled);
+                if(channel.path==0)std::memcpy(&translations[channel.nodeIndex*3],sampled,3*sizeof(float));
+                else if(channel.path==1)std::memcpy(&rotations[channel.nodeIndex*4],sampled,4*sizeof(float));
+                else std::memcpy(&scales[channel.nodeIndex*3],sampled,3*sizeof(float));
+            }
+        }
         if (pistol_.equipped && !playerSwimming_ && playerHealth_>0 && playerHitLockTimer_<=0) {
             const auto* gunClip=gameplay::PistolClip(asset.animationClips,pistol_,camPitch_);
             if (gunClip) weaponPoseKey = 1024 + int(gunClip - asset.animationClips.data());
@@ -6862,6 +7174,7 @@ private:
         pistolPoseReady_=false;
         for(size_t i=0;i<nodeCount;++i)if(asset.animationNodes[i].name=="DEF-hand.R") {
             gameplay::PistolMount(playerMatrix_.value,asset.animationNormalise.value,globals[i].value,pistolMatrix_.value);
+            gameplay::SwordMount(playerMatrix_.value,asset.animationNormalise.value,globals[i].value,swordMatrix_.value);
             pistolPoseReady_=true;break;
         }
         asset.jointMatrices.assign(kMaxJoints, Mat4Identity());
@@ -7197,9 +7510,9 @@ private:
         float toEnemyX = enemyX_ - playerX_;
         float toEnemyZ = enemyZ_ - playerZ_;
         float distance = std::sqrt(toEnemyX * toEnemyX + toEnemyZ * toEnemyZ);
-        if (((playerAttackAcceptedThisFrame_ && distance <= 1.75f) || pistolHit) && enemyAlive_ &&
+        if (((playerAttackAcceptedThisFrame_ && distance <= (sword_.drawn?2.4f:1.75f)) || pistolHit) && enemyAlive_ &&
             (pistolHit || enemyHitInvulnerability_ <= 0.0f)) {
-            enemyHealth_ = std::max(0.0f, enemyHealth_ - 25.0f * inventory_.Stats(pistolHit?0:inventory::kNoItem).attack);
+            enemyHealth_ = std::max(0.0f, enemyHealth_ - 25.0f * inventory_.Stats(pistolHit?0:(sword_.drawn?5:inventory::kNoItem)).attack);
             AudioManager::GetInstance().PlayAudio("hit", 0.55f);
             enemyHitInvulnerability_ = kHitInvulnerability;
             if (enemyHealth_ <= 0.0f) {
@@ -7256,7 +7569,7 @@ private:
             enemyAttackRequested_ = true;
             if (playerAttackInvulnerability_ <= 0.0f &&
                 playerHitInvulnerability_ <= 0.0f) {
-                playerHealth_ = std::max(0.0f, playerHealth_ - 8.0f / inventory_.Stats().defense);
+                playerHealth_ = std::max(0.0f, playerHealth_ - 8.0f / inventory_.Stats(pistol_.equipped?0:(sword_.drawn?5:inventory::kNoItem)).defense);
                 AudioManager::GetInstance().PlayAudio("hit",
                     playerHealth_ <= 0.0f ? 0.95f : 0.70f);
                 playerHitInvulnerability_ = kHitInvulnerability;
@@ -7363,7 +7676,7 @@ private:
                 directionX /= directionLength;
                 directionZ /= directionLength;
                 playerSprinting_ = cameraInput_.actionButtonHeld[2] && !crouchEnabled_;
-                const float speed = (playerSprinting_ ? 2.6f : 1.3f) * inventory_.Stats().speed;
+                const float speed = (playerSprinting_ ? 2.6f : 1.3f) * inventory_.Stats(pistol_.equipped?0:(sword_.drawn?5:inventory::kNoItem)).speed;
                 desiredVelocityX = directionX * speed * stickMagnitude;
                 desiredVelocityZ = directionZ * speed * stickMagnitude;
                 hasMovementDirection = true;
@@ -7396,8 +7709,33 @@ private:
             playerX_ = state.x;
             playerY_ = state.y + physics::kPlayerVisualOriginOffset;
             playerZ_ = state.z;
+            if (sceneDefinition_ && sceneDefinition_->parkour.enabled) {
+                const auto previous = parkourProgress_.checkpoint;
+                const auto& course = sceneDefinition_->parkour;
+                if (parkourProgress_.Update(course, {playerX_, playerY_, playerZ_}, state.grounded, dt)) {
+                    const auto& spawn = course.checkpoints[parkourProgress_.checkpoint].spawn;
+                    playerX_ = spawn.x; playerY_ = spawn.y; playerZ_ = spawn.z;
+                    physicsWorld_->RespawnPlayer(playerX_, playerY_-physics::kPlayerVisualOriginOffset, playerZ_);
+                    physicsWorld_->SetEnemyCollisionEnabled(false);
+                    camPanX_ = playerX_; camPanY_ = playerY_+camera::kHeadFocusOffset; camPanZ_ = playerZ_;
+                    cameraObstruction_.Reset();
+                    playerAsset_.bodyTransition.Reset(); playerAsset_.weaponTransition.Reset();
+                    EnterPlayerAnimationState(ModelAnimationState::Idle);
+                    SDL_Log("SDL3_PARKOUR stage=respawn checkpoint=%zu falls=%d", parkourProgress_.checkpoint, parkourProgress_.falls);
+                }
+                const int reward=parkourProgress_.ClaimCompletionReward(course);
+                if(reward>0) {
+                    gold_+=reward;
+                    std::string message="跑酷通关 金币 +"+std::to_string(reward);
+                    SaveMessage(message.c_str());
+                    SDL_Log("SDL3_PARKOUR stage=reward amount=%d gold=%d",reward,gold_);
+                }
+                if (previous != parkourProgress_.checkpoint)
+                    SDL_Log("SDL3_PARKOUR stage=%s checkpoint=%zu seconds=%.2f",
+                        parkourProgress_.finished ? "finish" : "checkpoint", parkourProgress_.checkpoint, parkourProgress_.seconds);
+            }
         } else if (!physicsReady && gameplayInput && !hasMovementDirection) {
-            playerY_ = 0.0f;
+            playerY_ = sceneDefinition_?sceneDefinition_->playerSpawn.y:0;
         }
         playerMoving_ = stickMagnitude > 0.15f && !playerLocked;
         playerSwimming_ = sceneDefinition_ != nullptr && water::PlayerSubmerged(*sceneDefinition_,
@@ -7434,12 +7772,13 @@ private:
                 Mat4Translation(-placement.focus.x, -placement.focus.y, -placement.focus.z))));
         camPosX_ = placement.eye.x; camPosY_ = placement.eye.y; camPosZ_ = placement.eye.z;
         if (gameplayInput) {
-            UpdateEnemyAi(dt, cameraInput_.actionButtonPressedMask);
-            if (uiScreen_ == rhi::UiScreen::Gameplay && playerHealth_>0) {
+            if(ArenaMode())UpdateArena(dt,cameraInput_.actionButtonPressedMask);else UpdateEnemyAi(dt,cameraInput_.actionButtonPressedMask);
+            if (uiScreen_ == rhi::UiScreen::Gameplay && playerHealth_>0 &&
+                (sceneDefinition_ == nullptr || sceneDefinition_->demoPropsEnabled)) {
                 playerHealth_ = gameplay::HealNearLight(playerHealth_, playerMaxHealth_,
                     playerX_, playerY_, playerZ_, dt);
             }
-            if (uiScreen_ == rhi::UiScreen::Gameplay && physicsReady) {
+            if (uiScreen_ == rhi::UiScreen::Gameplay && physicsReady && !ArenaMode()) {
                 physicsWorld_->MoveEnemy(enemyDesiredVelocityX_, enemyDesiredVelocityZ_, dt);
                 const physics::CharacterState state = physicsWorld_->GetEnemyState();
                 enemyX_ = state.x;
@@ -7474,6 +7813,20 @@ private:
         uniforms.skyMvp = projection;
         uniforms.modelMvp = playerMvp_;
         uniforms.modelMatrix = playerMatrix_;
+        uniforms.gameplayFlags[0] = sceneDefinition_ == nullptr || sceneDefinition_->demoPropsEnabled ? 1.0f : 0.0f;
+        if(sceneDefinition_) {
+            const auto& water=sceneDefinition_->water;
+            uniforms.waterBounds[0]=water.center.x;uniforms.waterBounds[1]=water.center.z;
+            uniforms.waterBounds[2]=water.halfExtents.x>0?water.halfExtents.x:water.size*.5f;
+            uniforms.waterBounds[3]=water.halfExtents.z>0?water.halfExtents.z:water.size*.5f;
+            uniforms.portalInfo[0]=float(std::min(std::size_t(8),sceneDefinition_->portals.size()));
+            uniforms.portalInfo[1]=float(SDL_GetTicks()%3600000U)*.001f;
+            for(std::size_t i=0;i<sceneDefinition_->portals.size() && i<8;++i) {
+                const auto& portal=sceneDefinition_->portals[i];
+                uniforms.portalPositions[i][0]=portal.position.x;uniforms.portalPositions[i][1]=portal.position.y+.44f;uniforms.portalPositions[i][2]=portal.position.z;
+                uniforms.portalColors[i][0]=portal.color.x;uniforms.portalColors[i][1]=portal.color.y;uniforms.portalColors[i][2]=portal.color.z;uniforms.portalColors[i][3]=portal.opacity;
+            }
+        }
         uniforms.cameraPosition[0] = camPosX_;
         uniforms.cameraPosition[1] = camPosY_;
         uniforms.cameraPosition[2] = camPosZ_;
@@ -8144,7 +8497,9 @@ private:
     ModelGpuAsset pistolAsset_;
     ModelGpuAsset helmetAsset_;
     ModelGpuAsset groundAsset_;
+    ModelGpuAsset swordAsset_;Mat4 swordMatrix_{};
     ModelGpuAsset terrainAsset_;
+    std::map<std::string,ModelGpuAsset> terrainCache_;
     std::vector<SceneModelGpuAsset> sceneModelAssets_;
     static constexpr const char* kModelPath =
         "models/Quaternius/AnimationLibrary_Standard.glb";
@@ -8245,7 +8600,15 @@ private:
     float uiOpacity_ = 0.80f;             // default 80%
     int uiOpacityIndex_ = 1;              // index into kOpacityChoices
     static constexpr float kOpacityChoices[5] = {1.0f, 0.8f, 0.6f, 0.4f, 0.2f};
-    inventory::State inventory_;  // bag grid + equipment slots
+    inventory::State inventory_;
+    saves::Store saveStore_;saves::Record pendingSave_;
+    std::string saveRoot_,saveSceneRequest_,saveMessage_,activeSceneKey_;
+    bool saveStoreReady_=false,saveSelection_=false,pendingSaveLoad_=false;
+    unsigned activeSaveId_=0;int savePage_=0;Uint64 saveMessageUntil_=0,portalReadyTicks_=0,chestOpenStartTicks_=0;
+    gameplay::ParkourProgress parkourProgress_;
+    bool loadingScreen_=false;float loadingProgress_=0;std::string loadingLabel_;
+    gameplay::SwordState sword_;
+  // bag grid + equipment slots
     // Kill-earned wallet for the shop; persists across retry resets.
     int gold_ = 100;
     // Set by the settings RES tap; consumed at the top of DrawOnce, before

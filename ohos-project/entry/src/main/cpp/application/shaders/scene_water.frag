@@ -5,6 +5,11 @@ layout(set = 2, binding = 0) uniform sampler2D opaqueColor;
 layout(set = 2, binding = 1) uniform sampler2D opaqueDepth;
 layout(set = 2, binding = 2) uniform samplerCube waterSky;
 layout(set = 2, binding = 3) uniform sampler2D waterNormalMap;
+layout(set=0,binding=0) uniform SceneUniforms {
+    mat4 cubeMvp;mat4 skyMvp;mat4 modelMvp;mat4 modelMatrix;
+    vec4 cameraPosition;mat4 cameraToWorld;mat4 shadowMvp;mat4 viewProj;
+    vec4 gameplayFlags;vec4 waterBounds;vec4 portalPositions[8];vec4 portalColors[8];vec4 portalInfo;
+} scene;
 layout(push_constant) uniform WaterPush {
     mat4 invViewProj;
     vec4 camera;
@@ -85,6 +90,8 @@ vec3 LightBillboard(vec3 camera, vec3 ray, float sceneDistance,
 
 vec3 SceneLightBillboards(vec3 camera, vec3 ray, float sceneDistance)
 {
+    // Only the hub enables the fixed demo light orbs.
+    if (WATER_COLOR.w < 0.5) return vec3(0.0);
     return LightBillboard(camera, ray, sceneDistance,
         vec3(12.0,-0.64,-12.0), vec3(1.0,0.12,0.10)*8.0) +
         LightBillboard(camera, ray, sceneDistance,
@@ -114,6 +121,19 @@ vec3 GunfireParticles(vec3 camera,vec3 ray,float sceneDistance) {
 
 vec4 FinishScene(vec3 color, vec3 camera, vec3 ray, float sceneDistance)
 {
+    float nearest=sceneDistance;int selected=-1;vec2 selectedQ=vec2(0);
+    if(abs(ray.z)>.00001)for(int i=0;i<int(scene.portalInfo.x);++i) {
+        vec3 center=scene.portalPositions[i].xyz;float t=(center.z-camera.z)/ray.z;
+        vec2 q=(camera.xy+ray.xy*t-center.xy)/vec2(.94,1.4);
+        if(t>0 && t<nearest && max(abs(q.x),abs(q.y))<1 && scene.portalColors[i].a>0) {nearest=t;selected=i;selectedQ=q;}
+    }
+    if(selected>=0) {
+        vec2 q=selectedQ;vec4 tint=scene.portalColors[selected];
+        float edge=pow(max(abs(q.x),abs(q.y)),8);
+        float ripple=.5+.5*sin(q.y*14+sin(q.x*8+scene.portalInfo.y*.9)*.6-scene.portalInfo.y*1.4);
+        vec3 glow=tint.rgb*(2.4+edge*5+.5*pow(ripple,6));
+        color=mix(color,glow,clamp(tint.a*(.75+ripple*.3+edge*.85),0,.8));
+    }
     vec3 emitter = SceneLightBillboards(camera, ray, sceneDistance) + GunfireParticles(camera,ray,sceneDistance);
     if (max(max(emitter.r, emitter.g), emitter.b) > 0.0) color = emitter;
     if (WATER_LDR) {
@@ -142,9 +162,9 @@ void main()
     float bottomDistance = depth >= 0.99999 ? 10000.0 : max(dot(bottom - camera, ray), 0.0);
     float surfaceDistance = abs(ray.y) > 0.00001 ? (WATER_PARAMS.x - camera.y) / ray.y : -1.0;
     vec3 surface = camera + ray * max(surfaceDistance, 0.0);
-    bool insideSea = abs(surface.x) <= WATER_PARAMS.y && abs(surface.z) <= WATER_PARAMS.y;
+    bool insideSea = all(lessThanEqual(abs(surface.xz-scene.waterBounds.xy),scene.waterBounds.zw));
     bool hitsWater = WATER_CAMERA.w < 1.5 && insideSea && surfaceDistance > 0.0 && surfaceDistance < bottomDistance - 0.001;
-    bool underwater = WATER_CAMERA.w < 1.5 && camera.y < WATER_PARAMS.x && abs(camera.x) <= WATER_PARAMS.y && abs(camera.z) <= WATER_PARAMS.y;
+    bool underwater = WATER_CAMERA.w < 1.5 && camera.y < WATER_PARAMS.x && all(lessThanEqual(abs(camera.xz-scene.waterBounds.xy),scene.waterBounds.zw));
     vec2 surfaceDx = dFdx(surface.xz);
     vec2 surfaceDy = dFdy(surface.xz);
     if (!hitsWater && !underwater) {

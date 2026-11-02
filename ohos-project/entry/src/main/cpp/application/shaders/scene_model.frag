@@ -14,6 +14,8 @@ layout(set = 0, binding = 0) uniform SceneUniforms
     vec4 cameraPosition;
     mat4 cameraToWorld;
     mat4 shadowMvp;
+    mat4 viewProj;
+    vec4 gameplayFlags;
 } scene;
 layout(set = 0, binding = 1) uniform sampler2D baseColorTexture;
 layout(set = 0, binding = 2) uniform samplerCube skyboxTexture;
@@ -282,7 +284,8 @@ void main()
 
     // Only the shadow-casting sun contributes directional lighting.
 
-    vec3 pointLights =
+    vec3 pointLights = vec3(0.0);
+    if (scene.gameplayFlags.x > 0.5) pointLights =
         PointLight(vec3(12.0, -0.64, -12.0), vec3(1.0, 0.12, 0.10) * 8.0,
             N, V, NoV, albedo, metallic, roughness, F0, vWorldPosition) +
         PointLight(vec3(0.0, -0.64, 0.0), vec3(0.10, 0.25, 1.0) * 8.0,

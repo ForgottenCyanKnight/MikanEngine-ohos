@@ -16,7 +16,7 @@ def gate(first,x,z,top,prefix):
 mainpath=ROOT/'scenes/main.json'
 main=json.loads(mainpath.read_text(encoding='utf-8'))
 main['entities']=[e for e in main['entities'] if not e.get('name',{}).get('name','').startswith('WorkshopGate')]
-ground=next(e for e in main['entities'] if e.get('name',{}).get('name')=='Ground')
+ground=next((e for e in main['entities'] if e.get('name',{}).get('name')=='Ground'), {'transform':{'position':[0,-1.14,0],'scale':[20,.2,20]}})
 top=ground['transform']['position'][1]+abs(ground['transform']['scale'][1])
 portals=main.setdefault('gameplay',{}).setdefault('portals',[])
 portals[:]=[p for p in portals if p['target']!='scenes/workshop.json']

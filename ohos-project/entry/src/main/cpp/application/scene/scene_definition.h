@@ -100,6 +100,7 @@ enum class MeshKind {
 struct Entity {
     std::uint32_t id = 0;
     std::uint32_t parentId = kNoParent;
+    std::uint32_t motionParentId = kNoParent; // World-space trim follows a translating platform.
     std::string name;
     Transform transform{};
     bool hasMesh = false;
@@ -178,6 +179,8 @@ struct CourseCheckpoint {
 struct ParkourCourse {
     bool enabled = false;
     float fallY = 0;
+    int revision = 1;
+    int completionReward = 0;
     std::vector<CourseCheckpoint> checkpoints; // Start, rest stops, finish.
 };
 
@@ -190,6 +193,7 @@ struct Definition {
     bool groundEnabled = true;
     std::vector<Portal> portals;
     std::vector<Vec3> savePoints; // Safe grounded render-origin positions.
+    struct Arena { bool enabled=false; std::vector<Vec3> spawnGates; } arena;
     ParkourCourse parkour{};
     // Optional workshop: three cube entities become live Jolt bodies.
     struct Workshop {

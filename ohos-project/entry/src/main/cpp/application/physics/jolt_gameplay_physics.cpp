@@ -158,6 +158,8 @@ struct JoltGameplayPhysics::Impl {
     std::unique_ptr<JPH::CharacterVirtual> player;
     std::unique_ptr<JPH::CharacterVirtual> enemy;
     JPH::CharacterVsCharacterCollisionSimple characterCollision;
+    std::unique_ptr<JPH::CharacterVirtual> arenaEnemies[4];
+    bool arenaEnabled[4]={};
     scene::Definition waterScene;
     bool playerSwimming = false;
     bool enemyCollisionEnabled = true;
@@ -269,6 +271,10 @@ struct JoltGameplayPhysics::Impl {
         }
         if (enemy != nullptr && enemyCollisionEnabled) {
             characterCollision.Remove(enemy.get());
+        }
+        for(int i=0;i<4;++i) {
+            if(arenaEnabled[i]) characterCollision.Remove(arenaEnemies[i].get());
+            arenaEnemies[i].reset();arenaEnabled[i]=false;
         }
         player.reset();
         enemy.reset();
@@ -424,6 +430,11 @@ struct JoltGameplayPhysics::Impl {
         characterCollision.Add(player.get());
         characterCollision.Add(enemy.get());
         enemyCollisionEnabled = true;
+        for(int i=0;i<4;++i) {
+            arenaEnemies[i]=std::make_unique<JPH::CharacterVirtual>(&characterSettings,
+                JPH::RVec3(0,-100,0),JPH::Quat::sIdentity(),physicsSystem.get());
+            arenaEnemies[i]->SetCharacterVsCharacterCollision(&characterCollision);
+        }
 
         ready = true;
         SDL_Log("Jolt: gameplay physics initialized (floor + player/enemy virtual characters)");
@@ -805,6 +816,28 @@ void JoltGameplayPhysics::SetEnemyCollisionEnabled(bool enabled)
         impl_->enemy->SetLinearVelocity(JPH::Vec3::sZero());
     }
     impl_->enemyCollisionEnabled = enabled;
+}
+
+void JoltGameplayPhysics::SetArenaEnemy(int i,float x,float feetY,float z,bool enabled)
+{
+    if(!IsReady() || i<0 || i>=4)return;
+    auto* enemy=impl_->arenaEnemies[i].get();
+    if(impl_->arenaEnabled[i])impl_->characterCollision.Remove(enemy);
+    impl_->arenaEnabled[i]=enabled;
+    enemy->SetPosition(JPH::RVec3(x,feetY,z));enemy->SetLinearVelocity(JPH::Vec3::sZero());
+    if(enabled)impl_->characterCollision.Add(enemy);
+}
+void JoltGameplayPhysics::DisableArenaEnemies()
+{
+    for(int i=0;i<4;++i)SetArenaEnemy(i,0,-100,0,false);
+}
+void JoltGameplayPhysics::MoveArenaEnemy(int i,float vx,float vz,float dt)
+{
+    if(IsReady() && i>=0 && i<4 && impl_->arenaEnabled[i])impl_->MoveCharacter(impl_->arenaEnemies[i].get(),vx,vz,dt,false);
+}
+CharacterState JoltGameplayPhysics::GetArenaEnemyState(int i) const
+{
+    return IsReady() && i>=0 && i<4 ? ToState(impl_->arenaEnemies[i].get()) : CharacterState{};
 }
 
 void JoltGameplayPhysics::MoveEnemy(float desiredVelocityX, float desiredVelocityZ,

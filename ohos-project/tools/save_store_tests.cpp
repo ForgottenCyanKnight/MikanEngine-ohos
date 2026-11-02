@@ -14,17 +14,31 @@ int main() {
     saves::Record first;first.id=store.NextId();first.savedAt=1700000000;first.gold=35;
     first.inventory.EquipPistol();first.inventory.EquipSword();first.weapon=1;
     Check(store.Put(first),"create first slot");
+    {
+        std::ifstream bank(root+"saves1.dat",std::ios::binary);
+        std::string text((std::istreambuf_iterator<char>(bank)),{});
+        std::istringstream body(text.substr(text.find('\n')+1));
+        std::string count,line;std::getline(body,count);std::getline(body,line);
+        auto last=line.rfind(' ');line.resize(last);last=line.rfind(' ');line.resize(last);
+        std::string oldBody=count+"\n"+line+"\n";
+        unsigned hash=2166136261u;for(unsigned char c:oldBody)hash=(hash^c)*16777619u;
+        fs::create_directory(dir/"legacy");
+        {std::ofstream old(root+"legacy/saves1.dat",std::ios::binary);old<<"MIKAN_SAVES_V1 1 "<<hash<<"\n"<<oldBody;}
+        saves::Store legacy;legacy.Open(root+"legacy/");
+        Check(legacy.records.size()==1 && legacy.records[0].gold==35 && legacy.records[0].courseRevision==0,"existing V1 saves remain readable");
+    }
     saves::Record second=first;second.id=store.NextId();second.savedAt+=100;
-    second.scene="scenes/physics_parkour.json";second.x=-1;second.y=13.88f;second.z=-81.8f;
-    second.checkpoint=5;second.gateOpen=true;second.gold=90;second.ammo=3;
+    second.scene="scenes/physics_parkour.json";second.x=-1;second.y=13.28f;second.z=-81.3f;second.parkourRewardClaimed=true;second.courseRevision=3;
+    second.checkpoint=6;second.gateOpen=true;second.gold=90;second.ammo=3;
     Check(store.Put(second),"create independent second slot");
     saves::Store reopened;reopened.Open(root);
     Check(reopened.records.size()==2,"both slots survive process restart");
     Check(reopened.records[0].id==second.id,"newest first");
-    Check(reopened.records[0].gateOpen && reopened.records[0].checkpoint==5,"course progress restored");
-    Check(std::fabs(reopened.records[0].z+81.8f)<.0001f,"save point coordinate round trip");
+    Check(reopened.records[0].gateOpen && reopened.records[0].checkpoint==6,"course progress restored");
+    Check(std::fabs(reopened.records[0].z+81.3f)<.0001f,"save point coordinate round trip");
     Check(reopened.records[0].inventory.HasPistol() && reopened.records[0].inventory.HasSword(),"independent weapon slots restored");
     Check(reopened.records[1].gold==35,"creating another slot does not overwrite first");
+    Check(reopened.records[0].parkourRewardClaimed && reopened.records[0].courseRevision==3,"saved reward claim and layout revision survive restart");
     second.savedAt+=100;second.gold=120;Check(reopened.Put(second),"overwrite active slot only");
     reopened.Open(root);Check(reopened.records.size()==2&&reopened.records[0].gold==120,"update does not duplicate slot");
     // Sequence 3 is bank 1. Simulate an interrupted write in the newest bank.
@@ -41,6 +55,14 @@ int main() {
     Check(!saves::Date(first.savedAt).empty(),"last save timestamp available");
     saves::Store unwritable;unwritable.Open(root+"missing/");Check(!unwritable.Put(first),"failed write reports failure");
     Check(unwritable.records.empty(),"failed write does not mutate in-memory slots");
+    const auto removed=reopened.records.front().id;
+    Check(reopened.Remove(removed),"delete chosen slot");
+    reopened.Open(root);
+    Check(reopened.records.size()==9,"delete persists after restart");
+    Check(std::none_of(reopened.records.begin(),reopened.records.end(),[removed](const saves::Record& r){return r.id==removed;}),"deleted slot stays absent");
+    Check(!reopened.Remove(removed),"missing slot deletion fails without mutation");
+    while(!reopened.records.empty())Check(reopened.Remove(reopened.records.back().id),"delete remaining slots");
+    reopened.Open(root);Check(reopened.records.empty(),"deleting last slot persists empty list");
     std::printf("save_store_tests: %d checks passed\n",checks);
     return 0;
 }

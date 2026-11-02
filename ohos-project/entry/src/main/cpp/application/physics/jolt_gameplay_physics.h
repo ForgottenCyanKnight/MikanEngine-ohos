@@ -99,6 +99,10 @@ public:
     struct WorkshopState { bool enabled=false, platePressed=false, gateOpen=false; float liftHeight=0; };
     WorkshopState GetWorkshopState() const;
     void RestoreGateProgress(bool open);
+    void SetArenaEnemy(int index,float x,float feetY,float z,bool enabled);
+    void DisableArenaEnemies();
+    void MoveArenaEnemy(int index,float vx,float vz,float dt);
+    CharacterState GetArenaEnemyState(int index) const;
 
 private:
     struct Impl;

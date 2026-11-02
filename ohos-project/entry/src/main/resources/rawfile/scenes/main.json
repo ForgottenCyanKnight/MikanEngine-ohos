@@ -1,17 +1,76 @@
 {
+  "formatVersion": 1,
+  "game": "portal_hub",
   "water": {
-    "enabled": true,
-    "height": -2.6,
-    "size": 384,
-    "roughness": 0.08,
-    "color": [
-      0.035,
-      0.18,
-      0.22
+    "enabled": false
+  },
+  "gameplay": {
+    "playerSpawn": [
+      0,
+      0.02,
+      3
+    ],
+    "enemyEnabled": false,
+    "demoPropsEnabled": false,
+    "groundEnabled": false,
+    "savePoints": [
+      [
+        -3,
+        0.02,
+        3
+      ]
+    ],
+    "portals": [
+      {
+        "target": "scenes/forest_test.json",
+        "label": "FOREST",
+        "position": [
+          -5,
+          0.02,
+          -5
+        ],
+        "radius": 0.85,
+        "color": [
+          0.08,
+          0.85,
+          0.4
+        ],
+        "opacity": 0.32
+      },
+      {
+        "target": "scenes/physics_parkour.json",
+        "label": "PHYSICS + PARKOUR",
+        "position": [
+          5,
+          0.02,
+          -5
+        ],
+        "radius": 0.85,
+        "color": [
+          0.03,
+          0.48,
+          1
+        ],
+        "opacity": 0.32
+      },
+      {
+        "target": "scenes/arena.json",
+        "label": "ARENA - 4 WAVES",
+        "position": [
+          0,
+          0.02,
+          -5
+        ],
+        "radius": 0.85,
+        "color": [
+          1,
+          0.35,
+          0.05
+        ],
+        "opacity": 0.32
+      }
     ]
   },
-  "formatVersion": 1,
-  "game": "cesiumwalk",
   "entities": [
     {
       "id": 0,
@@ -181,14 +240,14 @@
       }
     },
     {
-      "id": 3,
+      "id": 13000,
       "name": {
-        "name": "Ground"
+        "name": "Hub white platform"
       },
       "transform": {
         "position": [
           0,
-          -0.469711,
+          -1.44,
           0
         ],
         "rotation": [
@@ -198,9 +257,9 @@
           0
         ],
         "scale": [
-          40,
+          12,
           0.5,
-          40
+          10
         ]
       },
       "hierarchy": {
@@ -209,242 +268,40 @@
       },
       "mesh": {
         "type": 4,
-        "modelPath": "engine/models/Base Model/cube.glb"
-      },
-      "render": {
-        "visible": true,
-        "castShadow": false,
-        "receiveShadow": true,
-        "showAABB": false,
-        "showOBB": false,
-        "doubleSided": false,
-        "wireframe": false
-      },
-      "rigidBody": {
-        "type": 0,
-        "shapeType": 0,
-        "size": [
-          2,
-          2,
-          2
-        ],
-        "offset": [
-          0,
-          0,
-          0
-        ],
-        "mass": 0,
-        "restitution": 0,
-        "useGravity": false,
-        "isTrigger": false,
-        "useOBB": false,
-        "syncWithModel": true,
-        "autoFitToModel": false,
-        "collisionModelPath": "",
-        "collisionPrecision": 0.01,
-        "useConvexHull": true,
-        "maxConvexHullVertices": 256,
-        "generatePerSubmesh": false
-      },
-      "collider": {
-        "type": 0,
-        "offset": [
-          0,
-          0,
-          0
-        ],
-        "size": [
-          2,
-          2,
-          2
-        ],
-        "isTrigger": false,
-        "useOBB": false,
-        "syncWithModel": true,
-        "autoFitToModel": false,
-        "modelPath": ""
-      },
-      "script": {
-        "scriptName": ""
-      }
-    },
-    {
-      "id": 4,
-      "name": {
-        "name": "AnimationPlayer"
-      },
-      "transform": {
-        "position": [
-          0,
-          0,
-          0
-        ],
-        "rotation": [
-          1,
-          0,
-          0,
-          0
-        ],
-        "scale": [
-          1,
-          1,
-          1
-        ]
-      },
-      "hierarchy": {
-        "parent": 4294967295,
-        "children": []
-      },
-      "mesh": {
-        "type": 4,
-        "modelPath": "animations/quaternius/AnimationLibrary_Standard.glb"
+        "modelPath": "models/hub/white.glb"
       },
       "render": {
         "visible": true,
         "castShadow": true,
-        "receiveShadow": true,
-        "showAABB": false,
-        "showOBB": false,
-        "doubleSided": false,
-        "wireframe": false
-      },
-      "material": {
-        "albedoPath": "",
-        "normalPath": "",
-        "roughnessPath": "",
-        "metallicPath": "",
-        "aoPath": "",
-        "emissivePath": "",
-        "albedoColor": [
-          1,
-          1,
-          1
-        ],
-        "metallic": 0,
-        "roughness": 0.5,
-        "ao": 1,
-        "emissiveIntensity": 0,
-        "useAlbedoTexture": false,
-        "useNormalTexture": false,
-        "useRoughnessTexture": false,
-        "useMetallicTexture": false,
-        "useAOTexture": false,
-        "useEmissiveTexture": false,
-        "albedoSamplerType": 0,
-        "normalSamplerType": 0,
-        "roughnessSamplerType": 0,
-        "metallicSamplerType": 0,
-        "aoSamplerType": 0,
-        "emissiveSamplerType": 0
-      },
-      "rigidBody": {
-        "type": 1,
-        "shapeType": 2,
-        "size": [
-          0.5,
-          1.32872,
-          0.5
-        ],
-        "offset": [
-          0,
-          0.91482,
-          0.0206451
-        ],
-        "mass": 70,
-        "restitution": 0,
-        "useGravity": true,
-        "isTrigger": false,
-        "useOBB": false,
-        "syncWithModel": false,
-        "autoFitToModel": true,
-        "collisionModelPath": "",
-        "collisionPrecision": 0.01,
-        "useConvexHull": true,
-        "maxConvexHullVertices": 256,
-        "generatePerSubmesh": false
+        "receiveShadow": true
       },
       "collider": {
-        "type": 2,
+        "type": 0,
+        "size": [
+          2,
+          2,
+          2
+        ],
         "offset": [
           0,
-          0.91482,
-          0.0206451
-        ],
-        "size": [
-          0.5,
-          1.32872,
-          0.5
+          0,
+          0
         ],
         "isTrigger": false,
-        "useOBB": false,
         "syncWithModel": true,
-        "autoFitToModel": true,
-        "modelPath": ""
-      },
-      "script": {
-        "scriptName": "PlayerWalkScript",
-        "params": {
-          "moveSpeed": 5,
-          "jumpSpeed": 7,
-          "camDistance": 6,
-          "camHeight": 3,
-          "camLerpSpeed": 12,
-          "maxHealth": 100,
-          "health": 100,
-          "hitClipIndex": 7,
-          "deathClipIndex": 4,
-          "hitDuration": 0.333,
-          "deathDuration": 2.4,
-          "yawOffsetDeg": 0,
-          "walkAnimSpeed": 1.5,
-          "animBlendSpeed": 6,
-          "idleClipIndex": 9,
-          "walkClipIndex": 45,
-          "runClipIndex": 38,
-          "runSpeedRatio": 0.6,
-          "sprintSpeedMultiplier": 1.6,
-          "crouchSpeedMultiplier": 0.5,
-          "crouchIdleClipIndex": 2,
-          "crouchMoveClipIndex": 1,
-          "attackClipIndex": 26,
-          "jumpStartClipIndex": 16,
-          "jumpLoopClipIndex": 15,
-          "jumpLandClipIndex": 14,
-          "jumpStartDuration": 0.35,
-          "attackDuration": 0.87,
-          "attackHitboxCenter": [
-            0,
-            0.95,
-            1.1
-          ],
-          "attackHitboxHalfExtents": [
-            0.6,
-            0.85,
-            0.9
-          ],
-          "attackHitboxStartTime": 0.2,
-          "attackHitboxEndTime": 0.52,
-          "attackDamage": 25,
-          "invincibilityDuration": 0.45,
-          "landDuration": 0.45,
-          "turnSpeedDeg": 360,
-          "disableAnim": 0,
-          "autoWalk": 0,
-          "autoStateTest": 0,
-          "autoAttack": 0
-        }
+        "autoFitToModel": false
       }
     },
     {
-      "id": 5,
+      "id": 13001,
       "name": {
-        "name": "Block_A"
+        "name": "Hub north wall"
       },
       "transform": {
         "position": [
-          3,
-          1,
-          -2
+          0,
+          0.36,
+          -10
         ],
         "rotation": [
           1,
@@ -453,9 +310,9 @@
           0
         ],
         "scale": [
-          1,
-          1,
-          1
+          12,
+          1.3,
+          0.2
         ]
       },
       "hierarchy": {
@@ -464,74 +321,198 @@
       },
       "mesh": {
         "type": 4,
-        "modelPath": "engine/models/Base Model/cube.glb"
+        "modelPath": "models/hub/white.glb"
       },
       "render": {
         "visible": true,
         "castShadow": true,
-        "receiveShadow": true,
-        "showAABB": false,
-        "showOBB": false,
-        "doubleSided": false,
-        "wireframe": false
-      },
-      "rigidBody": {
-        "type": 0,
-        "shapeType": 0,
-        "size": [
-          2,
-          2,
-          2
-        ],
-        "offset": [
-          0,
-          0,
-          0
-        ],
-        "mass": 0,
-        "restitution": 0,
-        "useGravity": false,
-        "isTrigger": false,
-        "useOBB": false,
-        "syncWithModel": true,
-        "autoFitToModel": false,
-        "collisionModelPath": "",
-        "collisionPrecision": 0.01,
-        "useConvexHull": true,
-        "maxConvexHullVertices": 256,
-        "generatePerSubmesh": false
+        "receiveShadow": true
       },
       "collider": {
         "type": 0,
-        "offset": [
-          0,
-          0,
-          0
-        ],
         "size": [
           2,
           2,
           2
         ],
+        "offset": [
+          0,
+          0,
+          0
+        ],
         "isTrigger": false,
-        "useOBB": false,
         "syncWithModel": true,
-        "autoFitToModel": false,
-        "modelPath": ""
-      },
-      "script": {
-        "scriptName": ""
+        "autoFitToModel": false
       }
     },
     {
-      "id": 6,
+      "id": 13002,
       "name": {
-        "name": "Block_B"
+        "name": "Hub south wall"
       },
       "transform": {
         "position": [
-          -3,
-          1.5,
+          0,
+          0.36,
+          10
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          12,
+          1.3,
+          0.2
+        ]
+      },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/hub/white.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      },
+      "collider": {
+        "type": 0,
+        "size": [
+          2,
+          2,
+          2
+        ],
+        "offset": [
+          0,
+          0,
+          0
+        ],
+        "isTrigger": false,
+        "syncWithModel": true,
+        "autoFitToModel": false
+      }
+    },
+    {
+      "id": 13003,
+      "name": {
+        "name": "Hub west wall"
+      },
+      "transform": {
+        "position": [
+          -12,
+          0.36,
+          0
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.2,
+          1.3,
+          10
+        ]
+      },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/hub/white.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      },
+      "collider": {
+        "type": 0,
+        "size": [
+          2,
+          2,
+          2
+        ],
+        "offset": [
+          0,
+          0,
+          0
+        ],
+        "isTrigger": false,
+        "syncWithModel": true,
+        "autoFitToModel": false
+      }
+    },
+    {
+      "id": 13004,
+      "name": {
+        "name": "Hub east wall"
+      },
+      "transform": {
+        "position": [
+          12,
+          0.36,
+          0
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.2,
+          1.3,
+          10
+        ]
+      },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/hub/white.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      },
+      "collider": {
+        "type": 0,
+        "size": [
+          2,
+          2,
+          2
+        ],
+        "offset": [
+          0,
+          0,
+          0
+        ],
+        "isTrigger": false,
+        "syncWithModel": true,
+        "autoFitToModel": false
+      }
+    },
+    {
+      "id": 13100,
+      "name": {
+        "name": "Hub gate 1 left"
+      },
+      "transform": {
+        "position": [
+          -6.1,
+          0.45999999999999996,
           -5
         ],
         "rotation": [
@@ -541,9 +522,9 @@
           0
         ],
         "scale": [
-          1,
-          1.5,
-          1
+          0.16,
+          1.4,
+          0.2
         ]
       },
       "hierarchy": {
@@ -552,75 +533,40 @@
       },
       "mesh": {
         "type": 4,
-        "modelPath": "engine/models/Base Model/cube.glb"
+        "modelPath": "models/hub/white.glb"
       },
       "render": {
         "visible": true,
         "castShadow": true,
-        "receiveShadow": true,
-        "showAABB": false,
-        "showOBB": false,
-        "doubleSided": false,
-        "wireframe": false
-      },
-      "rigidBody": {
-        "type": 0,
-        "shapeType": 0,
-        "size": [
-          2,
-          2,
-          2
-        ],
-        "offset": [
-          0,
-          0,
-          0
-        ],
-        "mass": 0,
-        "restitution": 0,
-        "useGravity": false,
-        "isTrigger": false,
-        "useOBB": false,
-        "syncWithModel": true,
-        "autoFitToModel": false,
-        "collisionModelPath": "",
-        "collisionPrecision": 0.01,
-        "useConvexHull": true,
-        "maxConvexHullVertices": 256,
-        "generatePerSubmesh": false
+        "receiveShadow": true
       },
       "collider": {
         "type": 0,
-        "offset": [
-          0,
-          0,
-          0
-        ],
         "size": [
           2,
           2,
           2
         ],
+        "offset": [
+          0,
+          0,
+          0
+        ],
         "isTrigger": false,
-        "useOBB": false,
         "syncWithModel": true,
-        "autoFitToModel": false,
-        "modelPath": ""
-      },
-      "script": {
-        "scriptName": ""
+        "autoFitToModel": false
       }
     },
     {
-      "id": 7,
+      "id": 13101,
       "name": {
-        "name": "Block_C"
+        "name": "Hub gate 1 right"
       },
       "transform": {
         "position": [
-          4,
-          0.5,
-          3
+          -3.9,
+          0.45999999999999996,
+          -5
         ],
         "rotation": [
           1,
@@ -629,9 +575,9 @@
           0
         ],
         "scale": [
-          0.75,
-          0.5,
-          0.75
+          0.16,
+          1.4,
+          0.2
         ]
       },
       "hierarchy": {
@@ -640,108 +586,15 @@
       },
       "mesh": {
         "type": 4,
-        "modelPath": "engine/models/Base Model/cube.glb"
+        "modelPath": "models/hub/white.glb"
       },
       "render": {
         "visible": true,
         "castShadow": true,
-        "receiveShadow": true,
-        "showAABB": false,
-        "showOBB": false,
-        "doubleSided": false,
-        "wireframe": false
-      },
-      "rigidBody": {
-        "type": 0,
-        "shapeType": 0,
-        "size": [
-          2,
-          2,
-          2
-        ],
-        "offset": [
-          0,
-          0,
-          0
-        ],
-        "mass": 0,
-        "restitution": 0,
-        "useGravity": false,
-        "isTrigger": false,
-        "useOBB": false,
-        "syncWithModel": true,
-        "autoFitToModel": false,
-        "collisionModelPath": "",
-        "collisionPrecision": 0.01,
-        "useConvexHull": true,
-        "maxConvexHullVertices": 256,
-        "generatePerSubmesh": false
+        "receiveShadow": true
       },
       "collider": {
         "type": 0,
-        "offset": [
-          0,
-          0,
-          0
-        ],
-        "size": [
-          2,
-          2,
-          2
-        ],
-        "isTrigger": false,
-        "useOBB": false,
-        "syncWithModel": true,
-        "autoFitToModel": false,
-        "modelPath": ""
-      },
-      "script": {
-        "scriptName": ""
-      }
-    },
-    {
-      "id": 8,
-      "name": {
-        "name": "LockTargetCube"
-      },
-      "transform": {
-        "position": [
-          -4,
-          1,
-          -2
-        ],
-        "rotation": [
-          1,
-          0,
-          0,
-          0
-        ],
-        "scale": [
-          0.8,
-          1,
-          0.8
-        ]
-      },
-      "hierarchy": {
-        "parent": 4294967295,
-        "children": []
-      },
-      "mesh": {
-        "type": 4,
-        "modelPath": "engine/models/Base Model/cube.glb"
-      },
-      "render": {
-        "visible": true,
-        "castShadow": true,
-        "receiveShadow": true,
-        "showAABB": false,
-        "showOBB": false,
-        "doubleSided": false,
-        "wireframe": false
-      },
-      "rigidBody": {
-        "type": 0,
-        "shapeType": 0,
         "size": [
           2,
           2,
@@ -752,1354 +605,26 @@
           0,
           0
         ],
-        "mass": 0,
-        "restitution": 0,
-        "useGravity": false,
         "isTrigger": false,
-        "useOBB": false,
         "syncWithModel": true,
-        "autoFitToModel": false,
-        "collisionModelPath": "",
-        "collisionPrecision": 0.01,
-        "useConvexHull": true,
-        "maxConvexHullVertices": 256,
-        "generatePerSubmesh": false
-      },
-      "collider": {
-        "type": 0,
-        "offset": [
-          0,
-          0,
-          0
-        ],
-        "size": [
-          2,
-          2,
-          2
-        ],
-        "isTrigger": false,
-        "useOBB": false,
-        "syncWithModel": true,
-        "autoFitToModel": false,
-        "modelPath": ""
-      },
-      "script": {
-        "scriptName": ""
+        "autoFitToModel": false
       }
     },
     {
-      "id": 9,
+      "id": 13102,
       "name": {
-        "name": "Canvas"
-      },
-      "transform": {
-        "position": [
-          0,
-          0,
-          0
-        ],
-        "rotation": [
-          1,
-          0,
-          0,
-          0
-        ],
-        "scale": [
-          1,
-          1,
-          1
-        ]
-      },
-      "hierarchy": {
-        "parent": 4294967295,
-        "children": [
-          10,
-          19
-        ]
-      },
-      "script": {
-        "scriptName": ""
-      },
-      "canvas2d": {
-        "width": 1920,
-        "height": 1080,
-        "stretchToViewport": true,
-        "layer": 0
-      }
-    },
-    {
-      "id": 10,
-      "name": {
-        "name": "InfoText"
-      },
-      "transform": {
-        "position": [
-          40,
-          1030,
-          0
-        ],
-        "rotation": [
-          1,
-          0,
-          0,
-          0
-        ],
-        "scale": [
-          1,
-          1,
-          1
-        ]
-      },
-      "hierarchy": {
-        "parent": 9,
-        "children": []
-      },
-      "script": {
-        "scriptName": ""
-      },
-      "textComp": {
-        "text": "状态:Idle  脚本:on  物理:ok\nWASD移动  Ctrl奔跑  C蹲伏  F攻击  空格跳跃\nAI:Patrol  右键环视  滚轮缩放  Shift瞄准  Q锁敌",
-        "isUI": true,
-        "fontSize": 18,
-        "color": [
-          0.82,
-          0.84,
-          0.86,
-          0.92
-        ],
-        "layer": 3,
-        "renderMode": 2,
-        "anchorMin": [
-          0,
-          0
-        ],
-        "anchorMax": [
-          0,
-          0
-        ],
-        "pivot": [
-          0,
-          0
-        ]
-      }
-    },
-    {
-      "id": 11,
-      "name": {
-        "name": "PhysicsDynamicCube_A"
-      },
-      "transform": {
-        "position": [
-          0,
-          4.5,
-          3
-        ],
-        "rotation": [
-          1,
-          0,
-          0,
-          0
-        ],
-        "scale": [
-          0.75,
-          0.75,
-          0.75
-        ]
-      },
-      "hierarchy": {
-        "parent": 4294967295,
-        "children": []
-      },
-      "mesh": {
-        "type": 4,
-        "modelPath": "engine/models/Base Model/cube.glb"
-      },
-      "render": {
-        "visible": true,
-        "castShadow": true,
-        "receiveShadow": true,
-        "showAABB": false,
-        "showOBB": false,
-        "doubleSided": false,
-        "wireframe": false
-      },
-      "rigidBody": {
-        "type": 1,
-        "shapeType": 0,
-        "size": [
-          2,
-          2,
-          2
-        ],
-        "offset": [
-          0,
-          0,
-          0
-        ],
-        "mass": 2,
-        "restitution": 0.05,
-        "useGravity": true,
-        "isTrigger": false,
-        "useOBB": false,
-        "syncWithModel": false,
-        "autoFitToModel": false,
-        "collisionModelPath": "",
-        "collisionPrecision": 0.01,
-        "useConvexHull": true,
-        "maxConvexHullVertices": 256,
-        "generatePerSubmesh": false
-      },
-      "collider": {
-        "type": 0,
-        "offset": [
-          0,
-          0,
-          0
-        ],
-        "size": [
-          2,
-          2,
-          2
-        ],
-        "isTrigger": false,
-        "useOBB": false,
-        "syncWithModel": true,
-        "autoFitToModel": false,
-        "modelPath": ""
-      },
-      "script": {
-        "scriptName": ""
-      }
-    },
-    {
-      "id": 12,
-      "name": {
-        "name": "PhysicsDynamicCube_B"
-      },
-      "transform": {
-        "position": [
-          0,
-          7,
-          3
-        ],
-        "rotation": [
-          1,
-          0,
-          0,
-          0
-        ],
-        "scale": [
-          0.6,
-          0.6,
-          0.6
-        ]
-      },
-      "hierarchy": {
-        "parent": 4294967295,
-        "children": []
-      },
-      "mesh": {
-        "type": 4,
-        "modelPath": "engine/models/Base Model/cube.glb"
-      },
-      "render": {
-        "visible": true,
-        "castShadow": true,
-        "receiveShadow": true,
-        "showAABB": false,
-        "showOBB": false,
-        "doubleSided": false,
-        "wireframe": false
-      },
-      "rigidBody": {
-        "type": 1,
-        "shapeType": 0,
-        "size": [
-          2,
-          2,
-          2
-        ],
-        "offset": [
-          0,
-          0,
-          0
-        ],
-        "mass": 1,
-        "restitution": 0.05,
-        "useGravity": true,
-        "isTrigger": false,
-        "useOBB": false,
-        "syncWithModel": false,
-        "autoFitToModel": false,
-        "collisionModelPath": "",
-        "collisionPrecision": 0.01,
-        "useConvexHull": true,
-        "maxConvexHullVertices": 256,
-        "generatePerSubmesh": false
-      },
-      "collider": {
-        "type": 0,
-        "offset": [
-          0,
-          0,
-          0
-        ],
-        "size": [
-          2,
-          2,
-          2
-        ],
-        "isTrigger": false,
-        "useOBB": false,
-        "syncWithModel": true,
-        "autoFitToModel": false,
-        "modelPath": ""
-      },
-      "script": {
-        "scriptName": ""
-      }
-    },
-    {
-      "id": 13,
-      "name": {
-        "name": "PhysicsDynamicPusher"
-      },
-      "transform": {
-        "position": [
-          -3,
-          0.75,
-          3
-        ],
-        "rotation": [
-          1,
-          0,
-          0,
-          0
-        ],
-        "scale": [
-          0.75,
-          0.75,
-          0.75
-        ]
-      },
-      "hierarchy": {
-        "parent": 4294967295,
-        "children": []
-      },
-      "mesh": {
-        "type": 4,
-        "modelPath": "engine/models/Base Model/cube.glb"
-      },
-      "render": {
-        "visible": true,
-        "castShadow": true,
-        "receiveShadow": true,
-        "showAABB": false,
-        "showOBB": false,
-        "doubleSided": false,
-        "wireframe": false
-      },
-      "rigidBody": {
-        "type": 1,
-        "shapeType": 0,
-        "size": [
-          2,
-          2,
-          2
-        ],
-        "offset": [
-          0,
-          0,
-          0
-        ],
-        "mass": 2,
-        "restitution": 0,
-        "useGravity": true,
-        "isTrigger": false,
-        "useOBB": false,
-        "syncWithModel": false,
-        "autoFitToModel": true,
-        "collisionModelPath": "",
-        "collisionPrecision": 0.01,
-        "useConvexHull": true,
-        "maxConvexHullVertices": 256,
-        "generatePerSubmesh": false
-      },
-      "collider": {
-        "type": 0,
-        "offset": [
-          0,
-          0,
-          0
-        ],
-        "size": [
-          2,
-          2,
-          2
-        ],
-        "isTrigger": false,
-        "useOBB": false,
-        "syncWithModel": true,
-        "autoFitToModel": true,
-        "modelPath": ""
-      },
-      "script": {
-        "scriptName": "PhysicsDynamicPusher"
-      }
-    },
-    {
-      "id": 14,
-      "name": {
-        "name": "PuppetEnemy"
-      },
-      "transform": {
-        "position": [
-          0,
-          0,
-          2.6
-        ],
-        "rotation": [
-          1,
-          0,
-          0,
-          0
-        ],
-        "scale": [
-          1,
-          1,
-          1
-        ]
-      },
-      "hierarchy": {
-        "parent": 4294967295,
-        "children": []
-      },
-      "mesh": {
-        "type": 4,
-        "modelPath": "animations/quaternius/AnimationLibrary_Standard.glb"
-      },
-      "render": {
-        "visible": true,
-        "castShadow": true,
-        "receiveShadow": true,
-        "showAABB": false,
-        "showOBB": false,
-        "doubleSided": false,
-        "wireframe": false
-      },
-      "material": {
-        "albedoPath": "",
-        "normalPath": "",
-        "roughnessPath": "",
-        "metallicPath": "",
-        "aoPath": "",
-        "emissivePath": "",
-        "albedoColor": [
-          0.85,
-          0.25,
-          0.22
-        ],
-        "metallic": 0,
-        "roughness": 0.5,
-        "ao": 1,
-        "emissiveIntensity": 0,
-        "useAlbedoTexture": false,
-        "useNormalTexture": false,
-        "useRoughnessTexture": false,
-        "useMetallicTexture": false,
-        "useAOTexture": false,
-        "useEmissiveTexture": false,
-        "albedoSamplerType": 0,
-        "normalSamplerType": 0,
-        "roughnessSamplerType": 0,
-        "metallicSamplerType": 0,
-        "aoSamplerType": 0,
-        "emissiveSamplerType": 0
-      },
-      "rigidBody": {
-        "type": 1,
-        "shapeType": 2,
-        "size": [
-          0.5,
-          1.32872,
-          0.5
-        ],
-        "offset": [
-          0,
-          0.91482,
-          0.0206451
-        ],
-        "mass": 55,
-        "restitution": 0,
-        "useGravity": false,
-        "isTrigger": false,
-        "useOBB": false,
-        "syncWithModel": false,
-        "autoFitToModel": true,
-        "collisionModelPath": "",
-        "collisionPrecision": 0.01,
-        "useConvexHull": true,
-        "maxConvexHullVertices": 256,
-        "generatePerSubmesh": false
-      },
-      "collider": {
-        "type": 2,
-        "offset": [
-          0,
-          0.91482,
-          0.0206451
-        ],
-        "size": [
-          0.5,
-          1.32872,
-          0.5
-        ],
-        "isTrigger": false,
-        "useOBB": false,
-        "syncWithModel": true,
-        "autoFitToModel": true,
-        "modelPath": ""
-      },
-      "script": {
-        "scriptName": "PuppetEnemyScript",
-        "params": {
-          "maxHealth": 100,
-          "health": 100,
-          "idleClipIndex": 9,
-          "hitClipIndex": 7,
-          "deathClipIndex": 4,
-          "hitDuration": 0.333,
-          "deathDuration": 2.4,
-          "pathCellSize": 0.5,
-          "pathRepathInterval": 0.35,
-          "pathObstaclePadding": 0.1,
-          "animSpeed": 1,
-          "healthBarOffsetY": 2.1,
-          "moveClipIndex": 45,
-          "attackClipIndex": 24,
-          "patrolAxis": 0,
-          "detectionRange": 6,
-          "disengageRange": 10,
-          "patrolDistance": 2,
-          "patrolSpeed": 1.2,
-          "chaseSpeed": 2.6,
-          "attackRange": 1.7,
-          "attackCooldown": 1.2,
-          "attackDuration": 0.9,
-          "attackDamage": 10,
-          "attackHitboxCenter": [
-            0,
-            0.95,
-            0.85
-          ],
-          "attackHitboxHalfExtents": [
-            0.55,
-            0.75,
-            0.7
-          ],
-          "attackHitboxStartTime": 0.25,
-          "attackHitboxEndTime": 0.55,
-          "invincibilityDuration": 0.18
-        }
-      }
-    },
-    {
-      "id": 15,
-      "name": {
-        "name": "PuppetEnemy_B"
-      },
-      "transform": {
-        "position": [
-          -4,
-          0,
-          2.5
-        ],
-        "rotation": [
-          1,
-          0,
-          0,
-          0
-        ],
-        "scale": [
-          1,
-          1,
-          1
-        ]
-      },
-      "hierarchy": {
-        "parent": 4294967295,
-        "children": []
-      },
-      "mesh": {
-        "type": 4,
-        "modelPath": "animations/quaternius/AnimationLibrary_Standard.glb"
-      },
-      "render": {
-        "visible": true,
-        "castShadow": true,
-        "receiveShadow": true,
-        "showAABB": false,
-        "showOBB": false,
-        "doubleSided": false,
-        "wireframe": false
-      },
-      "material": {
-        "albedoPath": "",
-        "normalPath": "",
-        "roughnessPath": "",
-        "metallicPath": "",
-        "aoPath": "",
-        "emissivePath": "",
-        "albedoColor": [
-          0.25,
-          0.45,
-          0.9
-        ],
-        "metallic": 0,
-        "roughness": 0.5,
-        "ao": 1,
-        "emissiveIntensity": 0,
-        "useAlbedoTexture": false,
-        "useNormalTexture": false,
-        "useRoughnessTexture": false,
-        "useMetallicTexture": false,
-        "useAOTexture": false,
-        "useEmissiveTexture": false,
-        "albedoSamplerType": 0,
-        "normalSamplerType": 0,
-        "roughnessSamplerType": 0,
-        "metallicSamplerType": 0,
-        "aoSamplerType": 0,
-        "emissiveSamplerType": 0
-      },
-      "rigidBody": {
-        "type": 1,
-        "shapeType": 2,
-        "size": [
-          0.5,
-          1.32872,
-          0.5
-        ],
-        "offset": [
-          0,
-          0.91482,
-          0.0206451
-        ],
-        "mass": 55,
-        "restitution": 0,
-        "useGravity": false,
-        "isTrigger": false,
-        "useOBB": false,
-        "syncWithModel": false,
-        "autoFitToModel": true,
-        "collisionModelPath": "",
-        "collisionPrecision": 0.01,
-        "useConvexHull": true,
-        "maxConvexHullVertices": 256,
-        "generatePerSubmesh": false
-      },
-      "collider": {
-        "type": 2,
-        "offset": [
-          0,
-          0.91482,
-          0.0206451
-        ],
-        "size": [
-          0.5,
-          1.32872,
-          0.5
-        ],
-        "isTrigger": false,
-        "useOBB": false,
-        "syncWithModel": true,
-        "autoFitToModel": true,
-        "modelPath": ""
-      },
-      "script": {
-        "scriptName": "PuppetEnemyScript",
-        "params": {
-          "maxHealth": 100,
-          "health": 100,
-          "idleClipIndex": 9,
-          "hitClipIndex": 7,
-          "deathClipIndex": 4,
-          "hitDuration": 0.333,
-          "deathDuration": 2.4,
-          "pathCellSize": 0.5,
-          "pathRepathInterval": 0.35,
-          "pathObstaclePadding": 0.1,
-          "animSpeed": 1,
-          "healthBarOffsetY": 2.1,
-          "moveClipIndex": 45,
-          "attackClipIndex": 24,
-          "patrolAxis": 1,
-          "detectionRange": 6,
-          "disengageRange": 10,
-          "patrolDistance": 2,
-          "patrolSpeed": 1.2,
-          "chaseSpeed": 2.6,
-          "attackRange": 1.7,
-          "attackCooldown": 1.2,
-          "attackDuration": 0.9,
-          "attackDamage": 10,
-          "attackHitboxCenter": [
-            0,
-            0.95,
-            0.85
-          ],
-          "attackHitboxHalfExtents": [
-            0.55,
-            0.75,
-            0.7
-          ],
-          "attackHitboxStartTime": 0.25,
-          "attackHitboxEndTime": 0.55,
-          "invincibilityDuration": 0.18
-        }
-      }
-    },
-    {
-      "id": 16,
-      "name": {
-        "name": "PuppetEnemy_C"
-      },
-      "transform": {
-        "position": [
-          4.5,
-          0,
-          5
-        ],
-        "rotation": [
-          1,
-          0,
-          0,
-          0
-        ],
-        "scale": [
-          1,
-          1,
-          1
-        ]
-      },
-      "hierarchy": {
-        "parent": 4294967295,
-        "children": []
-      },
-      "mesh": {
-        "type": 4,
-        "modelPath": "animations/quaternius/AnimationLibrary_Standard.glb"
-      },
-      "render": {
-        "visible": true,
-        "castShadow": true,
-        "receiveShadow": true,
-        "showAABB": false,
-        "showOBB": false,
-        "doubleSided": false,
-        "wireframe": false
-      },
-      "material": {
-        "albedoPath": "",
-        "normalPath": "",
-        "roughnessPath": "",
-        "metallicPath": "",
-        "aoPath": "",
-        "emissivePath": "",
-        "albedoColor": [
-          0.3,
-          0.75,
-          0.35
-        ],
-        "metallic": 0,
-        "roughness": 0.5,
-        "ao": 1,
-        "emissiveIntensity": 0,
-        "useAlbedoTexture": false,
-        "useNormalTexture": false,
-        "useRoughnessTexture": false,
-        "useMetallicTexture": false,
-        "useAOTexture": false,
-        "useEmissiveTexture": false,
-        "albedoSamplerType": 0,
-        "normalSamplerType": 0,
-        "roughnessSamplerType": 0,
-        "metallicSamplerType": 0,
-        "aoSamplerType": 0,
-        "emissiveSamplerType": 0
-      },
-      "rigidBody": {
-        "type": 1,
-        "shapeType": 2,
-        "size": [
-          0.5,
-          1.32872,
-          0.5
-        ],
-        "offset": [
-          0,
-          0.91482,
-          0.0206451
-        ],
-        "mass": 55,
-        "restitution": 0,
-        "useGravity": false,
-        "isTrigger": false,
-        "useOBB": false,
-        "syncWithModel": false,
-        "autoFitToModel": true,
-        "collisionModelPath": "",
-        "collisionPrecision": 0.01,
-        "useConvexHull": true,
-        "maxConvexHullVertices": 256,
-        "generatePerSubmesh": false
-      },
-      "collider": {
-        "type": 2,
-        "offset": [
-          0,
-          0.91482,
-          0.0206451
-        ],
-        "size": [
-          0.5,
-          1.32872,
-          0.5
-        ],
-        "isTrigger": false,
-        "useOBB": false,
-        "syncWithModel": true,
-        "autoFitToModel": true,
-        "modelPath": ""
-      },
-      "script": {
-        "scriptName": "PuppetEnemyScript",
-        "params": {
-          "maxHealth": 100,
-          "health": 100,
-          "idleClipIndex": 9,
-          "hitClipIndex": 7,
-          "deathClipIndex": 4,
-          "hitDuration": 0.333,
-          "deathDuration": 2.4,
-          "pathCellSize": 0.5,
-          "pathRepathInterval": 0.35,
-          "pathObstaclePadding": 0.1,
-          "animSpeed": 1,
-          "healthBarOffsetY": 2.1,
-          "moveClipIndex": 45,
-          "attackClipIndex": 24,
-          "patrolAxis": 0,
-          "detectionRange": 6,
-          "disengageRange": 10,
-          "patrolDistance": 2,
-          "patrolSpeed": 1.2,
-          "chaseSpeed": 2.6,
-          "attackRange": 1.7,
-          "attackCooldown": 1.2,
-          "attackDuration": 0.9,
-          "attackDamage": 10,
-          "attackHitboxCenter": [
-            0,
-            0.95,
-            0.85
-          ],
-          "attackHitboxHalfExtents": [
-            0.55,
-            0.75,
-            0.7
-          ],
-          "attackHitboxStartTime": 0.25,
-          "attackHitboxEndTime": 0.55,
-          "invincibilityDuration": 0.18
-        }
-      }
-    },
-    {
-      "id": 17,
-      "name": {
-        "name": "PuppetEnemy_D"
+        "name": "Hub gate 1 lintel"
       },
       "transform": {
         "position": [
           -5,
-          0,
-          -2.5
+          2.0100000000000002,
+          -5
         ],
         "rotation": [
           1,
           0,
           0,
-          0
-        ],
-        "scale": [
-          1,
-          1,
-          1
-        ]
-      },
-      "hierarchy": {
-        "parent": 4294967295,
-        "children": []
-      },
-      "mesh": {
-        "type": 4,
-        "modelPath": "animations/quaternius/AnimationLibrary_Standard.glb"
-      },
-      "render": {
-        "visible": true,
-        "castShadow": true,
-        "receiveShadow": true,
-        "showAABB": false,
-        "showOBB": false,
-        "doubleSided": false,
-        "wireframe": false
-      },
-      "material": {
-        "albedoPath": "",
-        "normalPath": "",
-        "roughnessPath": "",
-        "metallicPath": "",
-        "aoPath": "",
-        "emissivePath": "",
-        "albedoColor": [
-          0.85,
-          0.62,
-          0.15
-        ],
-        "metallic": 0,
-        "roughness": 0.5,
-        "ao": 1,
-        "emissiveIntensity": 0,
-        "useAlbedoTexture": false,
-        "useNormalTexture": false,
-        "useRoughnessTexture": false,
-        "useMetallicTexture": false,
-        "useAOTexture": false,
-        "useEmissiveTexture": false,
-        "albedoSamplerType": 0,
-        "normalSamplerType": 0,
-        "roughnessSamplerType": 0,
-        "metallicSamplerType": 0,
-        "aoSamplerType": 0,
-        "emissiveSamplerType": 0
-      },
-      "rigidBody": {
-        "type": 1,
-        "shapeType": 2,
-        "size": [
-          0.5,
-          1.32872,
-          0.5
-        ],
-        "offset": [
-          0,
-          0.91482,
-          0.0206451
-        ],
-        "mass": 55,
-        "restitution": 0,
-        "useGravity": false,
-        "isTrigger": false,
-        "useOBB": false,
-        "syncWithModel": false,
-        "autoFitToModel": true,
-        "collisionModelPath": "",
-        "collisionPrecision": 0.01,
-        "useConvexHull": true,
-        "maxConvexHullVertices": 256,
-        "generatePerSubmesh": false
-      },
-      "collider": {
-        "type": 2,
-        "offset": [
-          0,
-          0.91482,
-          0.0206451
-        ],
-        "size": [
-          0.5,
-          1.32872,
-          0.5
-        ],
-        "isTrigger": false,
-        "useOBB": false,
-        "syncWithModel": true,
-        "autoFitToModel": true,
-        "modelPath": ""
-      },
-      "script": {
-        "scriptName": "PuppetEnemyScript",
-        "params": {
-          "maxHealth": 100,
-          "health": 100,
-          "idleClipIndex": 9,
-          "hitClipIndex": 7,
-          "deathClipIndex": 4,
-          "hitDuration": 0.333,
-          "deathDuration": 2.4,
-          "pathCellSize": 0.5,
-          "pathRepathInterval": 0.35,
-          "pathObstaclePadding": 0.1,
-          "animSpeed": 1,
-          "healthBarOffsetY": 2.1,
-          "moveClipIndex": 45,
-          "attackClipIndex": 24,
-          "patrolAxis": 1,
-          "detectionRange": 6,
-          "disengageRange": 10,
-          "patrolDistance": 2,
-          "patrolSpeed": 1.2,
-          "chaseSpeed": 2.6,
-          "attackRange": 1.7,
-          "attackCooldown": 1.2,
-          "attackDuration": 0.9,
-          "attackDamage": 10,
-          "attackHitboxCenter": [
-            0,
-            0.95,
-            0.85
-          ],
-          "attackHitboxHalfExtents": [
-            0.55,
-            0.75,
-            0.7
-          ],
-          "attackHitboxStartTime": 0.25,
-          "attackHitboxEndTime": 0.55,
-          "invincibilityDuration": 0.18
-        }
-      }
-    },
-    {
-      "id": 18,
-      "name": {
-        "name": "LanternMeshCollider"
-      },
-      "transform": {
-        "position": [
-          6,
-          -0.02,
-          1
-        ],
-        "rotation": [
-          1,
-          0,
-          0,
-          0
-        ],
-        "scale": [
-          0.1,
-          0.1,
-          0.1
-        ]
-      },
-      "hierarchy": {
-        "parent": 4294967295,
-        "children": [
-          20
-        ]
-      },
-      "mesh": {
-        "type": 4,
-        "modelPath": "models/2.0/Lantern/glTF/Lantern.gltf"
-      },
-      "render": {
-        "visible": true,
-        "castShadow": true,
-        "receiveShadow": true,
-        "showAABB": false,
-        "showOBB": false,
-        "doubleSided": false,
-        "wireframe": false
-      },
-      "material": {
-        "albedoPath": "models/2.0/Lantern/glTF/Lantern_baseColor.png",
-        "normalPath": "models/2.0/Lantern/glTF/Lantern_normal.png",
-        "roughnessPath": "models/2.0/Lantern/glTF/Lantern_roughnessMetallic.png",
-        "metallicPath": "models/2.0/Lantern/glTF/Lantern_roughnessMetallic.png",
-        "aoPath": "",
-        "emissivePath": "models/2.0/Lantern/glTF/Lantern_emissive.png",
-        "albedoColor": [
-          1,
-          1,
-          1
-        ],
-        "metallic": 0.2,
-        "roughness": 0.5,
-        "ao": 1,
-        "emissiveIntensity": 0,
-        "useAlbedoTexture": true,
-        "useNormalTexture": true,
-        "useRoughnessTexture": true,
-        "useMetallicTexture": true,
-        "useAOTexture": false,
-        "useEmissiveTexture": true,
-        "albedoSamplerType": 0,
-        "normalSamplerType": 0,
-        "roughnessSamplerType": 0,
-        "metallicSamplerType": 0,
-        "aoSamplerType": 0,
-        "emissiveSamplerType": 0
-      },
-      "rigidBody": {
-        "type": 0,
-        "shapeType": 4,
-        "size": [
-          1,
-          1,
-          1
-        ],
-        "offset": [
-          0,
-          0,
-          0
-        ],
-        "mass": 0,
-        "restitution": 0,
-        "useGravity": false,
-        "isTrigger": false,
-        "useOBB": false,
-        "syncWithModel": true,
-        "autoFitToModel": false,
-        "collisionModelPath": "models/2.0/Lantern/glTF/Lantern.gltf",
-        "collisionPrecision": 0.01,
-        "useConvexHull": false,
-        "maxConvexHullVertices": 256,
-        "generatePerSubmesh": false
-      },
-      "script": {
-        "scriptName": ""
-      }
-    },
-    {
-      "id": 19,
-      "name": {
-        "name": "FpsText"
-      },
-      "transform": {
-        "position": [
-          -24,
-          24,
-          0
-        ],
-        "rotation": [
-          1,
-          0,
-          0,
-          0
-        ],
-        "scale": [
-          1,
-          1,
-          1
-        ]
-      },
-      "hierarchy": {
-        "parent": 9,
-        "children": []
-      },
-      "script": {
-        "scriptName": ""
-      },
-      "textComp": {
-        "text": "FPS: 61.8",
-        "isUI": true,
-        "fontSize": 24,
-        "color": [
-          0.82,
-          0.84,
-          0.87,
-          1
-        ],
-        "layer": 40,
-        "renderMode": 2,
-        "anchorMin": [
-          1,
-          0
-        ],
-        "anchorMax": [
-          1,
-          0
-        ],
-        "pivot": [
-          1,
-          0
-        ]
-      }
-    },
-    {
-      "id": 20,
-      "name": {
-        "name": "LanternPointLight"
-      },
-      "transform": {
-        "position": [
-          9.58201,
-          18.0092,
-          0
-        ],
-        "rotation": [
-          1,
-          0,
-          0,
-          0
-        ],
-        "scale": [
-          1,
-          1,
-          1
-        ]
-      },
-      "hierarchy": {
-        "parent": 18,
-        "children": []
-      },
-      "light": {
-        "type": 1,
-        "color": [
-          1,
-          0.92,
-          1
-        ],
-        "intensity": 1,
-        "range": 8,
-        "spotAngle": 45,
-        "castShadow": false
-      },
-      "script": {
-        "scriptName": ""
-      }
-    },
-    {
-      "id": 9001,
-      "name": {
-        "name": "Archipelago Terrain"
-      },
-      "transform": {
-        "position": [
-          0,
-          -5.529711,
-          0
-        ],
-        "rotation": [
-          1,
-          0,
-          0,
-          0
-        ],
-        "scale": [
-          1,
-          1,
-          1
-        ]
-      },
-      "render": {
-        "visible": true,
-        "castShadow": true,
-        "receiveShadow": true
-      },
-      "terrain": {
-        "enabled": true,
-        "heightmapPath": "terrain/archipelago_height16.png",
-        "worldSize": [
-          192,
-          192
-        ],
-        "heightScale": 20,
-        "heightOffset": 0,
-        "chunkCount": 8,
-        "patchResolution": 17,
-        "collisionEnabled": true,
-        "collisionResolution": 129,
-        "materialTiling": 48,
-        "blendSharpness": 1,
-        "layer0Path": "terrain/island_grass.png",
-        "layer1Path": "terrain/island_rock.png",
-        "layer2Path": "terrain/island_soil.png"
-      }
-    },
-    {
-      "id": 9100,
-      "name": {
-        "name": "PortalTest_Left"
-      },
-      "transform": {
-        "position": [
-          -1.1,
-          1.430289,
-          -4
-        ],
-        "rotation": [
-          1.0,
-          0,
-          0.0,
-          0
-        ],
-        "scale": [
-          0.16,
-          1.4,
-          0.2
-        ]
-      },
-      "mesh": {
-        "type": 4,
-        "modelPath": "engine/models/Base Model/cube.glb"
-      },
-      "render": {
-        "visible": true,
-        "castShadow": true,
-        "receiveShadow": true
-      }
-    },
-    {
-      "id": 9101,
-      "name": {
-        "name": "PortalTest_Right"
-      },
-      "transform": {
-        "position": [
-          1.1,
-          1.430289,
-          -4
-        ],
-        "rotation": [
-          1.0,
-          0,
-          0.0,
-          0
-        ],
-        "scale": [
-          0.16,
-          1.4,
-          0.2
-        ]
-      },
-      "mesh": {
-        "type": 4,
-        "modelPath": "engine/models/Base Model/cube.glb"
-      },
-      "render": {
-        "visible": true,
-        "castShadow": true,
-        "receiveShadow": true
-      }
-    },
-    {
-      "id": 9102,
-      "name": {
-        "name": "PortalTest_Top"
-      },
-      "transform": {
-        "position": [
-          0,
-          2.980289,
-          -4
-        ],
-        "rotation": [
-          1.0,
-          0,
-          0.0,
           0
         ],
         "scale": [
@@ -2108,31 +633,51 @@
           0.2
         ]
       },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
       "mesh": {
         "type": 4,
-        "modelPath": "engine/models/Base Model/cube.glb"
+        "modelPath": "models/hub/white.glb"
       },
       "render": {
         "visible": true,
         "castShadow": true,
         "receiveShadow": true
+      },
+      "collider": {
+        "type": 0,
+        "size": [
+          2,
+          2,
+          2
+        ],
+        "offset": [
+          0,
+          0,
+          0
+        ],
+        "isTrigger": false,
+        "syncWithModel": true,
+        "autoFitToModel": false
       }
     },
     {
-      "id": 9103,
+      "id": 13103,
       "name": {
-        "name": "PortalTest_Pad"
+        "name": "Hub gate 1 pad"
       },
       "transform": {
         "position": [
-          0,
-          0.005289000000000009,
-          -4
+          -5,
+          -0.965,
+          -5
         ],
         "rotation": [
-          1.0,
+          1,
           0,
-          0.0,
+          0,
           0
         ],
         "scale": [
@@ -2141,26 +686,46 @@
           0.85
         ]
       },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
       "mesh": {
         "type": 4,
-        "modelPath": "engine/models/Base Model/cube.glb"
+        "modelPath": "models/hub/white.glb"
       },
       "render": {
         "visible": true,
         "castShadow": true,
         "receiveShadow": true
+      },
+      "collider": {
+        "type": 0,
+        "size": [
+          2,
+          2,
+          2
+        ],
+        "offset": [
+          0,
+          0,
+          0
+        ],
+        "isTrigger": false,
+        "syncWithModel": true,
+        "autoFitToModel": false
       }
     },
     {
-      "id": 11400,
+      "id": 13104,
       "name": {
-        "name": "CombinedGate left"
+        "name": "Hub gate 2 left"
       },
       "transform": {
         "position": [
           3.9,
-          1.430289,
-          -4
+          0.45999999999999996,
+          -5
         ],
         "rotation": [
           1,
@@ -2174,26 +739,46 @@
           0.2
         ]
       },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
       "mesh": {
         "type": 4,
-        "modelPath": "models/parkour/cyan.glb"
+        "modelPath": "models/hub/white.glb"
       },
       "render": {
         "visible": true,
         "castShadow": true,
         "receiveShadow": true
+      },
+      "collider": {
+        "type": 0,
+        "size": [
+          2,
+          2,
+          2
+        ],
+        "offset": [
+          0,
+          0,
+          0
+        ],
+        "isTrigger": false,
+        "syncWithModel": true,
+        "autoFitToModel": false
       }
     },
     {
-      "id": 11401,
+      "id": 13105,
       "name": {
-        "name": "CombinedGate right"
+        "name": "Hub gate 2 right"
       },
       "transform": {
         "position": [
           6.1,
-          1.430289,
-          -4
+          0.45999999999999996,
+          -5
         ],
         "rotation": [
           1,
@@ -2207,26 +792,46 @@
           0.2
         ]
       },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
       "mesh": {
         "type": 4,
-        "modelPath": "models/parkour/cyan.glb"
+        "modelPath": "models/hub/white.glb"
       },
       "render": {
         "visible": true,
         "castShadow": true,
         "receiveShadow": true
+      },
+      "collider": {
+        "type": 0,
+        "size": [
+          2,
+          2,
+          2
+        ],
+        "offset": [
+          0,
+          0,
+          0
+        ],
+        "isTrigger": false,
+        "syncWithModel": true,
+        "autoFitToModel": false
       }
     },
     {
-      "id": 11402,
+      "id": 13106,
       "name": {
-        "name": "CombinedGate lintel"
+        "name": "Hub gate 2 lintel"
       },
       "transform": {
         "position": [
           5,
-          2.980289,
-          -4
+          2.0100000000000002,
+          -5
         ],
         "rotation": [
           1,
@@ -2240,26 +845,46 @@
           0.2
         ]
       },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
       "mesh": {
         "type": 4,
-        "modelPath": "models/parkour/cyan.glb"
+        "modelPath": "models/hub/white.glb"
       },
       "render": {
         "visible": true,
         "castShadow": true,
         "receiveShadow": true
+      },
+      "collider": {
+        "type": 0,
+        "size": [
+          2,
+          2,
+          2
+        ],
+        "offset": [
+          0,
+          0,
+          0
+        ],
+        "isTrigger": false,
+        "syncWithModel": true,
+        "autoFitToModel": false
       }
     },
     {
-      "id": 11403,
+      "id": 13107,
       "name": {
-        "name": "CombinedGate pad"
+        "name": "Hub gate 2 pad"
       },
       "transform": {
         "position": [
           5,
-          0.005289000000000009,
-          -4
+          -0.965,
+          -5
         ],
         "rotation": [
           1,
@@ -2273,26 +898,46 @@
           0.85
         ]
       },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
       "mesh": {
         "type": 4,
-        "modelPath": "engine/models/Base Model/cube.glb"
+        "modelPath": "models/hub/white.glb"
       },
       "render": {
         "visible": true,
         "castShadow": true,
         "receiveShadow": true
+      },
+      "collider": {
+        "type": 0,
+        "size": [
+          2,
+          2,
+          2
+        ],
+        "offset": [
+          0,
+          0,
+          0
+        ],
+        "isTrigger": false,
+        "syncWithModel": true,
+        "autoFitToModel": false
       }
     },
     {
-      "id": 12000,
+      "id": 13108,
       "name": {
-        "name": "SavePoint 1 0"
+        "name": "Hub gate 3 left"
       },
       "transform": {
         "position": [
-          -2.1,
-          0.090289,
-          3
+          -1.1,
+          0.45999999999999996,
+          -5
         ],
         "rotation": [
           1,
@@ -2301,9 +946,9 @@
           0
         ],
         "scale": [
-          0.32,
-          0.08,
-          0.32
+          0.16,
+          1.4,
+          0.2
         ]
       },
       "hierarchy": {
@@ -2312,24 +957,40 @@
       },
       "mesh": {
         "type": 4,
-        "modelPath": "models/parkour/violet.glb"
+        "modelPath": "models/hub/white.glb"
       },
       "render": {
         "visible": true,
-        "castShadow": false,
+        "castShadow": true,
         "receiveShadow": true
+      },
+      "collider": {
+        "type": 0,
+        "size": [
+          2,
+          2,
+          2
+        ],
+        "offset": [
+          0,
+          0,
+          0
+        ],
+        "isTrigger": false,
+        "syncWithModel": true,
+        "autoFitToModel": false
       }
     },
     {
-      "id": 12001,
+      "id": 13109,
       "name": {
-        "name": "SavePoint 1 1"
+        "name": "Hub gate 3 right"
       },
       "transform": {
         "position": [
-          -2.1,
-          0.560289,
-          3
+          1.1,
+          0.45999999999999996,
+          -5
         ],
         "rotation": [
           1,
@@ -2338,9 +999,9 @@
           0
         ],
         "scale": [
-          0.095,
-          0.4,
-          0.095
+          0.16,
+          1.4,
+          0.2
         ]
       },
       "hierarchy": {
@@ -2349,24 +1010,40 @@
       },
       "mesh": {
         "type": 4,
-        "modelPath": "models/parkour/cyan.glb"
+        "modelPath": "models/hub/white.glb"
       },
       "render": {
         "visible": true,
-        "castShadow": false,
+        "castShadow": true,
         "receiveShadow": true
+      },
+      "collider": {
+        "type": 0,
+        "size": [
+          2,
+          2,
+          2
+        ],
+        "offset": [
+          0,
+          0,
+          0
+        ],
+        "isTrigger": false,
+        "syncWithModel": true,
+        "autoFitToModel": false
       }
     },
     {
-      "id": 12002,
+      "id": 13110,
       "name": {
-        "name": "SavePoint 1 2"
+        "name": "Hub gate 3 lintel"
       },
       "transform": {
         "position": [
-          -2.1,
-          1.050289,
-          3
+          0,
+          2.0100000000000002,
+          -5
         ],
         "rotation": [
           1,
@@ -2375,9 +1052,9 @@
           0
         ],
         "scale": [
-          0.22,
-          0.1,
-          0.22
+          1.26,
+          0.15,
+          0.2
         ]
       },
       "hierarchy": {
@@ -2386,56 +1063,82 @@
       },
       "mesh": {
         "type": 4,
-        "modelPath": "models/parkour/cyan.glb"
+        "modelPath": "models/hub/white.glb"
       },
       "render": {
         "visible": true,
-        "castShadow": false,
+        "castShadow": true,
         "receiveShadow": true
+      },
+      "collider": {
+        "type": 0,
+        "size": [
+          2,
+          2,
+          2
+        ],
+        "offset": [
+          0,
+          0,
+          0
+        ],
+        "isTrigger": false,
+        "syncWithModel": true,
+        "autoFitToModel": false
+      }
+    },
+    {
+      "id": 13111,
+      "name": {
+        "name": "Hub gate 3 pad"
+      },
+      "transform": {
+        "position": [
+          0,
+          -0.965,
+          -5
+        ],
+        "rotation": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1.3,
+          0.025,
+          0.85
+        ]
+      },
+      "hierarchy": {
+        "parent": 4294967295,
+        "children": []
+      },
+      "mesh": {
+        "type": 4,
+        "modelPath": "models/hub/white.glb"
+      },
+      "render": {
+        "visible": true,
+        "castShadow": true,
+        "receiveShadow": true
+      },
+      "collider": {
+        "type": 0,
+        "size": [
+          2,
+          2,
+          2
+        ],
+        "offset": [
+          0,
+          0,
+          0
+        ],
+        "isTrigger": false,
+        "syncWithModel": true,
+        "autoFitToModel": false
       }
     }
-  ],
-  "gameplay": {
-    "portal": {
-      "target": "scenes/forest_test.json",
-      "label": "FOREST TEST - WALK THROUGH GATE",
-      "position": [
-        0,
-        0.02,
-        -4
-      ],
-      "radius": 0.85,
-      "color": [
-        0.08,
-        0.85,
-        0.4
-      ],
-      "opacity": 0.32
-    },
-    "portals": [
-      {
-        "target": "scenes/physics_parkour.json",
-        "label": "PHYSICS + PARKOUR - WALK THROUGH GATE",
-        "position": [
-          5,
-          0.02,
-          -4
-        ],
-        "radius": 0.85,
-        "color": [
-          0.03,
-          0.48,
-          1
-        ],
-        "opacity": 0.32
-      }
-    ],
-    "savePoints": [
-      [
-        -3,
-        0.02,
-        3
-      ]
-    ]
-  }
+  ]
 }

@@ -56,7 +56,7 @@ int main(int argc, char **argv)
     Check(scene::LoadMikanSceneRawFile("scenes/main.json", original, error), "parse original scene");
     Check(scene::LoadMikanSceneRawFile("scenes/forest_test.json", forest, error), "parse forest scene");
     Check(original.portals[0].target == "scenes/forest_test.json" && forest.portals[0].target == "scenes/main.json", "reciprocal destinations");
-    Check(original.enemyEnabled && original.demoPropsEnabled && !forest.enemyEnabled && !forest.demoPropsEnabled, "scene-specific gameplay flags");
+    Check(!original.enemyEnabled && !original.demoPropsEnabled && !original.groundEnabled && !original.water.enabled && !forest.enemyEnabled && !forest.demoPropsEnabled, "minimal hub disables legacy demo content");
     const auto defaults = R"({"formatVersion":1,"entities":[]})";
     scene::Definition parsed;
     Check(scene::ParseMikanScene(defaults, std::strlen(defaults), parsed, error) && parsed.portals.empty() && parsed.enemyEnabled && parsed.demoPropsEnabled, "backward-compatible optional metadata");
@@ -73,32 +73,41 @@ int main(int argc, char **argv)
         low=std::min(low,v.position[1]); high=std::max(high,v.position[1]);
         minX=std::min(minX,v.position[0]); maxX=std::max(maxX,v.position[0]);
     }
-    Check(std::fabs(minX+12)<.001f && std::fabs(maxX-12)<.001f && high-low>.7f, "24 metre terrain with non-flat relief");
+    Check(std::fabs(minX+18)<.001f && std::fabs(maxX-18)<.001f && high-low>.7f, "36 metre terrain with non-flat relief");
     int trees=0;
     for (const auto& e : forest.entities) if (e.importAsStaticModel) {
         std::ifstream asset(root+"/"+e.modelPath,std::ios::binary);
         Check(bool(asset), "all forest model resources packaged"); ++trees;
     }
-    Check(trees==30, "27 EZTree instances plus three save-pillar pieces recognised by runtime parser");
+    Check(trees==231, "228 EZTree instances plus three save-pillar pieces recognised by runtime parser");
     Check(original.savePoints.size()==1 && forest.savePoints.size()==1,"hub and forest save positions parsed");
     physics::JoltGameplayPhysics world;
     Check(world.Initialize(), "initialize real Jolt");
     Check(world.PrepareTerrainColliders(original, "scenes/main.json"), "preload original terrain BVH");
     Check(world.PrepareTerrainColliders(forest, "scenes/forest_test.json"), "preload forest terrain BVH");
+    Check(original.game=="portal_hub" && original.entities.size()==20,"hub contains only environment, platform, walls and three gate frames");
+    Check(scene::BuildStaticBoxColliders(original,-.94f).size()==17,"explicit white model boxes create all hub colliders");
+    Check(world.SetTerrainColliders(original,"scenes/main.json") &&
+        world.SetStaticSceneColliders(scene::BuildStaticBoxColliders(original,-.94f)),"install white hub");
+    world.Reset(0,-.94f,3,20,0,20);world.SetEnemyCollisionEnabled(false);Step(world,60);
+    Check(world.GetPlayerState().grounded,"hub spawn stands on visible white platform");
+    for(int i=0;i<400;++i)world.MovePlayer(2.6f,0,1.f/60,false);
+    Check(world.GetPlayerState().x<11.5f && world.GetPlayerState().x>10.8f,"hub wall stops sprinting player");
+    Check(world.RaycastWorld(13,4,0,0,-1,0,15)>14.99f,"no invisible legacy floor outside hub");
     const int warmReads = rawfileReads;
     for (int cycle=0;cycle<3;++cycle) {
         Check(world.SetTerrainColliders(original, "scenes/main.json") && world.SetStaticSceneColliders(scene::BuildStaticBoxColliders(original,-.94f)), "install original collision world");
         const float originalHit=world.RaycastWorld(3,4,-2,0,-1,0,10);
         Check(world.SetTerrainColliders(forest, "scenes/forest_test.json") && world.SetStaticSceneColliders(scene::BuildStaticBoxColliders(forest,-.94f)), "replace with forest collision world");
         const float forestHit=world.RaycastWorld(3,4,-2,0,-1,0,10);
-        Check(forestHit>originalHit+.7f, "original block collision removed after switch");
+        Check(forestHit<originalHit-.1f, "forest heightmap replaces flat hub collision");
         world.Reset(forest.playerSpawn.x,forest.playerSpawn.y-physics::kPlayerVisualOriginOffset,forest.playerSpawn.z,8,0,8);
         world.SetEnemyCollisionEnabled(false);
         Step(world,120);
         const auto player=world.GetPlayerState();
         Check(player.grounded && std::fabs(player.y-(forest.playerSpawn.y-physics::kPlayerVisualOriginOffset))<.06f, "forest spawn stands on matching heightmap collision");
         Check(world.SetTerrainColliders(original, "scenes/main.json") && world.SetStaticSceneColliders(scene::BuildStaticBoxColliders(original,-.94f)), "return restores original world");
-        Check(std::fabs(world.RaycastWorld(3,4,-2,0,-1,0,10)-originalHit)<.01f, "return restores original block collision");
+        Check(std::fabs(world.RaycastWorld(3,4,-2,0,-1,0,10)-originalHit)<.01f, "return restores flat hub collision");
     }
     Check(rawfileReads == warmReads, "cached round trips perform no rawfile reads or heightmap decoding");
     // Exercise real swept-sphere queries, not ray-only mock geometry.
@@ -144,9 +153,9 @@ int main(int argc, char **argv)
         "camera sweep also blocks heightmap terrain");
     scene::Definition parkour;
     Check(scene::LoadMikanSceneRawFile("scenes/parkour.json",parkour,error), "parse parkour scene");
-    Check(original.portals.size()==2 && original.portals[1].target=="scenes/physics_parkour.json" &&
+    Check(original.portals.size()==3 && original.portals[1].target=="scenes/physics_parkour.json" &&
         parkour.portals.size()==2 && !parkour.groundEnabled && parkour.parkour.checkpoints.size()==4,
-        "hub has two destinations, course has safe return gates and four checkpoints");
+        "hub has three destinations, course has safe return gates and four checkpoints");
     Check(world.SetTerrainColliders(parkour,"scenes/parkour.json") &&
         world.SetStaticSceneColliders(scene::BuildStaticBoxColliders(parkour,-.94f)), "install floating course collision");
     Check(world.RaycastWorld(12,4,0,0,-1,0,15)>14.99f, "no invisible demo floor under floating course");
@@ -278,17 +287,68 @@ int main(int argc, char **argv)
         "exit removes workshop bodies and restores hub");
     scene::Definition combined;
     Check(scene::LoadMikanSceneRawFile("scenes/physics_parkour.json",combined,error),"parse combined physics parkour course");
-    Check(combined.parkour.enabled && combined.workshop.enabled && combined.workshop.movingPlatforms.size()==2 &&
+    Check(combined.parkour.enabled && combined.workshop.enabled && combined.workshop.movingPlatforms.size()==4 &&
         combined.parkour.checkpoints.size()==7 && combined.water.enabled,"merged route contains all stages and checkpoints");
-    Check(!water::PlayerSubmerged(combined,0,0,-67,false) &&
-        !water::PlayerSubmerged(combined,5,11,-89,false) && water::PlayerSubmerged(combined,0,11.45f,-89,false),
+    Check(!water::PlayerSubmerged(combined,0,0,-20,false) &&
+        !water::PlayerSubmerged(combined,5,10.4f,-71.7f,false) && water::PlayerSubmerged(combined,0,10.85f,-71.7f,false),
         "rectangular pool swimming is bounded in both X and Z");
+    Check(combined.workshop.movingPlatforms[0].entityId==9550 && combined.workshop.movingPlatforms[1].entityId==9570 &&
+        combined.workshop.movingPlatforms[2].entityId==9580 && combined.workshop.movingPlatforms[3].entityId==9590,
+        "one longitudinal platform and three lateral bricks precede the crate puzzle");
+    Check(combined.parkour.completionReward==100 && combined.parkour.revision==3,"course reward and layout revision parsed");
+    gameplay::ParkourProgress rewardProgress;
+    Check(rewardProgress.ClaimCompletionReward(combined.parkour)==0,"cannot claim before finish");
+    rewardProgress.finished=true;
+    Check(rewardProgress.ClaimCompletionReward(combined.parkour)==100,"finish grants 100 coins");
+    Check(rewardProgress.ClaimCompletionReward(combined.parkour)==0,"standing on finish cannot duplicate reward");
+    rewardProgress={};rewardProgress.finished=true;
+    Check(rewardProgress.ClaimCompletionReward(combined.parkour)==100,"a fresh full run may earn its reward");
     Check(installWorkshop(combined),"install combined collision world");
+    auto courseEntity=[&](unsigned id)->const scene::Entity& {
+        for(const auto& e:combined.entities)if(e.id==id)return e;
+        std::fprintf(stderr,"Missing course entity %u\n",id);std::exit(1);
+    };
+    for(int i=1;i<=5;++i) {
+        const auto& a=courseEntity(9500+(i-1)*10).transform;
+        const auto& b=courseEntity(9500+i*10).transform;
+        world.Reset(a.position.x,a.position.y+a.scale.y+.02f,a.position.z-a.scale.z+.12f,20,0,20);
+        world.SetEnemyCollisionEnabled(false);Step(world,15);
+        bool airborne=false,landed=false;
+        for(int frame=0;frame<140;++frame) {
+            world.MovePlayer(0,-2.6f,1.f/60,frame==0);const auto after=world.GetPlayerState();
+            airborne |= !after.grounded;
+            scene::Transform target=b;
+            if(i==5)world.GetWorkshopTransform(9550,target);
+            if(airborne && after.grounded && std::fabs(after.x-target.position.x)<target.scale.x &&
+               std::fabs(after.z-target.position.z)<target.scale.z && std::fabs(after.y-target.position.y-target.scale.y)<.08f) {landed=true;break;}
+        }
+        if(!landed)std::fprintf(stderr,"Corrected approach jump %d failed\n",i);
+        Check(landed,"three static bricks, first rest island and timed ferry boarding remain reachable");
+    }
+    // Ride the ferry to its far dwell, then jump to the second rest island.
+    const auto& ferry=courseEntity(9550).transform;
+    world.Reset(ferry.position.x,ferry.position.y+ferry.scale.y+.02f,ferry.position.z,20,0,20);
+    world.SetEnemyCollisionEnabled(false);Step(world,330);
+    scene::Transform farFerry;world.GetWorkshopTransform(9550,farFerry);
+    world.RespawnPlayer(0,farFerry.position.y+farFerry.scale.y+.02f,farFerry.position.z-farFerry.scale.z+.12f);
+    bool farLanded=false,farAir=false;const auto& rest=courseEntity(9560).transform;
+    for(int frame=0;frame<140;++frame) {
+        world.MovePlayer(0,-2.6f,1.f/60,frame==0);const auto rider=world.GetPlayerState();farAir|=!rider.grounded;
+        if(farAir && rider.grounded && std::fabs(rider.z-rest.position.z)<rest.scale.z && std::fabs(rider.y-rest.position.y-rest.scale.y)<.08f) {farLanded=true;break;}
+    }
+    Check(farLanded,"far-end ferry timing permits a jump to the second rest island");
+    int followers=0;for(const auto& e:combined.entities)if(e.motionParentId!=scene::kNoParent)++followers;
+    Check(followers==16,"four moving platforms carry all sixteen light strips/arrows");
     for (const auto& moving:combined.workshop.movingPlatforms) {
         scene::Transform platform;
         Check(world.GetWorkshopTransform(moving.entityId,platform),"moving platform has a live body");
-        world.Reset(platform.position.x,platform.position.y+platform.scale.y+.02f,platform.position.z,20,0,20);
+        const scene::Entity* authored=nullptr;
+        for(const auto& e:combined.entities)if(e.id==moving.entityId)authored=&e;
+        Check(authored!=nullptr,"moving platform has authored geometry");
+        const auto start=authored->transform.position;
+        world.Reset(start.x,start.y+authored->transform.scale.y+.02f,start.z,20,0,20);
         world.SetEnemyCollisionEnabled(false);
+        world.GetWorkshopTransform(moving.entityId,platform);
         const auto initial=platform.position;
         float maximumTravel=0; int supportedFrames=0;
         for (int frame=0;frame<720;++frame) {
@@ -303,13 +363,13 @@ int main(int argc, char **argv)
         Check(maximumTravel>.95f*(std::fabs(moving.travel.x)+std::fabs(moving.travel.z)) && supportedFrames>650,
             "stationary player rides horizontal/longitudinal platform through reversals");
     }
-    world.RespawnPlayer(0,11.45f,-90);
+    world.RespawnPlayer(0,10.85f,-72.3f);
     bool swam=false, exited=false;
     for (int frame=0;frame<800;++frame) {
         world.MovePlayer(0,-1.3f,1.f/60,false);
         const auto swimmer=world.GetPlayerState();
         swam |= water::PlayerSubmerged(combined,swimmer.x,swimmer.y,swimmer.z,false);
-        if (swimmer.z<-97 && swimmer.y>12.7f && swimmer.grounded) { exited=true; break; }
+        if (swimmer.z<-79.3f && swimmer.y>12.1f && swimmer.grounded) { exited=true; break; }
     }
     if (!exited) { const auto p=world.GetPlayerState(); std::fprintf(stderr,"Pool exit blocked at %.2f %.2f %.2f\n",p.x,p.y,p.z); }
     Check(swam && exited,"player swims lane then walks up exit stairs onto final deck");
@@ -318,7 +378,7 @@ int main(int argc, char **argv)
     for (auto& e:solvedFixture.entities) if (e.id==combined.workshop.crateId)
         e.transform.position.z=combined.workshop.plate.z;
     Check(installWorkshop(solvedFixture),"install checkpoint latch fixture");
-    world.Reset(2,8.92f,-50,20,0,20); world.SetEnemyCollisionEnabled(false); Step(world,120);
+    world.Reset(2,8.32f,-45.4f,20,0,20); world.SetEnemyCollisionEnabled(false); Step(world,120);
     Check(world.GetWorkshopState().gateOpen,"combined mechanism latches normally");
     const auto checkpoint=combined.parkour.checkpoints[4].spawn;
     world.RespawnPlayer(checkpoint.x,checkpoint.y-physics::kPlayerVisualOriginOffset,checkpoint.z);
@@ -331,5 +391,25 @@ int main(int argc, char **argv)
     Step(world,15);
     Check(world.GetWorkshopState().gateOpen && world.GetPlayerState().grounded,"saved gate progress restored at upper checkpoint");
     Check(combined.savePoints.size()==7,"all seven stationary course islands have save points");
+    scene::Definition arena;
+    Check(scene::LoadMikanSceneRawFile("scenes/arena.json",arena,error),"parse four-door arena");
+    Check(arena.arena.enabled && arena.arena.spawnGates.size()==4 && !arena.enemyEnabled &&
+        std::fabs(arena.playerSpawn.x)<.001f && std::fabs(arena.playerSpawn.z)<.001f,"arena uses central player spawn and dedicated enemy population");
+    Check(original.portals[2].target=="scenes/arena.json" && arena.portals[0].target=="scenes/main.json","arena and hub have reciprocal portals");
+    Check(world.SetTerrainColliders(arena,"scenes/arena.json") &&
+        world.SetStaticSceneColliders(scene::BuildStaticBoxColliders(arena,-.94f)),"install arena collision world");
+    world.Reset(0,-.94f,0,20,0,20);world.SetEnemyCollisionEnabled(false);
+    for(int i=0;i<4;++i) {const auto& gate=arena.arena.spawnGates[i];world.SetArenaEnemy(i,gate.x,gate.y-physics::kPlayerVisualOriginOffset,gate.z,true);}
+    for(int frame=0;frame<360;++frame) {
+        world.MovePlayer(0,0,1.f/60,false);
+        for(int i=0;i<4;++i) {
+            const auto a=world.GetArenaEnemyState(i);float distance=std::sqrt(a.x*a.x+a.z*a.z);
+            world.MoveArenaEnemy(i,distance>1.5f?-a.x/distance:0,distance>1.5f?-a.z/distance:0,1.f/60);
+        }
+    }
+    for(int i=0;i<4;++i) {const auto a=world.GetArenaEnemyState(i);Check(a.grounded && std::sqrt(a.x*a.x+a.z*a.z)<3,"independent enemy approaches centre and remains on arena floor");}
+    world.DisableArenaEnemies();
+    const auto hidden=world.GetArenaEnemyState(2);
+    Check(hidden.y<-90,"arena enemies disabled when leaving/resetting scene");
     std::printf("Scene tests passed: %d checks, jumps, crate puzzle, moving platform rides and swimming exit.\n",checks);
 }

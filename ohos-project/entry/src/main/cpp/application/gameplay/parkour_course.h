@@ -10,6 +10,12 @@ struct ParkourProgress {
     int falls = 0;
     float seconds = 0;
     bool finished = false;
+    bool rewardClaimed = false;
+    int ClaimCompletionReward(const scene::ParkourCourse& course) {
+        if(!finished || rewardClaimed || !course.enabled)return 0;
+        rewardClaimed=true;
+        return course.completionReward;
+    }
 
     // Returns true when the caller must restore position/velocity at checkpoint.
     bool Update(const scene::ParkourCourse& course, scene::Vec3 position,

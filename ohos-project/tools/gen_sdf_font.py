@@ -12,6 +12,8 @@
 
 import json
 import os
+import re
+from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 FONT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts", "simhei.ttf")
@@ -36,6 +38,32 @@ CHARSET += "商店金币购买备发均衡强化击杀获得请到穿戴中"
 CHARSET += "启宝箱近处提示开启交互奖励"
 CHARSET += "近战远程"
 CHARSET += "选择存档没有请创建新最后保存日期成功失败读取森林跑酷场景上下页"
+CHARSET += "竞技场通波剩余准备第路线已更新从起点"
+CHARSET += "删除确认取消完成点击要的后无法？"
+# Include UI literals from both renderers and their shared gameplay headers.
+# Skip comments so prose in source files does not inflate the runtime atlas.
+application = Path(PROJECT_ROOT) / "entry/src/main/cpp/application"
+literal_tokens = re.compile(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"', re.S)
+for source in sorted(application.rglob("*")):
+    if source.suffix not in (".cpp", ".h", ".inl") or source.name == "sdf_font_metrics.h":
+        continue
+    for token in literal_tokens.finditer(source.read_text(encoding="utf-8")):
+        if token[0].startswith('"'):
+            CHARSET += "".join(c for c in token[0] if ord(c) > 127)
+# Portal names are data-driven rather than C++ literals.
+for source in sorted((Path(PROJECT_ROOT) / "entry/src/main/resources/rawfile/scenes").glob("*.json")):
+    definition = json.loads(source.read_text(encoding="utf-8-sig"))
+    pending = [definition]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, dict):
+            label = node.get("label", "")
+            if isinstance(label, str):
+                CHARSET += label
+            pending.extend(node.values())
+        elif isinstance(node, list):
+            pending.extend(node)
+CHARSET += "".join(chr(cp) for cp in range(32, 127))
 CHARSET = "".join(dict.fromkeys(CHARSET))  # dedupe, keep first-seen order
 EM = 64            # 1x em size the metrics are measured at
 PAD = 8            # 1x margin around the em box inside a cell

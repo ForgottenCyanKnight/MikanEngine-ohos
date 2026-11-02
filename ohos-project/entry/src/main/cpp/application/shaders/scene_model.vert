@@ -25,6 +25,7 @@ layout(set = 0, binding = 0) uniform SceneUniforms
     mat4 cameraToWorld;
     mat4 shadowMvp;
     mat4 viewProj;
+    vec4 gameplayFlags;
 } scene;
 
 // Same column-major LBS contract as GLES: joint = normalise * global * IBM.

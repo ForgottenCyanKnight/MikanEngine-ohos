@@ -105,3 +105,56 @@ Scene save points and markers can be reapplied idempotently after regenerating
 the course: `python tools/add_save_points.py` from the repository root.
 Save data is stored in application-private filesDir and survives replacement
 installation. Uninstalling/clearing application data removes it.
+
+The main scene is now a 24x20 metre white portal hub, with four solid walls,
+two destination gates, no demo actors/props/terrain/sea/lights, and the existing
+save position near x=-3,z=3. White GLB models author explicit box colliders;
+other imported models still receive no implicit collision shapes.
+Run `python tools/create_hub_scene.py` last after any prototype generators to
+restore the minimal hub. Future routes extend gameplay.portals and their frames.
+The scene suite now passes 232 checks, including hub floor/wall alignment,
+sprint blocking, and absence of an invisible legacy floor outside the platform.
+
+Arena extension: the hub now has a third (orange) gate to scenes/arena.json.
+The player starts in the centre; four cardinal spawn doors feed four waves
+of 1, 2, 3 and 4 enemies (10 total). Death animation/dissolve completes before
+actor reuse. A violet return gate sits at x=-8,z=8, outside the central lanes.
+Each enemy has an independent Jolt character, health, combat and animation
+state. The production GLES renderer draws each enemy with its own skin palette.
+The arena restarts on a fresh visit; death/retry uses the active saved game.
+There are no arena save points during combat.
+
+Regenerate with create_hub_scene.py followed by create_arena_scene.py. The
+scene/Jolt suite passes 241 checks, including all four independent characters
+chasing the centre and cleanup on leaving. Target arena_wave_tests passes 2617
+checks for the 1/2/3/4 sequence, survivors/death animation blocking advancement,
+completion without a fifth wave, and a fresh reset.
+
+Manual arena acceptance: enter the orange hub gate, equip a weapon, wait for
+wave 1, and verify simultaneous enemy counts rise to four on the last wave.
+Check hit/death animations, individual health bars, waves/HUD, player death
+before retry, and return-gate cleanup. No automated device play is required.
+
+Updated parkour (layout revision 3): start -> three stationary jump bricks ->
+first rest island -> longitudinal timing ferry -> second rest island -> three
+independent lateral jump bricks -> crate/plate/gate -> lift -> pool -> finish.
+The four moving bodies carry their light strips and arrows through motionParent
+references. Seven checkpoints/save positions remain on stationary ground.
+Completion grants 100 gold once per full run. Save format V2 retains the reward
+claim and layout revision, reads V1 saves, and restarts obsolete course positions
+at the new start while keeping inventory and gold.
+
+Current validation: 262 scene/Jolt checks, including the static approach jumps,
+near-end ferry boarding and far-end dismount, four platform riders, solved gate,
+pool exit and reward idempotence; 31 save checks including V1 compatibility and
+reward/revision persistence. Regenerate the combined scene, then add_save_points,
+then create_hub_scene so the minimal hub retains its arena/forest/course gates.
+
+
+## Vulkan / GLES gameplay synchronization (2026-11-02)
+
+The default backend remains GLES on arm64 and x86_64. `MIKAN_RHI=vulkan` explicitly selects native Vulkan; do not use this override on the emulator whose Vulkan bridge is unstable.
+
+Both renderers include `gameplay/save_session.inl` for save selection, multiple slots, save points and course-version recovery, and `gameplay/arena_combat.inl` for arena combat. Wave scheduling, course progress, rewards, physics, weapon state and inventory use shared gameplay types. Native Vulkan now implements resource preloading/cache switching, checkpoint respawn/rewards, independent animated arena enemies, sword attachment/poses, weapon UI, bounded swimming water and colored portal membranes. Static visibility and instance batches are built separately for camera and shadow views.
+
+Validation: regenerated Vulkan SPIR-V; release builds target arm64-v8a and x86_64. Existing host binaries pass 463 scene, 31 save-store, 2617 arena-wave and 29 animation checks. These checks cover shared rules and scene fixtures; they do not validate native Vulkan rendering or device gameplay. Native Vulkan still requires manual acceptance on a real device, including portal transitions, save reload, all arena waves, sword/pistol switching, moving-platform riding and swimming.
