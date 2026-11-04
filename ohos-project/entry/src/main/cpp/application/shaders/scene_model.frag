@@ -39,6 +39,7 @@ layout(location = 7) in flat float vDissolve;
 layout(location = 8) in flat float vWaterTime;
 layout(location = 9) in flat float vAlphaCutoff;
 
+layout(location=10) in flat float vDebugMode;
 layout(location = 0) out vec4 outColor;
 
 const float PI = 3.14159265359;
@@ -327,5 +328,6 @@ void main()
         // the light facing; matches the GLES ember albedo/emissive mix.
         color += vec3(1.6, 0.55, 0.12) * edge * 2.0;
     }
+    if(vDebugMode>.5){int mode=int(vDebugMode+.5);color=mode==1?albedo:(mode==2?N*.5+.5:vec3(metallic,roughness,ao));}
     outColor = vec4(max(color, vec3(0.0)), materialColor.a);
 }

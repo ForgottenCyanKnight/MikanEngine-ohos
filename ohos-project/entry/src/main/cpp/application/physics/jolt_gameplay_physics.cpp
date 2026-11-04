@@ -189,15 +189,17 @@ struct JoltGameplayPhysics::Impl {
 
     bool CreateWorkshop(const scene::Definition& definition) {
         ClearWorkshop(); workshop=definition.workshop;
-        if (!workshop.enabled) return true;
+        std::size_t dynamicCount=0;
+        for(const auto& e:definition.entities)if(e.dynamicBody)++dynamicCount;
+        if (!workshop.enabled && !dynamicCount) return true;
         auto& bodies=physicsSystem->GetBodyInterface();
         for (const auto& e:definition.entities) {
             bool moving=false;
             for (const auto& platform:workshop.movingPlatforms) moving |= e.id==platform.entityId;
-            if (e.id!=workshop.crateId && e.id!=workshop.gateId && e.id!=workshop.liftId && !moving) continue;
+            if (e.id!=workshop.crateId && e.id!=workshop.gateId && e.id!=workshop.liftId && !moving && !e.dynamicBody) continue;
             const auto t=scene::RuntimeTransform(definition,e,kGroundCollider.centerY+kGroundCollider.halfExtentY);
             const auto& p=t.position; const auto& scale=t.scale;
-            const bool crate=e.id==workshop.crateId;
+            const bool crate=e.id==workshop.crateId || e.dynamicBody;
             JPH::BodyCreationSettings settings(new JPH::BoxShape(JPH::Vec3(scale.x,scale.y,scale.z)),
                 JPH::RVec3(p.x,p.y,p.z),JPH::Quat::sIdentity(),
                 crate ? JPH::EMotionType::Dynamic : JPH::EMotionType::Kinematic,kMovingLayer);
@@ -212,11 +214,15 @@ struct JoltGameplayPhysics::Impl {
             if (body.IsInvalid()) { ClearWorkshop(); return false; }
             workshopBodies.push_back({e.id,body,t});
         }
-        ResetWorkshop(); return workshopBodies.size()==3+workshop.movingPlatforms.size();
+        ResetWorkshop(); return workshopBodies.size()==(workshop.enabled?3+workshop.movingPlatforms.size():0)+dynamicCount;
     }
 
     void StepWorkshop(float dt) {
-        if (!workshop.enabled || dt<=0) return;
+        if (dt<=0 || workshopBodies.empty()) return;
+        if (!workshop.enabled) {
+            physicsSystem->Update(dt,1,tempAllocator.get(),&jobSystem);
+            return;
+        }
         auto& bodies=physicsSystem->GetBodyInterface();
         platformTime+=dt;
         for (const auto& item:workshopBodies) if (item.id==workshop.crateId) {
@@ -238,7 +244,7 @@ struct JoltGameplayPhysics::Impl {
         const float phase=std::fmod(std::max(0.f,workshopTime-3.f),2*travel+2);
         const float height=phase<1 ? 0 : (phase<1+travel ? phase-1 :
             (phase<2+travel ? travel : 2+2*travel-phase));
-        for (const auto& item:workshopBodies) if (item.id!=workshop.crateId) {
+        for (const auto& item:workshopBodies) if (bodies.GetMotionType(item.body)==JPH::EMotionType::Kinematic) {
             const auto& p=item.initial.position;
             JPH::RVec3 target(p.x,p.y,p.z);
             if (item.id==workshop.gateId) target+=JPH::Vec3(0,gateHeight,0);
@@ -519,7 +525,7 @@ struct JoltGameplayPhysics::Impl {
             enemyCollisionEnabled = true;
         }
         playerSwimming = false;
-        if (workshop.enabled) ResetWorkshop();
+        if (!workshopBodies.empty()) ResetWorkshop();
         player->SetPosition(JPH::RVec3(playerX, playerY, playerZ));
         enemy->SetPosition(JPH::RVec3(enemyX, enemyY, enemyZ));
         player->SetLinearVelocity(JPH::Vec3::sZero());

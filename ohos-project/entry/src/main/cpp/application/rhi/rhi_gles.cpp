@@ -1,3 +1,5 @@
+#include "../helmet_display.h"
+#include <SDL3/SDL_misc.h>
 #include "../gameplay/parkour_course.h"
 #include "../gameplay/arena_waves.h"
 #include "../gameplay/save_store.h"
@@ -1122,6 +1124,7 @@ void main()
     vec4 albedoSample = texture(albedoTexture, vUV);
     vec3 albedo = sRGBToLinear(albedoSample.rgb);
     float waterSurface = albedoSample.a;
+    if(waterSurface>.2 && waterSurface<.3){outColor=vec4(hdrOutput==1?sRGBToLinear(albedoSample.rgb):albedoSample.rgb,1);return;}
     vec4 mat = texture(materialTexture, vUV);
     float metallic = clamp(mat.x, 0.0, 1.0);
     float roughness = clamp(mat.y, 0.045, 1.0);
@@ -1249,9 +1252,36 @@ uniform float portalTime;
 uniform int ldrOutput;
 in vec2 vUV;
 out vec4 outColor;
+
+float SaveCurtain(vec3 camera,vec3 ray,vec3 base,float limit) {
+ float alpha=0.0;
+ for(int side=0;side<4;++side){
+  bool xPlane=side<2;float signSide=(side%2==0)?-1.0:1.0;
+  float component=xPlane?ray.x:ray.z;if(abs(component)<.00001)continue;
+  float plane=(xPlane?base.x:base.z)+signSide*.65;
+  float t=(plane-(xPlane?camera.x:camera.z))/component;
+  vec3 p=camera+ray*t;float height=p.y-base.y;
+  float lateral=xPlane?abs(p.z-base.z):abs(p.x-base.x);
+  if(t>0.0 && t<limit-.015 && height>=0.0 && height<1.55 && lateral<=.65){
+   float fade=pow(1.0-smoothstep(0.0,1.55,height),1.7);
+   float a=.52*fade;alpha=1.0-(1.0-alpha)*(1.0-a);
+  }
+ }
+ return alpha;
+}
 void main() {
     vec4 farH = inverseViewProjection * vec4(vUV * 2.0 - 1.0, 1.0, 1.0);
     vec3 direction = normalize(farH.xyz / farH.w - cameraPosition);
+    if(portalTint.a<0.0){
+        float d=texture(sceneDepth,vUV).r;
+        vec4 h=inverseViewProjection*vec4(vUV*2.0-1.0,d*2.0-1.0,1.0);
+        float limit=d<.999999?dot(h.xyz/h.w-cameraPosition,direction):10000.0;
+        float alpha=SaveCurtain(cameraPosition,direction,portalCenter,limit);
+        if(alpha<.001)discard;
+        vec3 glow=vec3(.10,1.65,3.8);
+        if(ldrOutput!=0)glow=pow(glow/(1.0+glow),vec3(1.0/2.2));
+        outColor=vec4(glow,alpha);return;
+    }
     if (abs(direction.z) < 0.00001) discard;
     float distanceToPlane = (portalCenter.z - cameraPosition.z) / direction.z;
     if (distanceToPlane <= 0.0) discard;
@@ -1265,7 +1295,7 @@ void main() {
     float edge = pow(max(abs(q.x), abs(q.y)), 10.0);
     float ripple = 0.5 + 0.5 * sin(q.y * 14.0 + sin(q.x * 8.0 + portalTime * 0.9) * 0.6 - portalTime * 1.4);
     float pulse = 1.0 + 0.05 * sin(portalTime * 1.6);
-    vec3 radiance = portalTint.rgb * (2.4 + edge * 5.0 + 0.5 * pow(ripple, 6.0)) * pulse;
+    vec3 radiance = portalTint.rgb / max(dot(portalTint.rgb, vec3(0.2126, 0.7152, 0.0722)), 0.05) * (2.4 + edge * 0.6 + 0.15 * pow(ripple, 6.0)) * pulse;
     if (ldrOutput != 0) radiance = pow(radiance / (1.0 + radiance), vec3(1.0 / 2.2));
     float alpha = clamp(portalTint.a * (0.75 + ripple * 0.3 + edge * 0.85), 0.0, 0.8);
     outColor = vec4(radiance, alpha);
@@ -2253,6 +2283,7 @@ uniform int hasNormalMap;
 in vec3 vNormal;
 in vec2 vTexCoord;
 in vec3 vWorldPosition;
+uniform int materialDebugMode;
 in vec4 vInstanceColor;
 flat in float vDissolve;
 
@@ -2424,6 +2455,10 @@ void main()
     // Albedo alpha carries the water-surface flag for the lighting pass:
     // the material attachment is RGB8 (metallic/roughness/ao only) to save
     // bandwidth, so the binary flag moved to the one spare alpha channel.
+    if(materialDebugMode>0){
+        vec3 debugColor=materialDebugMode==1?albedo:(materialDebugMode==2?N*.5+.5:vec3(metallic,roughness,ao));
+        outAlbedo=vec4(debugColor,.25);outNormal=vec4(.5,.5,0,1);outMaterial=vec4(0,1,1,1);outEmissive=vec4(0);return;
+    }
     outAlbedo = vec4(albedo, isWater ? 1.0 : 0.0);
     outNormal = vec4(OctahedronEncode(N) * 0.5 + 0.5, 0.0, 1.0);
     // Attachment is RGB8; the fourth component is dropped by the driver.
@@ -2555,6 +2590,7 @@ struct GlesMesh {
     bool doubleSided = false;
     GLuint vao = 0;
     GLuint vertexBuffer = 0;
+    GLuint edgeBuffer = 0, edgeCount = 0;
     GLuint indexBuffer = 0;
     GLuint indexCount = 0;
     GLenum indexType = GL_UNSIGNED_SHORT;
@@ -3520,6 +3556,7 @@ public:
             return;
         }
         if (uiScreen_ == rhi::UiScreen::GameplayInventory) {
+            if(GrowthTap(x,y))return;
             if (HitRect(x, y, MenuButtonLayout(0))) {
                 uiScreen_ = rhi::UiScreen::Gameplay;
                 SDL_Log("SDL3_GLES stage=inventory_close");
@@ -3546,7 +3583,7 @@ public:
             return;
         }
         if(uiScreen_==rhi::UiScreen::Settings || uiScreen_==rhi::UiScreen::GameplaySettings){
-            for(int i=0;i<=9;i++){
+            for(int i=0;i<=11;i++){
                 if(!settings_ui::Visible(i,static_cast<float>(width_),static_cast<float>(height_),settingsScroll_) || !HitRect(x,y,MenuButtonLayout(i)))continue;
                 switch(i){
                 case 0:uiScreen_=uiScreen_==rhi::UiScreen::GameplaySettings?rhi::UiScreen::Gameplay:rhi::UiScreen::MainMenu;settingsScroll_=0;break;
@@ -3558,6 +3595,8 @@ public:
                 case 6:shadowQuality_=(shadowQuality_+1)%4;shadowMapSize_=shadowQuality_==1?1024:(shadowQuality_==3?4096:2048);DestroyShadowMapTarget();if(shadowQuality_!=0)CreateShadowMapTarget();break;
                 case 7:glassEnabled_=!glassEnabled_;break;
                 case 8:fxaaEnabled_=!fxaaEnabled_;break;
+                case 11:wireframe_=!wireframe_;break;
+                case 10:SDL_OpenURL("mikan://html-game");cameraInput_={};break;
                 case 9:uiScreen_=rhi::UiScreen::MainMenu;settingsScroll_=0;break;
                 }return;
             }return;
@@ -3770,7 +3809,7 @@ public:
                             (color[c]*alpha*255.f+pixel[c]*oldAlpha*(1-alpha))/newAlpha));
                         pixel[3]=static_cast<unsigned char>(newAlpha*255.f);
                     }
-                });
+                },glassEnabled_);
         }
         glActiveTexture(GL_TEXTURE0);
         if(minimapTexture_==0){
@@ -3781,6 +3820,14 @@ public:
         }else{
             glBindTexture(GL_TEXTURE_2D,minimapTexture_);
             if(refresh)glTexSubImage2D(GL_TEXTURE_2D,0,0,0,size,size,GL_RGBA,GL_UNSIGNED_BYTE,minimapPixels_.data());
+        }
+        if(glassEnabled_){
+            const float glassTint[4]={.10f,.20f,.27f,.60f};
+            DrawMenuRect({mn*.155f,mn*.17f,mn*.128f,mn*.128f,mn*.022f},glassTint);
+            // Reuse the existing scene texture and glass shader. Flush before
+            // the cached map texture so refraction never touches its markers.
+            UiFlushOverlay();
+            glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,minimapTexture_);
         }
         const float right=left+extent,bottom=top+extent;
         const float v[6][4]={{left,top,0,0},{left,bottom,0,1},{right,bottom,1,1},{left,top,0,0},{right,bottom,1,1},{right,top,1,0}};
@@ -3830,6 +3877,7 @@ public:
         char label[32];
         std::snprintf(label, sizeof(label), "血量 %.0f", playerHealth_);
         DrawTextCentered(label, barCenterX, barCenterY, mn * 0.030f, white);
+        char levelText[96];const auto& g=inventory_.growth;std::snprintf(levelText,sizeof(levelText),"Lv.%d  EXP %d/%d  +%d",g.level,g.xp,g.Required(),g.points);DrawTextCentered(levelText,barCenterX,barCenterY+mn*.044f,mn*.020f,white);
         glEnable(GL_DEPTH_TEST);
         glDisable(GL_BLEND);
     }
@@ -3938,9 +3986,11 @@ public:
         }
 
         if(uiScreen_==rhi::UiScreen::GameplayInventory){
+            if(growthOpen_){DrawGrowthUi();return;}
             inventory_ui::Draw(w,h,inventory_,
                 [this](float x,float y,float hw,float hh,float radius,const float* c){DrawMenuRect({x,y,hw,hh,radius},c);},
                 [this](const char* label,float x,float y,float em,const float* c){DrawTextCentered(label,x,y,em,c,true);});
+            DrawGrowthUi();
             return;
         }
 
@@ -4230,16 +4280,18 @@ public:
                 DrawShadowMeshList(pistolMeshes_,false,pistolMatrix_);
             if(sword_.drawn && pistolPoseReady_ && !playerSwimming_ && playerHealth_>0)
                 DrawShadowMeshList(swordMeshes_,false,swordMatrix_);
-            if (!helmetMeshes_.empty() && (sceneDefinition_ == nullptr || sceneDefinition_->demoPropsEnabled)) {
+            if (!helmetMeshes_.empty() && (sceneDefinition_ == nullptr || (sceneDefinition_->demoPropsEnabled || sceneDefinition_->helmetEnabled))) {
+                for(int display=0;display<4;++display){
                 const float helmetAngle = static_cast<float>(SDL_GetTicks() % 600000U)
                     * 0.001f * 0.8f + 0.5f;
                 const Mat4 helmetTransform = Mat4Multiply(
-                    Mat4Translation(physics::kHelmetCollider.centerX,
+                    Mat4Translation(helmet_display::kX,
                         physics::kHelmetCollider.centerY,
-                        physics::kHelmetCollider.centerZ),
+                        helmet_display::Z(display)),
                     Mat4Multiply(Mat4RotationY(helmetAngle),
                         Mat4Scale(physics::kHelmetCollider.renderScale)));
                 DrawShadowMeshList(helmetMeshes_, false, helmetTransform);
+                }
             }
             DrawShadowMeshList(terrainMeshes_, false, Mat4Identity());
             if (!groundMeshes_.empty() && (sceneDefinition_ == nullptr || sceneDefinition_->demoPropsEnabled)) {
@@ -4358,17 +4410,19 @@ public:
             // ---- static props: helmet + ground slab.  Same program,
             // skinning off, per-draw modelMvp/modelMatrix in the scene UBO
             // (offsets 128/192 = the two mat4 slots after cubeMvp/skyMvp).
-            if (!helmetMeshes_.empty() && (sceneDefinition_ == nullptr || sceneDefinition_->demoPropsEnabled)) {
+            if (!helmetMeshes_.empty() && (sceneDefinition_ == nullptr || (sceneDefinition_->demoPropsEnabled || sceneDefinition_->helmetEnabled))) {
+              for(int display=0;display<helmet_display::kCount;++display){
                 // Turntable spin around its own base position: T * R(t) * S.
                 // The 0.5 initial yaw from LoadHelmetModel becomes the phase.
                 const float helmetAngle = static_cast<float>(SDL_GetTicks() % 600000U) * 0.001f * 0.8f + 0.5f;
                 const Mat4 helmetSpin = Mat4Multiply(
-                    Mat4Translation(physics::kHelmetCollider.centerX,
+                    Mat4Translation(helmet_display::kX,
                         physics::kHelmetCollider.centerY,
-                        physics::kHelmetCollider.centerZ),
+                        helmet_display::Z(display)),
                     Mat4Multiply(Mat4RotationY(helmetAngle),
                         Mat4Scale(physics::kHelmetCollider.renderScale)));
-                DrawStaticMeshList(helmetMeshes_, helmetTextures_, helmetMaterials_, helmetSpin);
+                DrawStaticMeshList(helmetMeshes_, helmetTextures_, helmetMaterials_, helmetSpin,false,0,false,nullptr,helmet_display::Mode(display));
+              }
             }
             if(pistol_.equipped && pistolPoseReady_ && !playerSwimming_ && playerHealth_>0)
                 DrawStaticMeshList(pistolMeshes_,pistolTextures_,pistolMaterials_,pistolMatrix_);
@@ -4560,8 +4614,10 @@ public:
         }
 
         if (renderGameplayScene && sceneDefinition_) {
-          for (const auto& portal : sceneDefinition_->portals) {
-            if (portal.opacity <= 0) continue;
+          std::vector<scene::Portal> lightSurfaces=sceneDefinition_->portals;
+          for(const auto& point:sceneDefinition_->savePoints){scene::Portal marker;marker.position=point;marker.opacity=-1;lightSurfaces.push_back(marker);}
+          for (const auto& portal : lightSurfaces) {
+            if (portal.opacity == 0) continue;
             const auto& p = portal.position;
             const auto& color = portal.color;
             glBindFramebuffer(GL_FRAMEBUFFER, postFbo_);
@@ -4573,7 +4629,7 @@ public:
             glUseProgram(portalProgram_);
             glUniformMatrix4fv(portalInverseLocation_, 1, GL_FALSE, invViewProj_.value);
             glUniform3f(portalCameraLocation_, camPosX_, camPosY_, camPosZ_);
-            glUniform3f(portalCenterLocation_, p.x, p.y + 0.44f, p.z);
+            glUniform3f(portalCenterLocation_, p.x, p.y + (portal.opacity<0 ? -.98f : .44f), p.z);
             glUniform4f(portalTintLocation_, color.x, color.y, color.z, portal.opacity);
             glUniform1f(portalTimeLocation_, float(SDL_GetTicks() % 3600000U) * .001f);
             glUniform1i(portalLdrLocation_, hdrPipeline_ ? 0 : 1);
@@ -4753,6 +4809,8 @@ public:
             const float mnF = static_cast<float>(width_ < height_ ? width_ : height_);
             const float panelF[4] = {0.30f, 0.32f, 0.36f, 0.55f};
             const float whiteF[4] = {1.0f, 1.0f, 1.0f, 0.92f};
+            if(wireframe_)DrawTextCentered("WIREFRAME",width_*.5f,mnF*.23f,mnF*.025f,whiteF);
+            if(sceneDefinition_ && sceneDefinition_->helmetEnabled && playerX_<-4){int nearest=0;for(int i=1;i<4;i++)if(std::fabs(playerZ_-helmet_display::Z(i))<std::fabs(playerZ_-helmet_display::Z(nearest)))nearest=i;DrawTextCentered(helmet_display::Label(nearest),width_*.5f,mnF*.27f,mnF*.024f,whiteF);}
             // One compact quickbar, clear of health, chest prompt and action cluster.
             const float quickPanel[4]={.07f,.12f,.19f,.72f};
             DrawMenuRect({width_*.5f,height_-mnF*.085f,mnF*.185f,mnF*.064f,mnF*.025f},quickPanel);
@@ -4973,7 +5031,7 @@ public:
                 glDeleteBuffers(1, &mesh.vertexBuffer);
             }
             if (mesh.indexBuffer != 0) {
-                glDeleteBuffers(1, &mesh.indexBuffer);
+                glDeleteBuffers(1, &mesh.indexBuffer); if(mesh.edgeBuffer)glDeleteBuffers(1,&mesh.edgeBuffer);
             }
         }
         meshes_.clear();
@@ -5002,14 +5060,14 @@ public:
                 glDeleteBuffers(1, &mesh.vertexBuffer);
             }
             if (mesh.indexBuffer != 0) {
-                glDeleteBuffers(1, &mesh.indexBuffer);
+                glDeleteBuffers(1, &mesh.indexBuffer); if(mesh.edgeBuffer)glDeleteBuffers(1,&mesh.edgeBuffer);
             }
         }
         helmetMeshes_.clear();
         for(const auto& mesh:pistolMeshes_) {
             if(mesh.vao)glDeleteVertexArrays(1,&mesh.vao);
             if(mesh.vertexBuffer)glDeleteBuffers(1,&mesh.vertexBuffer);
-            if(mesh.indexBuffer)glDeleteBuffers(1,&mesh.indexBuffer);
+            if(mesh.indexBuffer)glDeleteBuffers(1,&mesh.indexBuffer); if(mesh.edgeBuffer)glDeleteBuffers(1,&mesh.edgeBuffer);
         }
         pistolMeshes_.clear();
         if(!pistolTextures_.empty())glDeleteTextures(static_cast<GLsizei>(pistolTextures_.size()),pistolTextures_.data());
@@ -5017,7 +5075,7 @@ public:
         for(const auto& mesh:swordMeshes_) {
             if(mesh.vao)glDeleteVertexArrays(1,&mesh.vao);
             if(mesh.vertexBuffer)glDeleteBuffers(1,&mesh.vertexBuffer);
-            if(mesh.indexBuffer)glDeleteBuffers(1,&mesh.indexBuffer);
+            if(mesh.indexBuffer)glDeleteBuffers(1,&mesh.indexBuffer); if(mesh.edgeBuffer)glDeleteBuffers(1,&mesh.edgeBuffer);
         }
         swordMeshes_.clear();
         if(!swordTextures_.empty())glDeleteTextures(static_cast<GLsizei>(swordTextures_.size()),swordTextures_.data());
@@ -5034,7 +5092,7 @@ public:
                 glDeleteBuffers(1, &mesh.vertexBuffer);
             }
             if (mesh.indexBuffer != 0) {
-                glDeleteBuffers(1, &mesh.indexBuffer);
+                glDeleteBuffers(1, &mesh.indexBuffer); if(mesh.edgeBuffer)glDeleteBuffers(1,&mesh.edgeBuffer);
             }
         }
         groundMeshes_.clear();
@@ -5282,7 +5340,7 @@ private:
             for (const GlesMesh& mesh : asset.meshes) {
                 if (mesh.vao != 0) glDeleteVertexArrays(1, &mesh.vao);
                 if (mesh.vertexBuffer != 0) glDeleteBuffers(1, &mesh.vertexBuffer);
-                if (mesh.indexBuffer != 0) glDeleteBuffers(1, &mesh.indexBuffer);
+                if (mesh.indexBuffer != 0) glDeleteBuffers(1, &mesh.indexBuffer); if(mesh.edgeBuffer)glDeleteBuffers(1,&mesh.edgeBuffer);
             }
             if (!asset.textures.empty()) {
                 glDeleteTextures(static_cast<GLsizei>(asset.textures.size()), asset.textures.data());
@@ -5294,7 +5352,7 @@ private:
             for (const auto& mesh : terrain.meshes) {
                 if (mesh.vao) glDeleteVertexArrays(1, &mesh.vao);
                 if (mesh.vertexBuffer) glDeleteBuffers(1, &mesh.vertexBuffer);
-                if (mesh.indexBuffer) glDeleteBuffers(1, &mesh.indexBuffer);
+                if (mesh.indexBuffer) glDeleteBuffers(1, &mesh.indexBuffer); if(mesh.edgeBuffer)glDeleteBuffers(1,&mesh.edgeBuffer);
             }
             if (!terrain.textures.empty()) glDeleteTextures(GLsizei(terrain.textures.size()), terrain.textures.data());
         }
@@ -5303,7 +5361,7 @@ private:
         for (const GlesMesh& mesh : terrainMeshes_) {
             if (mesh.vao) glDeleteVertexArrays(1, &mesh.vao);
             if (mesh.vertexBuffer) glDeleteBuffers(1, &mesh.vertexBuffer);
-            if (mesh.indexBuffer) glDeleteBuffers(1, &mesh.indexBuffer);
+            if (mesh.indexBuffer) glDeleteBuffers(1, &mesh.indexBuffer); if(mesh.edgeBuffer)glDeleteBuffers(1,&mesh.edgeBuffer);
         }
         terrainMeshes_.clear();
         if (!terrainTextures_.empty()) glDeleteTextures(static_cast<GLsizei>(terrainTextures_.size()), terrainTextures_.data());
@@ -6367,6 +6425,11 @@ private:
                     reinterpret_cast<const void*>(offsetof(ohos_model::Vertex, weights)));
             }
 
+            std::vector<uint32_t> edges;
+            for(size_t e=0;e+2<source.indices.size();e+=3){auto a=source.indices[e],b=source.indices[e+1],c=source.indices[e+2];edges.insert(edges.end(),{a,b,b,c,c,a});}
+            mesh.edgeCount=static_cast<GLuint>(edges.size());
+            glGenBuffers(1,&mesh.edgeBuffer);glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,mesh.edgeBuffer);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER,edges.size()*sizeof(uint32_t),edges.data(),GL_STATIC_DRAW);
             glGenBuffers(1, &mesh.indexBuffer);
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.indexBuffer);
             if (source.indexBytes == 4) {
@@ -6584,6 +6647,11 @@ private:
             glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride,
                 reinterpret_cast<const void*>(offsetof(StaticVertex, uv)));
 
+            std::vector<uint32_t> edges;
+            for(size_t e=0;e+2<source.indices.size();e+=3){auto a=source.indices[e],b=source.indices[e+1],c=source.indices[e+2];edges.insert(edges.end(),{a,b,b,c,c,a});}
+            mesh.edgeCount=static_cast<GLuint>(edges.size());
+            glGenBuffers(1,&mesh.edgeBuffer);glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,mesh.edgeBuffer);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER,edges.size()*sizeof(uint32_t),edges.data(),GL_STATIC_DRAW);
             glGenBuffers(1, &mesh.indexBuffer);
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.indexBuffer);
             if (source.indexBytes == 4) {
@@ -7702,8 +7770,7 @@ private:
 
             glBindVertexArray(mesh.vao);
             SetCharacterInstanceOffset(base);
-            glDrawElementsInstanced(GL_TRIANGLES, static_cast<GLsizei>(mesh.indexCount),
-                mesh.indexType, nullptr, instanceCount);
+            DrawDebugMesh(mesh,instanceCount);
         }
         glEnable(GL_CULL_FACE);
         glActiveTexture(GL_TEXTURE0);
@@ -7834,8 +7901,7 @@ private:
                 }
                 glBindVertexArray(mesh.vao);
                 BindStaticInstanceAttributes();
-                glDrawElementsInstanced(GL_TRIANGLES,
-                    static_cast<GLsizei>(mesh.indexCount), mesh.indexType, nullptr,instanceCount);
+                DrawDebugMesh(mesh,instanceCount);
                 ++staticDraws_; staticDrawnInstances_+=instanceCount;
             }
         glUniform1i(instancingOnLocation_,0);
@@ -7883,13 +7949,18 @@ private:
     // slots (offsets 128/192), then binds each mesh's material/textures and
     // draws.  The optional skinning flag lets the enemy reuse the player's
     // already resident animated mesh without duplicating GPU resources.
+    void DrawDebugMesh(const GlesMesh& mesh,int count=1){
+        if(wireframe_ && mesh.edgeBuffer){glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,mesh.edgeBuffer);glDrawElementsInstanced(GL_LINES,mesh.edgeCount,GL_UNSIGNED_INT,nullptr,count);glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,mesh.indexBuffer);}
+        else glDrawElementsInstanced(GL_TRIANGLES,mesh.indexCount,mesh.indexType,nullptr,count);
+    }
     void DrawStaticMeshList(const std::vector<GlesMesh>& meshes,
         const std::vector<GLuint>& textures,
         const std::vector<ohos_model::Material>& materials,
         const Mat4& world, bool skinned = false, GLuint skinBuffer = 0,
         bool applyAlphaMask = false,
-        const std::vector<int>* order = nullptr)
+        const std::vector<int>* order = nullptr, int debugMode = 0)
     {
+        glUniform1i(glGetUniformLocation(gbufferProgram_,"materialDebugMode"),debugMode);
         glUniform1i(skinningOnLocation_, skinned ? 1 : 0);
         glUniform1i(instancingOnLocation_, 0);
         glUniform1i(instanceBaseLocation_, 0);
@@ -7947,12 +8018,12 @@ private:
             glUniform1i(hasNormalMapLocation_, material->normalImage >= 0 ? 1 : 0);
 
             glBindVertexArray(mesh.vao);
-            glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(mesh.indexCount),
-                mesh.indexType, nullptr);
+            DrawDebugMesh(mesh);
         }
         glEnable(GL_CULL_FACE);
         glActiveTexture(GL_TEXTURE0);
-    }
+            glUniform1i(glGetUniformLocation(gbufferProgram_,"materialDebugMode"),0);
+}
 
     // Sampling an unbound texture is undefined, so every missing image falls
     // back to a neutral bound texture (white, or the caller-provided one --
@@ -8056,7 +8127,7 @@ private:
                 enemyDeathPlaying_ = true;
                 enemyVisible_ = true;
                 enemyDeathTime_ = 0.0f;
-                gold_ += 25;
+                gold_ += 25;inventory_.growth.Gain(50);
                 SDL_Log("SDL3_GLES stage=enemy_defeated gold=%d", gold_);
             } else {
                 enemyHitLockTimer_ = kPlayerHitDuration;
@@ -8308,7 +8379,7 @@ private:
                 }
                 const int reward=parkourProgress_.ClaimCompletionReward(course);
                 if(reward>0) {
-                    gold_+=reward;
+                    gold_+=reward;inventory_.growth.Gain(reward);
                     std::string message="跑酷通关 金币 +"+std::to_string(reward);
                     SaveMessage(message.c_str());
                     SDL_Log("SDL3_PARKOUR stage=reward amount=%d gold=%d",reward,gold_);
@@ -8732,6 +8803,7 @@ private:
     int savePage_=0;
     Uint64 saveMessageUntil_=0;
     rhi::UiScreen uiScreen_ = rhi::UiScreen::MainMenu;
+    bool wireframe_=false;
     float settingsScroll_=0;
     int shadowQuality_=2;
     unsigned shadowMapSize_=2048;

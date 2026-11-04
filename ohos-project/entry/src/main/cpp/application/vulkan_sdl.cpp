@@ -1,3 +1,5 @@
+#include "helmet_display.h"
+#include <SDL3/SDL_misc.h>
 #include "camera/camera_collision.h"
 #include "inventory_ui.h"
 #include "shop_ui.h"
@@ -483,10 +485,10 @@ struct SceneUniforms {
     Mat4 shadowMvp;
     Mat4 viewProj;
     float gameplayFlags[4] = {}; // x = fixed demo point lights enabled
-    float waterBounds[4]={};float portalPositions[8][4]={};float portalColors[8][4]={};float portalInfo[4]={};
+    float waterBounds[4]={};float portalPositions[8][4]={};float portalColors[8][4]={};float portalInfo[4]={};float savePositions[16][4]={};
 };
 
-static_assert(sizeof(SceneUniforms) == sizeof(float) * 192,
+static_assert(sizeof(SceneUniforms) == sizeof(float) * 256,
     "Scene UBO must contain camera data, shadow matrix and view projection");
 
 // Vertex layout of the model pipeline.  Separate from CubeVertex because glTF
@@ -659,6 +661,7 @@ struct ModelSamplerResource {
 
 // GPU residency for one loaded glTF mesh.
 struct ModelMeshResource {
+    BufferResource edgeBuffer;uint32_t edgeCount=0;
     terrain::Bounds bounds;
     bool castShadow = true;
     BufferResource vertexBuffer;
@@ -1524,7 +1527,7 @@ private:
         const auto destroyAsset = [this](ModelGpuAsset& asset) {
             for (ModelMeshResource& mesh : asset.meshes) {
                 DestroyBuffer(mesh.vertexBuffer);
-                DestroyBuffer(mesh.indexBuffer);
+                DestroyBuffer(mesh.indexBuffer);DestroyBuffer(mesh.edgeBuffer);
             }
             asset.meshes.clear();
             DestroyBuffer(asset.jointBuffer);
@@ -1649,6 +1652,7 @@ private:
                 vkDestroyPipeline(device_, modelDoubleSidedPipeline_, nullptr);
             }
             modelDoubleSidedPipeline_ = VK_NULL_HANDLE;
+            if(wirePipeline_){vkDestroyPipeline(device_,wirePipeline_,nullptr);wirePipeline_=VK_NULL_HANDLE;}
             if (overlayPipeline_ != VK_NULL_HANDLE) {
                 vkDestroyPipeline(device_, overlayPipeline_, nullptr);
             }
@@ -3492,7 +3496,7 @@ private:
                 if(candidate!=asset)continue;
                 const auto matrix=LiveSceneMatrix(e);bool visible=false;
                 for(const auto& mesh:asset->meshes)if((!shadow||mesh.castShadow) && frustum.Intersects(terrain::TransformBounds(mesh.bounds,matrix.value))) {visible=true;break;}
-                if(!visible || next>=modelInstanceData_.size()-3)continue;
+                if(!visible || next>=modelInstanceData_.size()-6)continue;
                 modelInstanceData_[next].model=matrix;modelInstanceData_[next].skinIndex=0;++next;
             }
             if(next>first)batches.push_back({asset,first,uint32_t(next-first)});
@@ -3591,7 +3595,7 @@ private:
     {
         const std::size_t staticRenderableCount = sceneDefinition_ != nullptr
             ? sceneDefinition_->StaticCubeCount() + sceneDefinition_->StaticModelCount() : 0;
-        modelInstanceData_.assign(11 + 2 * 512, CharacterInstanceData{});
+        modelInstanceData_.assign(14 + 2 * 512, CharacterInstanceData{});
         return CreateBuffer(sizeof(CharacterInstanceData) * modelInstanceData_.size(),
             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
@@ -4441,6 +4445,9 @@ private:
                 DestroyBuffer(resource.indexBuffer);
                 return false;
             }
+            std::vector<uint32_t> edges;for(size_t e=0;e+2<mesh.indices.size();e+=3){auto a=mesh.indices[e],b=mesh.indices[e+1],c=mesh.indices[e+2];edges.insert(edges.end(),{a,b,b,c,c,a});}
+            resource.edgeCount=uint32_t(edges.size());
+            if(!CreateBuffer(edges.size()*sizeof(uint32_t),VK_BUFFER_USAGE_INDEX_BUFFER_BIT,VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,resource.edgeBuffer)||!UploadToMappedBuffer(resource.edgeBuffer,edges.data(),edges.size()*sizeof(uint32_t))){DestroyBuffer(resource.vertexBuffer);DestroyBuffer(resource.indexBuffer);DestroyBuffer(resource.edgeBuffer);return false;}
             asset.meshes.push_back(std::move(resource));
         }
         asset.loaded = !asset.meshes.empty();
@@ -4637,7 +4644,8 @@ private:
         VkPipelineLayout layoutOverride = VK_NULL_HANDLE,
         VkBool32 hasColorAttachment = VK_TRUE,
         VkBool32 depthBiasEnable = VK_FALSE,
-        VkFrontFace frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE)
+        VkFrontFace frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
+        VkPrimitiveTopology topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
     {
         VkPipelineShaderStageCreateInfo vertexStage{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
         vertexStage.stage = VK_SHADER_STAGE_VERTEX_BIT;
@@ -4734,7 +4742,7 @@ private:
             vertexInput.pVertexAttributeDescriptions = vertexAttributes;
         }
         VkPipelineInputAssemblyStateCreateInfo inputAssembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
-        inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        inputAssembly.topology = topology;
         VkPipelineViewportStateCreateInfo viewportState{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
         viewportState.viewportCount = 1;
         viewportState.scissorCount = 1;
@@ -4900,6 +4908,7 @@ private:
                 VertexLayout::kModel);
             modelDoubleSidedPipeline_ = CreatePipeline(modelVertex, modelFragment, VK_CULL_MODE_NONE,
                 VK_TRUE, VK_TRUE, VertexLayout::kModel);
+            wirePipeline_=CreatePipeline(modelVertex,modelFragment,VK_CULL_MODE_NONE,VK_TRUE,VK_TRUE,VertexLayout::kModel,VK_FALSE,VK_NULL_HANDLE,VK_NULL_HANDLE,VK_TRUE,VK_FALSE,VK_FRONT_FACE_COUNTER_CLOCKWISE,VK_PRIMITIVE_TOPOLOGY_LINE_LIST);
             shadowPipeline_ = CreatePipeline(shadowVertex, shadowFragment, VK_CULL_MODE_BACK_BIT, VK_TRUE, VK_TRUE,
                 VertexLayout::kModel, VK_FALSE, shadowRenderPass_, pipelineLayout_, VK_FALSE, VK_TRUE,
                 VK_FRONT_FACE_CLOCKWISE);
@@ -4969,6 +4978,7 @@ private:
             if (modelDoubleSidedPipeline_ != VK_NULL_HANDLE) {
                 vkDestroyPipeline(device_, modelDoubleSidedPipeline_, nullptr);
                 modelDoubleSidedPipeline_ = VK_NULL_HANDLE;
+            if(wirePipeline_){vkDestroyPipeline(device_,wirePipeline_,nullptr);wirePipeline_=VK_NULL_HANDLE;}
             }
             if (shadowPipeline_ != VK_NULL_HANDLE) {
                 vkDestroyPipeline(device_, shadowPipeline_, nullptr);
@@ -5155,7 +5165,7 @@ private:
     void RecordModelDraw(VkCommandBuffer commandBuffer, uint32_t imageIndex,
         const ModelGpuAsset& asset, const Mat4& viewProj,
         VkDeviceSize instanceOffset, uint32_t instanceCount,
-        float enemyDissolve = 0.0f)
+        float enemyDissolve = 0.0f,int debugMode=0)
     {
         if (!asset.loaded || modelInstanceBuffer_.buffer == VK_NULL_HANDLE || instanceCount == 0) {
             return;
@@ -5183,7 +5193,7 @@ private:
             }
         }
         const ModelPushConstants pushConstants = {viewProj, Mat4Identity(), enemyDissolve,
-            {static_cast<float>(SDL_GetTicks() % 3600000U) * 0.001f, 0.0f, 0.0f}};
+            {static_cast<float>(SDL_GetTicks() % 3600000U) * 0.001f, float(debugMode), 0.0f}};
         vkCmdPushConstants(commandBuffer, pipelineLayout_,
             VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
             sizeof(pushConstants), &pushConstants);
@@ -5199,7 +5209,7 @@ private:
             }
             const bool doubleSided = mesh.materialIndex < asset.materials.size() &&
                 asset.materials[mesh.materialIndex].doubleSided;
-            const VkPipeline meshPipeline = doubleSided && modelDoubleSidedPipeline_ != VK_NULL_HANDLE
+            const VkPipeline meshPipeline = wireframe_?wirePipeline_: doubleSided && modelDoubleSidedPipeline_ != VK_NULL_HANDLE
                 ? modelDoubleSidedPipeline_ : modelPipeline_;
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipeline);
             VkDescriptorSet set = VK_NULL_HANDLE;
@@ -5218,8 +5228,8 @@ private:
             VkBuffer vertexBuffers[2] = {mesh.vertexBuffer.buffer, modelInstanceBuffer_.buffer};
             VkDeviceSize vertexOffsets[2] = {0, instanceOffset};
             vkCmdBindVertexBuffers(commandBuffer, 0, 2, vertexBuffers, vertexOffsets);
-            vkCmdBindIndexBuffer(commandBuffer, mesh.indexBuffer.buffer, 0, mesh.indexType);
-            vkCmdDrawIndexed(commandBuffer, mesh.indexCount, instanceCount, 0, 0, 0);
+            vkCmdBindIndexBuffer(commandBuffer,wireframe_?mesh.edgeBuffer.buffer:mesh.indexBuffer.buffer,0,wireframe_?VK_INDEX_TYPE_UINT32:mesh.indexType);
+            vkCmdDrawIndexed(commandBuffer, wireframe_?mesh.edgeCount:mesh.indexCount, instanceCount, 0, 0, 0);
         }
     }
 
@@ -5522,6 +5532,7 @@ private:
             return;
         }
         if (uiScreen_ == rhi::UiScreen::GameplayInventory) {
+            if(GrowthTap(uiX,uiY))return;
             if (HitRect(uiX, uiY, MenuButtonLayout(0))) {
                 uiScreen_ = rhi::UiScreen::Gameplay;
                 SDL_Log("SDL3_VULKAN stage=inventory_close");
@@ -5548,7 +5559,7 @@ private:
             return;
         }
         if(uiScreen_==rhi::UiScreen::Settings || uiScreen_==rhi::UiScreen::GameplaySettings){
-            for(int i=0;i<=9;i++){
+            for(int i=0;i<=11;i++){
                 if(!settings_ui::Visible(i,UiWidth(),UiHeight(),settingsScroll_) || !HitRect(uiX,uiY,MenuButtonLayout(i)))continue;
                 switch(i){
                 case 0:uiScreen_=uiScreen_==rhi::UiScreen::GameplaySettings?rhi::UiScreen::Gameplay:rhi::UiScreen::MainMenu;settingsScroll_=0;break;
@@ -5560,6 +5571,8 @@ private:
                 case 6:shadowQuality_=(shadowQuality_+1)%4;shadowMapSize_=shadowQuality_==1?1024:(shadowQuality_==3?4096:2048);renderTargetsDirty_=true;break;
                 case 7:glassEnabled_=!glassEnabled_;break;
                 case 8:fxaaEnabled_=!fxaaEnabled_;break;
+                case 11:wireframe_=!wireframe_;break;
+                case 10:SDL_OpenURL("mikan://html-game");cameraInput_={};break;
                 case 9:uiScreen_=rhi::UiScreen::MainMenu;settingsScroll_=0;break;
                 }return;
             }return;
@@ -5960,10 +5973,12 @@ private:
         }
 
         if(uiScreen_==rhi::UiScreen::GameplayInventory){
+            if(growthOpen_){DrawGrowthUi();return;}
             inventory_ui::Draw(w,h,inventory_,
                 [this,&overlay,&text](float x,float y,float hw,float hh,float radius,const float* c){AppendRoundedRect(overlay,{x,y,hw,hh,radius},c);},
                 [this,&overlay,&text](const char* label,float x,float y,float em,const float* c){AppendTextCentered(text,label,x,y,em,c,true);});
 
+            DrawGrowthUi();
             return;
         }
 
@@ -6061,11 +6076,15 @@ private:
               }
             }
 
+        if(wireframe_)AppendTextCentered(text,"WIREFRAME",w*.5f,mn*.23f,mn*.025f,white);
+        if(sceneDefinition_ && sceneDefinition_->helmetEnabled && playerX_<-4){int nearest=0;for(int i=1;i<4;i++)if(std::fabs(playerZ_-helmet_display::Z(i))<std::fabs(playerZ_-helmet_display::Z(nearest)))nearest=i;AppendTextCentered(text,helmet_display::Label(nearest),w*.5f,mn*.27f,mn*.024f,white);}
+        if(glassEnabled_){const float tint[4]={.10f,.20f,.27f,.60f};AppendRoundedRect(overlay,{mn*.155f,mn*.17f,mn*.128f,mn*.128f,mn*.022f},tint);}
         gameplay::DrawMinimap(w,h,playerX_,playerZ_,playerYaw_,enemyX_,enemyZ_,enemyAlive_,sceneDefinition_,minimapTerrain_,
             [&overlay,this](float x,float y,float hw,float hh,float r,const float* c){
                 AppendRoundedRect(overlay,{x,y,hw,hh,r},c);
-            });
+            },glassEnabled_);
         AppendPlayerHealthBar(overlay, text);
+        char levelText[96];const auto& g=inventory_.growth;std::snprintf(levelText,sizeof(levelText),"Lv.%d EXP %d/%d +%d",g.level,g.xp,g.Required(),g.points);AppendTextCentered(text,levelText,mn*.46f,mn*.129f,mn*.020f,white);
         AppendEnemyHealthBar(overlay, text);
         AppendHitFlash(overlay, w, h);
         if (cameraInput_.showOverlay) {
@@ -6233,7 +6252,10 @@ private:
         instances[1].color[2] = 0.0f;
         instances[1].color[3] = 1.0f;
         instances[1].skinIndex = 1;
-        instances[2].model = helmetTransform;
+        for(int display=0;display<4;display++){
+            const auto slot=display==0?2:modelInstanceData_.size()-6+display-1;
+            instances[slot].model=Mat4Multiply(Mat4Translation(helmet_display::kX,physics::kHelmetCollider.centerY,helmet_display::Z(display)),Mat4Multiply(Mat4RotationY(float(SDL_GetTicks()%600000U)*.0008f+.5f),Mat4Scale(physics::kHelmetCollider.renderScale)));
+        }
         instances[2].skinIndex = 0;
         instances[3].model = groundTransform;
         instances[3].skinIndex = 0;
@@ -6282,9 +6304,10 @@ private:
                 RecordShadowDraw(commandBuffer, static_cast<uint32_t>(index), playerAsset_,
                     shadowMatrix_, 0, characterInstanceCount, enemyDissolveAmount_);
             }
-            if (helmetAsset_.loaded && (sceneDefinition_ == nullptr || sceneDefinition_->demoPropsEnabled)) {
+            if (helmetAsset_.loaded && (sceneDefinition_ == nullptr || (sceneDefinition_->demoPropsEnabled || sceneDefinition_->helmetEnabled))) {
+                for(int display=0;display<4;display++)
                 RecordShadowDraw(commandBuffer, static_cast<uint32_t>(index), helmetAsset_,
-                    shadowMatrix_, sizeof(CharacterInstanceData) * 2, 1);
+                    shadowMatrix_, sizeof(CharacterInstanceData) * (display==0?2:modelInstanceData_.size()-6+display-1), 1);
             }
             if (groundAsset_.loaded && (sceneDefinition_ == nullptr || sceneDefinition_->demoPropsEnabled)) {
                 RecordShadowDraw(commandBuffer, static_cast<uint32_t>(index), groundAsset_,
@@ -6345,9 +6368,10 @@ private:
                     if(pistolAsset_.loaded && pistol_.equipped && pistolPoseReady_ && !playerSwimming_ && playerHealth_>0)
                         RecordModelDraw(commandBuffer,static_cast<uint32_t>(index),pistolAsset_,
                             viewProj_,sizeof(CharacterInstanceData)*(modelInstanceData_.size()-2),1);
-                    if (helmetAsset_.loaded && (sceneDefinition_ == nullptr || sceneDefinition_->demoPropsEnabled)) {
-                        RecordModelDraw(commandBuffer, static_cast<uint32_t>(index), helmetAsset_,
-                            viewProj_, sizeof(CharacterInstanceData) * 2, 1);
+                    if (helmetAsset_.loaded && (sceneDefinition_ == nullptr || (sceneDefinition_->demoPropsEnabled || sceneDefinition_->helmetEnabled))) {
+                        for(int display=0;display<4;display++)
+                    RecordModelDraw(commandBuffer, static_cast<uint32_t>(index), helmetAsset_,
+                            viewProj_, sizeof(CharacterInstanceData) * (display==0?2:modelInstanceData_.size()-6+display-1), 1,0,helmet_display::Mode(display));
                     }
                     if (groundAsset_.loaded && (sceneDefinition_ == nullptr || sceneDefinition_->demoPropsEnabled)) {
                         RecordModelDraw(commandBuffer, static_cast<uint32_t>(index), groundAsset_,
@@ -7523,7 +7547,7 @@ private:
                 enemyDeathPlaying_ = true;
                 enemyVisible_ = true;
                 enemyDeathTime_ = 0.0f;
-                gold_ += 25;
+                gold_ += 25;inventory_.growth.Gain(50);
                 SDL_Log("SDL3_VULKAN stage=enemy_defeated gold=%d", gold_);
             } else {
                 enemyHitLockTimer_ = kPlayerHitDuration;
@@ -7725,7 +7749,7 @@ private:
                 }
                 const int reward=parkourProgress_.ClaimCompletionReward(course);
                 if(reward>0) {
-                    gold_+=reward;
+                    gold_+=reward;inventory_.growth.Gain(reward);
                     std::string message="跑酷通关 金币 +"+std::to_string(reward);
                     SaveMessage(message.c_str());
                     SDL_Log("SDL3_PARKOUR stage=reward amount=%d gold=%d",reward,gold_);
@@ -7820,6 +7844,8 @@ private:
             uniforms.waterBounds[2]=water.halfExtents.x>0?water.halfExtents.x:water.size*.5f;
             uniforms.waterBounds[3]=water.halfExtents.z>0?water.halfExtents.z:water.size*.5f;
             uniforms.portalInfo[0]=float(std::min(std::size_t(8),sceneDefinition_->portals.size()));
+            uniforms.portalInfo[2]=float(std::min(std::size_t(16),sceneDefinition_->savePoints.size()));
+            for(std::size_t i=0;i<sceneDefinition_->savePoints.size()&&i<16;++i){const auto& p=sceneDefinition_->savePoints[i];uniforms.savePositions[i][0]=p.x;uniforms.savePositions[i][1]=p.y-.98f;uniforms.savePositions[i][2]=p.z;}
             uniforms.portalInfo[1]=float(SDL_GetTicks()%3600000U)*.001f;
             for(std::size_t i=0;i<sceneDefinition_->portals.size() && i<8;++i) {
                 const auto& portal=sceneDefinition_->portals[i];
@@ -8492,6 +8518,7 @@ private:
     // rawfile bundle; if one fails to load the remaining scene stays usable.
     VkPipeline modelPipeline_ = VK_NULL_HANDLE;
     VkPipeline modelDoubleSidedPipeline_ = VK_NULL_HANDLE;
+    VkPipeline wirePipeline_=VK_NULL_HANDLE;bool wireframe_=false;
     ModelGpuAsset playerAsset_;
     ModelGpuAsset enemyAsset_;
     ModelGpuAsset pistolAsset_;

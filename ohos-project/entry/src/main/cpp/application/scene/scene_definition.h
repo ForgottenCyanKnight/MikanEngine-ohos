@@ -100,6 +100,7 @@ enum class MeshKind {
 struct Entity {
     std::uint32_t id = 0;
     std::uint32_t parentId = kNoParent;
+    bool dynamicBody = false;
     std::uint32_t motionParentId = kNoParent; // World-space trim follows a translating platform.
     std::string name;
     Transform transform{};
@@ -190,6 +191,7 @@ struct Definition {
     Vec3 playerSpawn{}; // Render-model origin in runtime coordinates.
     bool enemyEnabled = true;
     bool demoPropsEnabled = true;
+    bool helmetEnabled = false;
     bool groundEnabled = true;
     std::vector<Portal> portals;
     std::vector<Vec3> savePoints; // Safe grounded render-origin positions.

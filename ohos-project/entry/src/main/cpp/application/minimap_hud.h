@@ -34,18 +34,19 @@ struct MinimapTerrain {
 template<class Draw>
 inline void DrawMinimap(float w,float h,float px,float pz,float yaw,
     float ex,float ez,bool enemyAlive,const scene::Definition* scene,
-    const MinimapTerrain& terrain,Draw draw) {
+    const MinimapTerrain& terrain,Draw draw,bool glass=false) {
     const float mn=std::min(w,h), half=mn*.12f, cx=mn*.155f, cy=mn*.17f;
     const float bg[4]={.025f,.055f,.075f,.92f},grid[4]={.55f,.75f,.80f,.22f};
-    const float land[4]={.25f,.34f,.29f,.68f},white[4]={1,1,1,1};
+    const float land[4]={.25f,.34f,.29f,glass?.30f:.68f},white[4]={1,1,1,1};
     const float red[4]={1,.16f,.13f,1},blue[4]={.18f,.45f,1,1},green[4]={.18f,1,.35f,1};
-    draw(cx,cy,half,half,mn*.015f,bg);
+    if(!glass)draw(cx,cy,half,half,mn*.015f,bg);
     // Bounded 16x16 elevation raster: sea, beaches, vegetation and high ground.
     const float sea=scene && scene->water.enabled?scene->water.height:-2.6f;
     for(int j=0;j<16;j++)for(int i=0;i<16;i++){
         float x=px+(i+.5f-8)*3.f,z=pz+(j+.5f-8)*3.f;
         float height=terrain.Height(x,z),elevation=height-sea;
-        float color[4]={.055f,.19f,.27f,.95f};
+        if(glass && height < -1e20f)continue;
+        float color[4]={.055f,.19f,.27f,glass?.28f:.95f};
         if(elevation>0){float t=std::min(1.f,elevation/8);
             color[0]=.20f+.24f*t;color[1]=.36f+.10f*t;color[2]=.18f+.22f*t;
             if(elevation<.45f){color[0]=.65f;color[1]=.60f;color[2]=.38f;}}
@@ -75,17 +76,18 @@ inline void DrawMinimap(float w,float h,float px,float pz,float yaw,
             if(std::abs(dx)<23.5f && std::abs(dz)<23.5f)draw(cx+dx*half/24,cy+dz*half/24,mn*.0017f,mn*.0017f,mn*.0017f,color);
         }
     };
-    ring(kHealingLightX,kHealingLightZ,kHealingRadius,green);
-    ring(kEnemySpawnX,kEnemySpawnZ,kEnemyActivityRadius,red);
+    const bool demo=scene==nullptr || scene->demoPropsEnabled;
+    if(demo){ring(kHealingLightX,kHealingLightZ,kHealingRadius,green);
+        ring(kEnemySpawnX,kEnemySpawnZ,kEnemyActivityRadius,red);}
     auto mark=[&](float x,float z,float radius,const float* color){
         float dx=(x-px)*half/24,dz=(z-pz)*half/24;
         float limit=half-radius-mn*.003f;
         float scale=std::max(1.f,std::max(std::abs(dx),std::abs(dz))/limit);
         draw(cx+dx/scale,cy+dz/scale,radius,radius,radius,color);
     };
-    mark(kPlayerSpawnX,kPlayerSpawnZ,mn*.006f,blue);
-    mark(kEnemySpawnX,kEnemySpawnZ,mn*.006f,red);
-    mark(kHealingLightX,kHealingLightZ,mn*.007f,green);
+    if(demo){mark(kPlayerSpawnX,kPlayerSpawnZ,mn*.006f,blue);
+        mark(kEnemySpawnX,kEnemySpawnZ,mn*.006f,red);
+        mark(kHealingLightX,kHealingLightZ,mn*.007f,green);}
     if(enemyAlive)mark(ex,ez,mn*.009f,red);
     // Bright north tick and frame keep orientation visible over the terrain.
     draw(cx,cy-half+mn*.003f,mn*.016f,mn*.002f,0,white);

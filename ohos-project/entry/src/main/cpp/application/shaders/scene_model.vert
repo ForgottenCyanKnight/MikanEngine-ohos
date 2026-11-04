@@ -68,6 +68,7 @@ layout(location = 7) out flat float vDissolve;
 layout(location = 8) out flat float vWaterTime;
 layout(location = 9) out flat float vAlphaCutoff;
 
+layout(location=10) out flat float vDebugMode;
 void main()
 {
     mat4 instanceModel = mat4(inInstanceModel0, inInstanceModel1,
@@ -90,6 +91,7 @@ void main()
     }
     vec4 worldPosition = instanceModel * vec4(skinnedPosition, 1.0);
     gl_Position = scene.viewProj * worldPosition;
+    vDebugMode=object.pad[1];
     vWaterTime = object.pad[0];
     vNormal = normalize(mat3(instanceModel) * skinnedNormal);
     vTexCoord = inTexCoord;

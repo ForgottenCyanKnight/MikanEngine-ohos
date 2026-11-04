@@ -662,7 +662,7 @@ std::vector<StaticBoxCollider> BuildStaticBoxColliders(const Definition& definit
             entity.id == definition.workshop.gateId || entity.id == definition.workshop.liftId)) continue;
         bool moving=false;
         for (const auto& platform:definition.workshop.movingPlatforms) moving |= entity.id==platform.entityId;
-        if (moving) continue;
+        if (moving || entity.dynamicBody) continue;
         const ColliderSettings& settings = entity.collider;
         // Imported models may author an explicit normalized-space box, too.
         // Unlike built-in cubes they never receive an implicit collider.
@@ -751,6 +751,7 @@ bool ParseMikanScene(const char* json, std::size_t size, Definition& output,
             return false;
         }
         parsed.enemyEnabled = BoolOr(*gameplay, "enemyEnabled", true);
+        parsed.helmetEnabled = BoolOr(*gameplay, "helmetEnabled", false);
         parsed.demoPropsEnabled = BoolOr(*gameplay, "demoPropsEnabled", true);
         parsed.groundEnabled = BoolOr(*gameplay, "groundEnabled", true);
         if (const auto* arena = Member(*gameplay,"arena")) {
@@ -913,6 +914,7 @@ bool ParseMikanScene(const char* json, std::size_t size, Definition& output,
         }
         Entity entity{};
         entity.id = UIntOr(Member(source, "id"), 0);
+        entity.dynamicBody = BoolOr(source,"dynamicBody",false);
         entity.motionParentId = UIntOr(Member(source,"motionParent"),kNoParent);
         entity.transform = ParseTransform(Member(source, "transform"));
         if (const JsonValue* name = Member(source, "name")) {

@@ -8,7 +8,7 @@ layout(set = 2, binding = 3) uniform sampler2D waterNormalMap;
 layout(set=0,binding=0) uniform SceneUniforms {
     mat4 cubeMvp;mat4 skyMvp;mat4 modelMvp;mat4 modelMatrix;
     vec4 cameraPosition;mat4 cameraToWorld;mat4 shadowMvp;mat4 viewProj;
-    vec4 gameplayFlags;vec4 waterBounds;vec4 portalPositions[8];vec4 portalColors[8];vec4 portalInfo;
+    vec4 gameplayFlags;vec4 waterBounds;vec4 portalPositions[8];vec4 portalColors[8];vec4 portalInfo;vec4 savePositions[16];
 } scene;
 layout(push_constant) uniform WaterPush {
     mat4 invViewProj;
@@ -119,6 +119,23 @@ vec3 GunfireParticles(vec3 camera,vec3 ray,float sceneDistance) {
     return result;
 }
 
+
+float SaveCurtain(vec3 camera,vec3 ray,vec3 base,float limit) {
+ float alpha=0.0;
+ for(int side=0;side<4;++side){
+  bool xPlane=side<2;float signSide=(side%2==0)?-1.0:1.0;
+  float component=xPlane?ray.x:ray.z;if(abs(component)<.00001)continue;
+  float plane=(xPlane?base.x:base.z)+signSide*.65;
+  float t=(plane-(xPlane?camera.x:camera.z))/component;
+  vec3 p=camera+ray*t;float height=p.y-base.y;
+  float lateral=xPlane?abs(p.z-base.z):abs(p.x-base.x);
+  if(t>0.0 && t<limit-.015 && height>=0.0 && height<1.55 && lateral<=.65){
+   float fade=pow(1.0-smoothstep(0.0,1.55,height),1.7);
+   float a=.52*fade;alpha=1.0-(1.0-alpha)*(1.0-a);
+  }
+ }
+ return alpha;
+}
 vec4 FinishScene(vec3 color, vec3 camera, vec3 ray, float sceneDistance)
 {
     float nearest=sceneDistance;int selected=-1;vec2 selectedQ=vec2(0);
@@ -131,9 +148,10 @@ vec4 FinishScene(vec3 color, vec3 camera, vec3 ray, float sceneDistance)
         vec2 q=selectedQ;vec4 tint=scene.portalColors[selected];
         float edge=pow(max(abs(q.x),abs(q.y)),8);
         float ripple=.5+.5*sin(q.y*14+sin(q.x*8+scene.portalInfo.y*.9)*.6-scene.portalInfo.y*1.4);
-        vec3 glow=tint.rgb*(2.4+edge*5+.5*pow(ripple,6));
+        vec3 glow=tint.rgb/max(dot(tint.rgb,vec3(.2126,.7152,.0722)),.05)*(2.4+edge*.6+.15*pow(ripple,6));
         color=mix(color,glow,clamp(tint.a*(.75+ripple*.3+edge*.85),0,.8));
     }
+    for(int i=0;i<int(scene.portalInfo.z);++i)color=mix(color,vec3(.10,1.65,3.8),SaveCurtain(camera,ray,scene.savePositions[i].xyz,sceneDistance));
     vec3 emitter = SceneLightBillboards(camera, ray, sceneDistance) + GunfireParticles(camera,ray,sceneDistance);
     if (max(max(emitter.r, emitter.g), emitter.b) > 0.0) color = emitter;
     if (WATER_LDR) {
