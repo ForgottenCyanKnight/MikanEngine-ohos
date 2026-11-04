@@ -1,0 +1,16 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>旋转立方体</title><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#101c2d;color:#eaf3fa;font:16px system-ui}canvas{display:block}#hud{position:absolute;left:16px;top:14px;z-index:1;padding:10px;background:#172c40dd;border-radius:8px}a{color:#9bdeef;margin-right:16px}#error{position:absolute;top:40%;left:10%;right:10%;color:#ffd4a3}</style><div id="hud"><a href="index.html">返回</a>旋转立方体 · <span id="status">初始化中</span></div><div id="error"></div><script src="vendor/three/three-compat.min.js"></script><script>
+let renderer,timer;
+function fail(error){document.getElementById('error').textContent=String(error.message||error);document.getElementById('status').textContent='渲染失败';console.error(error)}
+try{
+ const canvas=document.createElement("canvas");const gl1=canvas.getContext("webgl",{antialias:false,preserveDrawingBuffer:true,alpha:false});if(!gl1)throw Error("WebGL 1 unavailable");renderer=new THREE.WebGLRenderer({canvas:canvas,context:gl1,antialias:false,preserveDrawingBuffer:true,alpha:false});renderer.setPixelRatio(1);document.body.appendChild(renderer.domElement);
+ const scene=new THREE.Scene();scene.background=new THREE.Color(0x101c2d);
+ const camera=new THREE.PerspectiveCamera(45,1,.1,100);camera.position.z=4;
+ const cube=new THREE.Mesh(new THREE.BoxGeometry(1.3,1.3,1.3),new THREE.MeshNormalMaterial());scene.add(cube);
+ function resize(){renderer.setSize(innerWidth,innerHeight);camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix()}
+ addEventListener('resize',resize);resize();let count=0;const begin=performance.now();
+ function frame(){try{const t=(performance.now()-begin)*.001;cube.rotation.set(t*.5,t*.8,0);renderer.render(scene,camera);if(++count%30===0){const gl=renderer.getContext(),pixel=new Uint8Array(4);gl.readPixels(Math.floor(gl.drawingBufferWidth/2),Math.floor(gl.drawingBufferHeight/2),1,1,gl.RGBA,gl.UNSIGNED_BYTE,pixel);document.getElementById('status').textContent='r'+THREE.REVISION+' · '+count+' 帧 · draw '+renderer.info.render.calls+' · pixel '+pixel.join(',')+' · GL '+gl.getError()}}catch(error){clearInterval(timer);fail(error)}}
+ frame();timer=setInterval(frame,33);
+ addEventListener('pagehide',()=>{clearInterval(timer);cube.geometry.dispose();cube.material.dispose();renderer.dispose()});
+ renderer.domElement.addEventListener('webglcontextlost',e=>{e.preventDefault();clearInterval(timer);fail('WebGL 上下文丢失，请返回后重试')});
+}catch(error){fail(error)}
+</script></html>

@@ -1,3 +1,4 @@
+import { webview } from '@kit.ArkWeb';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import sdl from 'libSDL3.so';
 import { intl } from '@kit.LocalizationKit';
@@ -33,6 +34,11 @@ export class ArkNapiCallback {
   }
 
   openLink(url: string) {
+    if (url === 'mikan://html-game') {
+      sdl.sdlOnBackground()
+      AppStorage.setOrCreate('htmlGameVisible', true)
+      return
+    }
     let con = context.getHostContext() as common.UIAbilityContext
     con.openLink(url)
   }
@@ -156,6 +162,29 @@ let callbackRef: ArkNapiCallback = new ArkNapiCallback()
 @Component
 struct Index {
   @StorageProp('splashHidden') splashHidden: boolean = false
+  @StorageLink('htmlGameVisible') webVisible: boolean = false
+  @State webProgress: number = 0
+  @State webWidth: number = 640
+  @State webHeight: number = 320
+  private webController: webview.WebviewController = new webview.WebviewController()
+
+  private openWeb(): void {
+    sdl.sdlOnBackground()
+    this.webVisible = true
+  }
+
+  private closeWeb(): void {
+    this.webVisible = false
+    sdl.sdlOnForeground()
+  }
+
+  onBackPress(): boolean {
+    if (this.webVisible) {
+      this.closeWeb()
+      return true
+    }
+    return false
+  }
 
   aboutToAppear(): void {
     context = this.getUIContext()
@@ -170,8 +199,52 @@ struct Index {
     Stack() {
       XComponent({ id: 'mainView', type: 'surface', libraryname: 'SDL3' })
         .id('mainView')
+        .hitTestBehavior(this.webVisible ? HitTestMode.None : HitTestMode.Default)
         .width('100%')
         .height('100%')
+
+      if (this.webVisible) {
+        Column() {
+          Column() {
+            Row({ space: 10 }) {
+              Text('实验 · HTML 小游戏').fontColor(Color.White).fontSize(16)
+              Blank()
+              Button('关闭').onClick(() => this.closeWeb())
+            }.width('100%').padding(10).backgroundColor('#172438')
+            if (this.webProgress < 100) {
+              Progress({ value: this.webProgress, total: 100, type: ProgressType.Linear })
+                .width('100%').height(3)
+            }
+            Web({ src: $rawfile('html/index.html'), controller: this.webController,
+              renderMode: RenderMode.ASYNC_RENDER })
+              .hitTestBehavior(HitTestMode.Default)
+              .onControllerAttached(() => {
+                this.webController.setCustomUserAgent(
+                  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+              })
+              .onConsole((event) => {
+                if (event) hilog.info(DOMAIN, 'HtmlGame', '%{public}s', event.message.getMessage())
+                return false
+              })
+              .javaScriptAccess(true)
+              .domStorageAccess(true)
+              .fileAccess(false)
+              .mixedMode(MixedMode.None)
+              .onProgressChange((event) => {
+                if (event) this.webProgress = event.newProgress
+              })
+              .width(this.webWidth).height(this.webHeight)
+          }.width('92%').height('88%').backgroundColor('#101c2d')
+            // The emulator's ArkWeb output failed with weighted/fractional surfaces
+            // (40001000, red repeated tiles). Use explicit pixel-aligned dimensions
+            // and avoid clipping the Web surface. Verified by screenshots and swipes.
+            .onAreaChange((_oldArea, area) => {
+              this.webWidth = px2vp(Math.floor(vp2px(Number(area.width)) / 64) * 64)
+              this.webHeight = px2vp(Math.floor(vp2px(Math.max(100, Number(area.height) - 64)) / 64) * 64)
+            })
+        }.width('100%').height('100%').backgroundColor('#99000000')
+          .justifyContent(FlexAlign.Center).hitTestBehavior(HitTestMode.Default)
+      }
 
       // Splash overlay: stays on top of the (possibly black) surface until
       // the engine presents its first frame, then hideNativeSplash() flips
@@ -192,7 +265,7 @@ struct Index {
     .width('100%')
     .height('100%')
     .onKeyEvent((keyevent) => {
-      sdl.sdlKeyEvent(keyevent.keyCode, keyevent.type);
+      if (!this.webVisible) sdl.sdlKeyEvent(keyevent.keyCode, keyevent.type);
     })
   }
 }
