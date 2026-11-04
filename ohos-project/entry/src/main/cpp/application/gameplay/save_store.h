@@ -32,6 +32,7 @@ struct Record {
     inventory::State inventory;
 };
 inline bool Valid(const Record& r) {
+    if(!r.inventory.growth.Valid())return false;
     if (!r.id || r.savedAt<=0 || (r.scene!="scenes/main.json" &&
         r.scene!="scenes/forest_test.json" && r.scene!="scenes/physics_parkour.json")) return false;
     for(float f:{r.x,r.y,r.z,r.yaw,r.health,r.seconds}) if(!std::isfinite(f)||std::fabs(f)>1000000) return false;
@@ -68,7 +69,7 @@ class Store {
         if(data.size()>1024*1024) return false;
         auto cut=data.find('\n');if(cut==std::string::npos)return false;
         std::istringstream head(data.substr(0,cut)); std::string magic; unsigned checksum;
-        if(!(head>>magic>>seq>>checksum)||(magic!="MIKAN_SAVES_V1"&&magic!="MIKAN_SAVES_V2")||!seq)return false;
+        if(!(head>>magic>>seq>>checksum)||(magic!="MIKAN_SAVES_V1"&&magic!="MIKAN_SAVES_V2"&&magic!="MIKAN_SAVES_V3")||!seq)return false;
         auto body=data.substr(cut+1);if(Hash(body)!=checksum)return false;
         std::istringstream in(body);std::size_t count=0;if(!(in>>count)||count>1024)return false;
         out.clear();
@@ -77,7 +78,8 @@ class Store {
             if(!(in>>r.id>>r.savedAt>>r.scene>>r.x>>r.y>>r.z>>r.yaw>>r.health>>r.gold>>r.ammo>>r.reserve>>r.weapon>>r.checkpoint>>r.falls>>r.seconds>>r.gateOpen>>r.chestOpened>>r.enemyDead))return false;
             for(auto& b:r.inventory.bag) if(!(in>>b.defId>>b.count))return false;
             for(auto& e:r.inventory.equipped)if(!(in>>e))return false;
-            if(magic=="MIKAN_SAVES_V2" && !(in>>r.parkourRewardClaimed>>r.courseRevision))return false;
+            if(magic!="MIKAN_SAVES_V1" && !(in>>r.parkourRewardClaimed>>r.courseRevision))return false;
+            if(magic=="MIKAN_SAVES_V3"){auto& g=r.inventory.growth;if(!(in>>g.level>>g.xp>>g.points>>g.strength>>g.defense>>g.agility))return false;}
             if(!Valid(r)||std::any_of(out.begin(),out.end(),[&](const Record& old){return old.id==r.id;}))return false;
             out.push_back(r);
         }
@@ -115,11 +117,12 @@ private:
             for(auto b:v.inventory.bag)out<<' '<<b.defId<<' '<<b.count;
             for(int e:v.inventory.equipped)out<<' '<<e;
             out<<' '<<v.parkourRewardClaimed<<' '<<v.courseRevision;
+            const auto& g=v.inventory.growth;out<<' '<<g.level<<' '<<g.xp<<' '<<g.points<<' '<<g.strength<<' '<<g.defense<<' '<<g.agility;
             out<<'\n';
         }
         auto body=out.str();auto seq=sequence_+1;
         const std::string file=root_+"saves"+std::to_string(seq%2)+".dat";
-        std::string bytes="MIKAN_SAVES_V2 "+std::to_string(seq)+" "+std::to_string(Hash(body))+"\n"+body;
+        std::string bytes="MIKAN_SAVES_V3 "+std::to_string(seq)+" "+std::to_string(Hash(body))+"\n"+body;
         FILE* f=std::fopen(file.c_str(),"wb");if(!f)return false;
         bool ok=std::fwrite(bytes.data(),1,bytes.size(),f)==bytes.size();
         ok=std::fflush(f)==0&&ok;

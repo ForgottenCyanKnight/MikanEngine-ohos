@@ -1,3 +1,18 @@
+    bool growthOpen_=false;
+    MenuButtonPos GrowthButton(int i)const{float w=SaveUiWidth(),h=SaveUiHeight(),m=std::min(w,h);if(i==0)return {w*.5f-m*.56f,h*.145f,m*.15f,m*.033f,m*.012f};return {w*.5f+m*.25f,h*(.36f+.14f*(i-1)),m*.12f,m*.042f,m*.012f};}
+    bool GrowthTap(float x,float y){
+        if(growthOpen_){if(HitRect(x,y,GrowthButton(0)))growthOpen_=false;else for(int i=1;i<=3;++i)if(HitRect(x,y,GrowthButton(i)))inventory_.growth.Spend(i-1);return true;}
+        if(HitRect(x,y,GrowthButton(0))){growthOpen_=true;return true;}return false;
+    }
+    bool DrawGrowthUi(){float w=SaveUiWidth(),h=SaveUiHeight(),m=std::min(w,h);const float white[4]={1,1,1,1},panel[4]={.08f,.13f,.19f,.98f},accent[4]={.16f,.33f,.45f,.96f};
+        auto b=GrowthButton(0);
+        if(!growthOpen_){DrawMenuRect(b,accent);DrawTextCentered("角色加点",b.cx,b.cy,m*.025f,white);return false;}
+        const float backdrop[4]={.02f,.035f,.055f,.6f};DrawMenuRect({w*.5f,h*.5f,w*.5f,h*.5f,0},backdrop);DrawMenuRect({w*.5f,h*.51f,std::min(w*.88f,m*1.65f)*.5f,h*.42f,m*.02f},panel);DrawTextCentered("角色加点",w*.5f,h*.145f,m*.043f,white);DrawMenuRect(b,accent);DrawTextCentered("返回背包",b.cx,b.cy,m*.025f,white);
+        char text[128];const auto& g=inventory_.growth;std::snprintf(text,sizeof(text),"等级 %d    可用点数 %d",g.level,g.points);DrawTextCentered(text,w*.5f,h*.22f,m*.04f,white);
+        const char* names[]={"力量  攻击","防御  减伤","敏捷  移速"};const int values[]={g.strength,g.defense,g.agility};
+        for(int i=0;i<3;++i){auto plus=GrowthButton(i+1);std::snprintf(text,sizeof(text),"%s  %d  (+%d%%)",names[i],values[i],values[i]*(i==2?2:5));DrawTextCentered(text,w*.5f-m*.18f,plus.cy,m*.028f,white);DrawMenuRect(plus,accent);DrawTextCentered(g.points?"+1":"无点数",plus.cx,plus.cy,m*.025f,white);}
+        DrawTextCentered("每次升级获得3点 分配后在存档点保存",w*.5f,h*.86f,m*.025f,white);return true;
+    }
 // Shared renderer-owned save flow and menu. Included inside each renderer class.
     bool saveDeleteMode_=false;
     unsigned saveDeleteId_=0;

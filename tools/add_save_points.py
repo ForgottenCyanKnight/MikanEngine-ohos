@@ -30,19 +30,6 @@ for name in ('main', 'forest_test', 'physics_parkour'):
     if name == 'main':
         ground = next(e for e in scene['entities'] if e.get('name', {}).get('name') == 'Ground')
         alignment = ground['transform']['position'][1] + ground['transform']['scale'][1] + .94
-    for i, (x, y, z) in enumerate(points):
-        base = y - .98 + alignment
-        for j, (height, scale, model) in enumerate([
-            (.08, [.32, .08, .32], 'violet'),
-            (.55, [.095, .4, .095], 'cyan'),
-            (1.04, [.22, .10, .22], 'cyan')]):
-            scene['entities'].append({
-                'id': 12000 + i * 3 + j,
-                'name': {'name': f'SavePoint {i+1} {j}'},
-                'transform': {'position': [x+.9, base+height, z],
-                              'rotation': [1, 0, 0, 0], 'scale': scale},
-                'hierarchy': {'parent': 4294967295, 'children': []},
-                'mesh': {'type': 4, 'modelPath': f'models/parkour/{model}.glb'},
-                'render': {'visible': True, 'castShadow': False, 'receiveShadow': True}})
+    # Save-point curtains are rendered procedurally by both backends.
     path.write_text(json.dumps(scene, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     print(name, len(points), 'save points')

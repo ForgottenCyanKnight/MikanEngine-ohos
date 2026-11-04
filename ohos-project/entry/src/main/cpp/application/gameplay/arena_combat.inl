@@ -44,7 +44,7 @@
                 AudioManager::GetInstance().PlayAudio("hit",.55f);
                 if(enemyHealth_<=0) {
                     enemyAlive_=false;enemyDeathPlaying_=true;enemyDeathTime_=0;
-                    enemyMoving_=enemyAttackRequested_=false;gold_+=25;
+                    enemyMoving_=enemyAttackRequested_=false;gold_+=25;inventory_.growth.Gain(50);
                     if(physicsWorld_)physicsWorld_->SetArenaEnemy(i,enemyX_,enemyY_-physics::kPlayerVisualOriginOffset,enemyZ_,false);
                 }
             }

@@ -3,10 +3,11 @@
 #include <cmath>
 namespace settings_ui {
 struct Button {float cx,cy,hw,hh,r;};
-inline float MaxScroll(float w,float h){float mn=std::min(w,h);return std::max(0.f,(8*.105f+.08f)*mn-(h*.78f-h*.28f));}
+inline float MaxScroll(float w,float h){float mn=std::min(w,h);return std::max(0.f,(10*.105f+.08f)*mn-(h*.78f-h*.28f));}
 inline Button Layout(int i,float w,float h,float scroll){float mn=std::min(w,h);
     if(i==0)return {w*.5f+mn*.39f,h*.19f,mn*.042f,mn*.042f,mn*.018f};
     if(i==9)return {w*.5f,h*.86f,mn*.30f,mn*.040f,mn*.014f};
+    if(i==10)i=9;else if(i==11)i=10;
     return {w*.5f+mn*.23f,h*.28f+mn*.045f+(i-1)*mn*.105f-scroll,mn*.13f,mn*.035f,mn*.009f};
 }
 inline bool Visible(int i,float w,float h,float scroll){auto b=Layout(i,w,h,scroll);return i==0 || i==9 || (b.cy-b.hh>=h*.28f && b.cy+b.hh<=h*.78f);}
@@ -28,6 +29,12 @@ void Draw(float w,float h,float scroll,const char values[8][32],bool glass,Rect 
         rect(b.cx,b.cy,b.hw,b.hh,b.r,control);
         text(labels[i-1],left,b.cy,mn*.028f,white,false);text(values[i-1],b.cx,b.cy,mn*.027f,white,true);
     }
+    if(Visible(10,w,h,scroll)){
+        auto b=Layout(10,w,h,scroll);rect(w*.5f,b.cy,mn*.405f,mn*.044f,mn*.010f,row);
+        rect(b.cx,b.cy,b.hw,b.hh,b.r,control);
+        text("实验：HTML 小游戏",left,b.cy,mn*.028f,white,false);text("打开",b.cx,b.cy,mn*.027f,white,true);
+    }
+    if(Visible(11,w,h,scroll)){auto b=Layout(11,w,h,scroll);rect(w*.5f,b.cy,mn*.405f,mn*.044f,mn*.010f,row);rect(b.cx,b.cy,b.hw,b.hh,b.r,control);text("线框调试",left,b.cy,mn*.028f,white,false);text("切换",b.cx,b.cy,mn*.027f,white,true);}
     auto back=Layout(9,w,h,scroll);rect(back.cx,back.cy,back.hw,back.hh,back.r,control);text("返回主菜单",back.cx,back.cy,mn*.028f,white,true);
     float max=MaxScroll(w,h);
     if(max>0){float top=h*.28f,bottom=h*.78f,thumb=(bottom-top)*(bottom-top)/(bottom-top+max);

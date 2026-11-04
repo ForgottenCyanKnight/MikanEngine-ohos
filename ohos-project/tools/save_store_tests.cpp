@@ -19,21 +19,29 @@ int main() {
         std::string text((std::istreambuf_iterator<char>(bank)),{});
         std::istringstream body(text.substr(text.find('\n')+1));
         std::string count,line;std::getline(body,count);std::getline(body,line);
-        auto last=line.rfind(' ');line.resize(last);last=line.rfind(' ');line.resize(last);
+        for(int field=0;field<8;++field)line.resize(line.rfind(' '));
         std::string oldBody=count+"\n"+line+"\n";
         unsigned hash=2166136261u;for(unsigned char c:oldBody)hash=(hash^c)*16777619u;
         fs::create_directory(dir/"legacy");
         {std::ofstream old(root+"legacy/saves1.dat",std::ios::binary);old<<"MIKAN_SAVES_V1 1 "<<hash<<"\n"<<oldBody;}
+        const std::string v2Body=count+"\n"+line+" 0 0\n";
+        unsigned v2Hash=2166136261u;for(unsigned char c:v2Body)v2Hash=(v2Hash^c)*16777619u;
+        fs::create_directory(dir/"legacy2");
+        {std::ofstream old(root+"legacy2/saves1.dat",std::ios::binary);old<<"MIKAN_SAVES_V2 1 "<<v2Hash<<"\n"<<v2Body;}
+        saves::Store legacy2;legacy2.Open(root+"legacy2/");
+        Check(legacy2.records.size()==1 && legacy2.records[0].inventory.growth.level==1 && legacy2.records[0].inventory.growth.points==0,"V2 saves migrate to level one with no allocated points");
         saves::Store legacy;legacy.Open(root+"legacy/");
         Check(legacy.records.size()==1 && legacy.records[0].gold==35 && legacy.records[0].courseRevision==0,"existing V1 saves remain readable");
     }
     saves::Record second=first;second.id=store.NextId();second.savedAt+=100;
     second.scene="scenes/physics_parkour.json";second.x=-1;second.y=13.28f;second.z=-81.3f;second.parkourRewardClaimed=true;second.courseRevision=3;
+    second.inventory.growth.Gain(160);second.inventory.growth.Spend(0);
     second.checkpoint=6;second.gateOpen=true;second.gold=90;second.ammo=3;
     Check(store.Put(second),"create independent second slot");
     saves::Store reopened;reopened.Open(root);
     Check(reopened.records.size()==2,"both slots survive process restart");
     Check(reopened.records[0].id==second.id,"newest first");
+    Check(reopened.records[0].inventory.growth.level==3 && reopened.records[0].inventory.growth.points==5 && reopened.records[0].inventory.growth.strength==1,"progression and allocated points survive restart");
     Check(reopened.records[0].gateOpen && reopened.records[0].checkpoint==6,"course progress restored");
     Check(std::fabs(reopened.records[0].z+81.3f)<.0001f,"save point coordinate round trip");
     Check(reopened.records[0].inventory.HasPistol() && reopened.records[0].inventory.HasSword(),"independent weapon slots restored");
@@ -63,6 +71,11 @@ int main() {
     Check(!reopened.Remove(removed),"missing slot deletion fails without mutation");
     while(!reopened.records.empty())Check(reopened.Remove(reopened.records.back().id),"delete remaining slots");
     reopened.Open(root);Check(reopened.records.empty(),"deleting last slot persists empty list");
+    progression::State growth;Check(growth.Valid(),"new progression valid");
+    Check(!growth.Spend(0),"cannot spend unearned points");growth.Gain(59);Check(growth.level==1,"below threshold");growth.Gain(1);Check(growth.level==2&&growth.points==3&&growth.xp==0,"level up grants exactly three points");
+    Check(growth.Spend(2)&&growth.agility==1&&growth.points==2&&growth.Valid(),"spending preserves point budget");
+    Check(!growth.Spend(3),"reject unknown stat");growth.Gain(1000000);Check(growth.level==50&&growth.xp==0&&growth.Valid(),"multi-level experience respects level cap");
+    auto invalidGrowth=first;invalidGrowth.inventory.growth.strength=10;Check(!reopened.Put(invalidGrowth),"reject invented attribute points");
     std::printf("save_store_tests: %d checks passed\n",checks);
     return 0;
 }

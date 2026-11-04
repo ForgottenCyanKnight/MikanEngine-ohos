@@ -1,3 +1,4 @@
+#include "gameplay/progression.h"
 #pragma once
 #include <array>
 #include <algorithm>
@@ -15,6 +16,7 @@ inline constexpr int kItemDefCount=6,kSlotCount=4,kBagCapacity=15,kNoItem=-1;
 struct BagEntry {int defId=-1,count=0;};
 struct Bonuses {float attack=1,defense=1,speed=1;};
 struct State {
+ progression::State growth;
  std::array<BagEntry,kBagCapacity> bag{};
  // Equipment owns a definition ID, never an index into an emptied bag cell.
  std::array<int,kSlotCount> equipped{};
@@ -62,6 +64,6 @@ struct State {
    if(!TapBag(i))return false;health=std::min(maximum,health+30.f);return true;
   }return false;
  }
- Bonuses Stats(int activeWeapon=kNoItem)const {Bonuses b;for(int i=0;i<kSlotCount;i++)if(auto d=EquippedDef(i)){if((i==0||i==3)&&equipped[i]!=activeWeapon)continue;b.attack*=d->attack;b.defense*=d->defense;b.speed*=d->speed;}return b;}
+ Bonuses Stats(int activeWeapon=kNoItem)const {Bonuses b;for(int i=0;i<kSlotCount;i++)if(auto d=EquippedDef(i)){if((i==0||i==3)&&equipped[i]!=activeWeapon)continue;b.attack*=d->attack;b.defense*=d->defense;b.speed*=d->speed;}b.attack*=1.f+.05f*growth.strength;b.defense*=1.f+.05f*growth.defense;b.speed*=1.f+.02f*growth.agility;return b;}
 };
 }
