@@ -37,7 +37,7 @@ def write_marker(name, color):
                      {'bufferView':2,'componentType':5123,'count':36,'type':'SCALAR'}],
         'meshes':[{'primitives':[{'attributes':{'POSITION':0,'NORMAL':1},'indices':2,'material':0}]}],
         'materials':[{'pbrMetallicRoughness':{'baseColorFactor':[*color,1], 'metallicFactor':.15,'roughnessFactor':.4},
-                      'emissiveFactor':[v*.45 for v in color]}]}
+                      'emissiveFactor':[v*1.15/max(sum(c*w for c,w in zip(color,(.2126,.7152,.0722))),.05) for v in color]}]}
     raw = json.dumps(doc,separators=(',',':')).encode(); raw += b' '*(-len(raw)%4)
     glb = struct.pack('<III',0x46546c67,2,28+len(raw)+len(data))
     glb += struct.pack('<II',len(raw),0x4e4f534a)+raw+struct.pack('<II',len(data),0x004e4942)+data
@@ -66,7 +66,7 @@ main['entities']+=gate(9400,5,-4,top,'ParkourGate',amber)
 mainpath.write_text(json.dumps(main,ensure_ascii=False,indent=2)+'\n',encoding='utf-8',newline='\n')
 
 # x,z,top,halfWidth,halfDepth. Clear gaps 0.65..0.9 m; rises <=0.35 m.
-# A 5 m/s jump under 9.81 m/s² gravity reaches ~1.27 m high and ~1.3 m
+# A 5 m/s jump under 9.81 m/s虏 gravity reaches ~1.27 m high and ~1.3 m
 # at walking speed, with sprint available for more forgiving approaches.
 platforms=[(0,0,6,2.6,2.6),
     (0,-4.65,6.3,1.3,1.3),(0,-7.9,6.65,1.2,1.2),(0,-11,7,1.15,1.15),

@@ -40,7 +40,7 @@ def cube(i, name, position, scale):
 
 scene = {'formatVersion': 1, 'game': 'portal_hub', 'water': {'enabled': False},
     'gameplay': {'playerSpawn': [0,.02,3], 'enemyEnabled': False,
-        'demoPropsEnabled': False, 'groundEnabled': False,
+        'demoPropsEnabled': False, 'helmetEnabled': True, 'groundEnabled': False,
         'savePoints': [[-3,.02,3]], 'portals': [
             {'target': 'scenes/forest_test.json', 'label': 'FOREST',
              'position': [-5,.02,-5], 'radius': .85, 'color': [.08,.85,.4], 'opacity': .32},
@@ -56,6 +56,10 @@ scene['entities'] += [
     cube(13002,'Hub south wall',[0,.36,10],[12,1.3,.2]),
     cube(13003,'Hub west wall',[-12,.36,0],[.2,1.3,10]),
     cube(13004,'Hub east wall',[12,.36,0],[.2,1.3,10])]
+for i,(x,z,half) in enumerate([(3,3,.45),(4.2,3,.45),(3.6,4.2,.55),(5.2,4.4,.4),(6,2.5,.5)]):
+    block=cube(13200+i,f'Hub pushable cube {i+1}',[x,-.94+half+.03,z],[half,half,half])
+    block['dynamicBody']=True
+    scene['entities'].append(block)
 for i, portal in enumerate(scene['gameplay']['portals']):
     x,_,z=portal['position']; base=-.94; first=13100+i*4
     scene['entities'] += [
