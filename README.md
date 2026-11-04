@@ -1,5 +1,7 @@
 # MikanEngine OHOS
 
+本机调试与对话交接：[鸿蒙构建、安装与设备截图手册](docs/OHOS_DEVICE_WORKFLOW.md)。
+
 <p align="center">
   <img src="ohos-project/entry/src/main/resources/base/media/foreground.png" alt="MikanEngine logo" width="180">
 </p>
